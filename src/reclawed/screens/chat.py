@@ -10,6 +10,7 @@ from pathlib import Path
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header
 
@@ -17,6 +18,7 @@ from reclawed.claude import ClaudeProcess, StreamError, StreamResult, StreamSess
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.models import Message, Session
 from reclawed.store import Store
+from reclawed.widgets.chat_sidebar import ChatSidebar
 from reclawed.widgets.compose_area import ComposeArea
 from reclawed.widgets.message_bubble import MessageBubble
 from reclawed.widgets.message_list import MessageList
@@ -31,7 +33,7 @@ class ChatScreen(Screen):
         # priority=True ensures these work even when TextArea has focus
         Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
         Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
-        Binding("ctrl+s", "sessions", "Sessions", show=True, priority=True),
+        Binding("ctrl+s", "toggle_sidebar", "Sidebar", show=True, priority=True),
         Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T", priority=True),
         Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E", priority=True),
         Binding("ctrl+p", "pinned", "Pinned", show=True, key_display="^P", priority=True),
@@ -71,14 +73,20 @@ class ChatScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield MessageList(id="message-list")
-        yield QuotePreview(id="quote-preview")
-        yield ComposeArea(id="compose-area")
+        with Horizontal(id="main-layout"):
+            yield ChatSidebar(self.store, id="chat-sidebar")
+            with Vertical(id="chat-panel"):
+                yield MessageList(id="message-list")
+                yield QuotePreview(id="quote-preview")
+                yield ComposeArea(id="compose-area")
         yield StatusBar(id="status-bar")
         yield Footer()
 
     async def on_mount(self) -> None:
         self._update_status()
+        # Highlight the active session in the sidebar
+        sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+        sidebar.refresh_sessions(active_session_id=self.session.id)
         # Load existing messages if resuming a session
         if self.session.message_count > 0:
             await self._load_session_messages()
@@ -265,6 +273,7 @@ class ChatScreen(Screen):
             def _clear_streaming_indicator() -> None:
                 status.set_streaming(active=False)
                 self._update_status()
+                self._refresh_sidebar()
 
             self.set_timer(3.0, _clear_streaming_indicator)
 
@@ -422,39 +431,101 @@ class ChatScreen(Screen):
         self._update_status()
         self.notify(f"Model: {next_model}", timeout=2)
 
+    def _switch_to_session(self, session_id: str) -> None:
+        """Switch the chat panel to a different session."""
+        session = self.store.get_session(session_id)
+        if not session:
+            return
+        # Mark the new session as read
+        self.store.mark_session_read(session_id)
+        self.session = session
+        self._claude = ClaudeProcess(self.config.claude_binary)
+        self._selected_model = session.model
+
+        async def _reload():
+            msg_list = self.query_one("#message-list", MessageList)
+            await msg_list.clear_messages()
+            await self._load_session_messages()
+            self._update_status()
+            self._refresh_sidebar()
+
+        self.app.call_later(_reload)
+
+    def _refresh_sidebar(self) -> None:
+        """Refresh the sidebar to reflect current state."""
+        try:
+            sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+            sidebar.refresh_sessions(active_session_id=self.session.id)
+        except Exception:
+            pass
+
+    # --- Sidebar events ---
+
+    def on_chat_sidebar_session_selected(self, event: ChatSidebar.SessionSelected) -> None:
+        if event.session_id != self.session.id:
+            self._switch_to_session(event.session_id)
+
+    def on_chat_sidebar_new_chat_requested(self, event: ChatSidebar.NewChatRequested) -> None:
+        self.action_new_chat()
+
+    def on_chat_sidebar_context_menu_requested(self, event: ChatSidebar.ContextMenuRequested) -> None:
+        from reclawed.widgets.context_menu import (
+            ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
+            ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME,
+        )
+
+        def on_result(result: tuple[str, str] | None) -> None:
+            if result is None:
+                return
+            action, session_id = result
+            session = self.store.get_session(session_id)
+            if not session:
+                return
+
+            if action == ACTION_MARK_UNREAD:
+                session.unread_count = max(1, session.unread_count)
+                self.store.update_session(session)
+            elif action == ACTION_MUTE:
+                session.muted = True
+                self.store.update_session(session)
+            elif action == ACTION_UNMUTE:
+                session.muted = False
+                self.store.update_session(session)
+            elif action == ACTION_ARCHIVE:
+                session.archived = True
+                self.store.update_session(session)
+                if session.id == self.session.id:
+                    self.action_new_chat()
+            elif action == ACTION_DELETE:
+                self.store.delete_session(session_id)
+                if session_id == self.session.id:
+                    self.action_new_chat()
+            elif action == ACTION_RENAME:
+                self.notify("Rename: type new name in sidebar search then press Enter", timeout=5)
+
+            self._refresh_sidebar()
+
+        self.app.push_screen(
+            ContextMenu(event.session_id, is_muted=event.is_muted),
+            on_result,
+        )
+
+    def action_toggle_sidebar(self) -> None:
+        sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+        sidebar.toggle_class("hidden")
+
     def action_new_chat(self) -> None:
         self.session = self._create_new_session()
         self._claude = ClaudeProcess(self.config.claude_binary)
-        self._selected_model = None  # Reset model override for fresh sessions
+        self._selected_model = None
 
         async def _reset():
             msg_list = self.query_one("#message-list", MessageList)
             await msg_list.clear_messages()
             self._update_status()
+            self._refresh_sidebar()
 
         self.app.call_later(_reset)
-
-    def action_sessions(self) -> None:
-        from reclawed.screens.sessions import SessionPickerScreen
-
-        def on_session_selected(session_id: str | None) -> None:
-            if session_id:
-                session = self.store.get_session(session_id)
-                if session:
-                    self.session = session
-                    self._claude = ClaudeProcess(self.config.claude_binary)
-                    # Restore the model preference stored on the session
-                    self._selected_model = session.model
-
-                    async def _reload():
-                        msg_list = self.query_one("#message-list", MessageList)
-                        await msg_list.clear_messages()
-                        await self._load_session_messages()
-                        self._update_status()
-
-                    self.app.call_later(_reload)
-
-        self.app.push_screen(SessionPickerScreen(self.store), on_session_selected)
 
     def action_quit(self) -> None:
         self._claude.cancel()
@@ -478,7 +549,7 @@ class ChatScreen(Screen):
             "F2          Cycle model\n"
             "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"
-            "Ctrl+S      Sessions\n"
+            "Ctrl+S      Toggle sidebar\n"
             "Ctrl+T      Cycle theme\n"
             "Ctrl+E      Export markdown\n"
             "Ctrl+D/C    Quit\n"

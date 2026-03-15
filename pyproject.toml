@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "textual>=0.80.0",
     "click>=8.1",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ dev = [
 
 [project.scripts]
 reclawed = "reclawed.cli:main"
+reclawed-relay = "reclawed.relay.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

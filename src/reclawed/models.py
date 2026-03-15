@@ -43,3 +43,6 @@ class Session:
     model: str | None = None
     total_cost_usd: float = 0.0
     message_count: int = 0
+    muted: bool = False
+    archived: bool = False
+    unread_count: int = 0

@@ -12,6 +12,26 @@ Footer {
     dock: bottom;
 }
 
+/* Main horizontal split: sidebar | chat */
+#main-layout {
+    width: 100%;
+    height: 1fr;
+}
+
+#chat-sidebar {
+    width: 35;
+    height: 100%;
+}
+
+#chat-sidebar.hidden {
+    display: none;
+}
+
+#chat-panel {
+    width: 1fr;
+    height: 100%;
+}
+
 #message-list {
     width: 100%;
     height: 1fr;

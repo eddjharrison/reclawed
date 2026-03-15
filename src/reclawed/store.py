@@ -59,6 +59,22 @@ class Store:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Apply additive schema migrations that may not exist on older databases."""
+        migrations = [
+            "ALTER TABLE sessions ADD COLUMN muted INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0",
+        ]
+        for sql in migrations:
+            try:
+                self._conn.execute(sql)
+            except sqlite3.OperationalError:
+                # Column already exists — safe to ignore.
+                pass
+        self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
@@ -67,11 +83,13 @@ class Store:
 
     def create_session(self, session: Session) -> Session:
         self._conn.execute(
-            "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, total_cost_usd, message_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
+            "total_cost_usd, message_count, muted, archived, unread_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
-             session.model, session.total_cost_usd, session.message_count),
+             session.model, session.total_cost_usd, session.message_count,
+             int(session.muted), int(session.archived), session.unread_count),
         )
         self._conn.commit()
         return session
@@ -82,16 +100,39 @@ class Store:
             return None
         return self._row_to_session(row)
 
-    def list_sessions(self) -> list[Session]:
-        rows = self._conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
+    def list_sessions(self, include_archived: bool = False) -> list[Session]:
+        if include_archived:
+            rows = self._conn.execute(
+                "SELECT * FROM sessions ORDER BY updated_at DESC"
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM sessions WHERE archived = 0 ORDER BY updated_at DESC"
+            ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
     def update_session(self, session: Session) -> None:
         session.updated_at = datetime.now(timezone.utc)
         self._conn.execute(
-            "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, total_cost_usd=?, message_count=? WHERE id=?",
+            "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
+            "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
-             session.model, session.total_cost_usd, session.message_count, session.id),
+             session.model, session.total_cost_usd, session.message_count,
+             int(session.muted), int(session.archived), session.unread_count, session.id),
+        )
+        self._conn.commit()
+
+    def mark_session_read(self, session_id: str) -> None:
+        """Set unread_count to 0 for the given session."""
+        self._conn.execute(
+            "UPDATE sessions SET unread_count = 0 WHERE id = ?", (session_id,)
+        )
+        self._conn.commit()
+
+    def increment_unread(self, session_id: str) -> None:
+        """Increment unread_count by 1 for the given session."""
+        self._conn.execute(
+            "UPDATE sessions SET unread_count = unread_count + 1 WHERE id = ?", (session_id,)
         )
         self._conn.commit()
 
@@ -147,6 +188,16 @@ class Store:
             "SELECT * FROM messages WHERE session_id = ? ORDER BY seq", (session_id,)
         ).fetchall()
         return [self._row_to_message(r) for r in rows]
+
+    def get_last_message(self, session_id: str) -> Message | None:
+        """Return the most recent message in the session, or None if empty."""
+        row = self._conn.execute(
+            "SELECT * FROM messages WHERE session_id = ? ORDER BY seq DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_message(row)
 
     def get_bookmarked_messages(self, session_id: str | None = None) -> list[Message]:
         if session_id:
@@ -261,4 +312,7 @@ class Store:
             model=row["model"],
             total_cost_usd=row["total_cost_usd"],
             message_count=row["message_count"],
+            muted=bool(row["muted"]),
+            archived=bool(row["archived"]),
+            unread_count=row["unread_count"],
         )

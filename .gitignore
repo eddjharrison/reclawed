@@ -6,3 +6,4 @@ build/
 .venv/
 *.db
 .pytest_cache/
+.DS_Store

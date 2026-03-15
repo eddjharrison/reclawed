@@ -89,3 +89,98 @@ def test_update_session(store: Store, session: Session):
     store.update_session(session)
     fetched = store.get_session(session.id)
     assert fetched.name == "Renamed"
+
+
+# --- New sidebar data-layer tests ---
+
+def test_get_last_message_empty(store: Store, session: Session):
+    """Returns None when the session has no messages."""
+    assert store.get_last_message(session.id) is None
+
+
+def test_get_last_message_returns_most_recent(store: Store, session: Session):
+    """Returns the message with the highest seq value."""
+    m1 = Message(role="user", content="First", session_id=session.id)
+    m2 = Message(role="assistant", content="Second", session_id=session.id)
+    m3 = Message(role="user", content="Third", session_id=session.id)
+    for m in (m1, m2, m3):
+        store.add_message(m)
+    last = store.get_last_message(session.id)
+    assert last is not None
+    assert last.content == "Third"
+    assert last.seq == 3
+
+
+def test_list_sessions_excludes_archived_by_default(store: Store):
+    """list_sessions() hides archived sessions unless include_archived=True."""
+    active = Session(name="Active")
+    archived = Session(name="Archived", archived=True)
+    store.create_session(active)
+    store.create_session(archived)
+
+    visible = store.list_sessions()
+    assert len(visible) == 1
+    assert visible[0].name == "Active"
+
+    all_sessions = store.list_sessions(include_archived=True)
+    assert len(all_sessions) == 2
+
+
+def test_list_sessions_include_archived_flag(store: Store):
+    """Archived sessions appear when include_archived=True."""
+    s1 = Session(name="A", archived=True)
+    s2 = Session(name="B", archived=True)
+    store.create_session(s1)
+    store.create_session(s2)
+
+    assert store.list_sessions() == []
+    assert len(store.list_sessions(include_archived=True)) == 2
+
+
+def test_mark_session_read(store: Store, session: Session):
+    """mark_session_read resets unread_count to 0."""
+    store.increment_unread(session.id)
+    store.increment_unread(session.id)
+    store.increment_unread(session.id)
+
+    before = store.get_session(session.id)
+    assert before.unread_count == 3
+
+    store.mark_session_read(session.id)
+    after = store.get_session(session.id)
+    assert after.unread_count == 0
+
+
+def test_increment_unread(store: Store, session: Session):
+    """increment_unread increments by exactly 1 each call."""
+    assert store.get_session(session.id).unread_count == 0
+
+    store.increment_unread(session.id)
+    assert store.get_session(session.id).unread_count == 1
+
+    store.increment_unread(session.id)
+    store.increment_unread(session.id)
+    assert store.get_session(session.id).unread_count == 3
+
+
+def test_new_session_defaults(store: Store):
+    """New sessions have expected default values for the sidebar fields."""
+    s = Session(name="Defaults")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.muted is False
+    assert fetched.archived is False
+    assert fetched.unread_count == 0
+
+
+def test_update_session_persists_sidebar_fields(store: Store, session: Session):
+    """update_session correctly writes muted, archived, and unread_count."""
+    session.muted = True
+    session.archived = True
+    session.unread_count = 7
+    store.update_session(session)
+
+    fetched = store.get_session(session.id)
+    assert fetched.muted is True
+    assert fetched.archived is True
+    assert fetched.unread_count == 7
