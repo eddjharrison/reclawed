@@ -14,7 +14,7 @@ from reclawed.config import Config
 @click.version_option(package_name="reclawed")
 def main(continue_session: bool, session_id: str | None) -> None:
     """Re:Clawed — WhatsApp-style TUI for Claude CLI."""
-    config = Config()
+    config = Config.load()
 
     resume_id = session_id
     if continue_session and not resume_id:

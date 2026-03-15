@@ -147,7 +147,11 @@ Options:
 
 ## Configuration
 
-Re:Clawed reads `~/.config/reclawed/config.toml` on startup. All fields are optional; defaults are shown.
+Re:Clawed reads a config file on startup. All fields are optional; defaults are shown.
+
+- **macOS**: `~/Library/Application Support/reclawed/config.toml`
+- **Linux**: `~/.config/reclawed/config.toml`
+- **Windows**: `%APPDATA%\reclawed\config.toml`
 
 ```toml
 # Path where the SQLite history database is stored.
