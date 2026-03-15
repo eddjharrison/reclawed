@@ -60,11 +60,20 @@ class Config:
     theme: str = "dark"
     participant_name: str = "User"
     relay_port: int = 8765
+    # Group chat auto-respond mode (runtime default; also loadable from TOML).
+    # "own"      — Claude responds only to your own messages (default)
+    # "mentions" — Claude responds when @mentioned in a remote message
+    # "all"      — Claude responds to every human message in the room
+    # "off"      — Claude never responds automatically
+    group_auto_respond: str = "own"
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
         if self.theme not in THEME_MAP:
             self.theme = "dark"
+        # Normalise group_auto_respond; fall back to "own" for unknown values.
+        if self.group_auto_respond not in {"own", "mentions", "all", "off"}:
+            self.group_auto_respond = "own"
 
     @property
     def db_path(self) -> Path:
@@ -108,5 +117,7 @@ class Config:
             kwargs["participant_name"] = str(raw["participant_name"])
         if "relay_port" in raw:
             kwargs["relay_port"] = int(raw["relay_port"])  # type: ignore[arg-type]
+        if "group_auto_respond" in raw:
+            kwargs["group_auto_respond"] = str(raw["group_auto_respond"])
 
         return cls(**kwargs)  # type: ignore[arg-type]

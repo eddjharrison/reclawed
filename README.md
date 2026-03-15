@@ -73,6 +73,30 @@ Group chat lets multiple people (each running their own Re:Clawed) share a conve
 
 Each participant connects to the same relay room. When you send a message it is broadcast to everyone and each participant's local `claude` CLI generates its own response, which is also broadcast. The relay server is a lightweight WebSocket hub with optional SQLite message log for store-and-forward (missed messages are replayed on reconnect). The client auto-reconnects with exponential backoff.
 
+**@mention routing**
+
+You can direct a message at a specific participant's Claude by @mentioning them:
+
+```
+@Ed's Claude what do you think about this architecture?
+@Ed thoughts?
+```
+
+Ed's Re:Clawed detects the mention and has his Claude respond automatically. Both the full form (`@Ed's Claude`) and the short form (`@Ed`) are recognised, case-insensitively.
+
+**Group respond modes (F3)**
+
+Press `F3` at any time to cycle through four respond modes. The current mode is shown in the status bar as `[own]`, `[mentions]`, `[all]`, or `[off]`.
+
+| Mode | Your Claude responds to… |
+|------|--------------------------|
+| `own` (default) | Your own messages only |
+| `mentions` | Remote messages that @mention you |
+| `all` | Every human message in the room |
+| `off` | Nothing — manual browsing only |
+
+The mode is a runtime toggle — it resets to the configured default on restart. You can change the default in `config.toml` with `group_auto_respond = "mentions"`.
+
 **Standalone relay server**
 
 If you want to host a persistent relay separately (e.g. on a VPS):
@@ -105,6 +129,7 @@ Options:
 | `Ctrl+E` | Export session to markdown |
 | `Ctrl+P` | View pinned messages |
 | `F2` | Cycle model (sonnet / opus / haiku) |
+| `F3` | Cycle group respond mode (own / mentions / all / off) |
 | `Ctrl+D` / `Ctrl+C` | Quit |
 
 **Navigate mode** (press `Tab` to enter; `Tab` or `Esc` to return to typing):
@@ -148,6 +173,10 @@ participant_name = "User"
 
 # Local port for the embedded group chat relay server.
 relay_port = 8765
+
+# Default group chat respond mode: own | mentions | all | off
+# Can be toggled at runtime with F3 (does not persist across restarts).
+group_auto_respond = "own"
 ```
 
 ## Stack

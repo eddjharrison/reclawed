@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +42,7 @@ class ChatScreen(Screen):
         Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E", priority=True),
         Binding("ctrl+p", "pinned", "Pinned", show=True, key_display="^P", priority=True),
         Binding("f2", "cycle_model", "Model", show=True, key_display="F2", priority=True),
+        Binding("f3", "cycle_respond_mode", "Respond mode", show=True, key_display="F3", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -78,6 +80,9 @@ class ChatScreen(Screen):
         self._relay_server = None  # asyncio.Server handle (host only)
         self._tunnel_proc = None   # cloudflared subprocess
         self._relay_receive_task: asyncio.Task | None = None
+        # Runtime group respond mode — loaded from config but NOT persisted to DB.
+        # Cycles via F3: "own" → "mentions" → "all" → "off" → "own"
+        self._group_respond_mode: str = config.group_auto_respond
 
     def _create_new_session(self) -> Session:
         session = Session()
@@ -112,11 +117,14 @@ class ChatScreen(Screen):
 
     def _update_status(self) -> None:
         status = self.query_one("#status-bar", StatusBar)
+        group_mode = self._group_respond_mode if self.session.is_group else None
         status.update_info(
             session_name=self.session.name,
             model=self.session.model,
             cost=self.session.total_cost_usd,
             message_count=self.session.message_count,
+            group_mode=group_mode,
+            clear_group_mode=not self.session.is_group,
         )
 
     # --- Message handling ---
@@ -158,6 +166,14 @@ class ChatScreen(Screen):
                 await self._relay_client.send_message(event.text, sender_type="human")
             except Exception:
                 pass  # Best-effort; don't break the local send flow
+
+        # In group sessions with mode "off", skip Claude entirely.
+        if self.session.is_group and self._group_respond_mode == "off":
+            self._sending = False
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.set_enabled(True)
+            compose.query_one("#compose-input").focus()
+            return
 
         # Create placeholder assistant message
         claude_name = f"{self.config.participant_name}'s Claude" if self.session.is_group else None
@@ -228,10 +244,82 @@ class ChatScreen(Screen):
                 # Increment unread if this isn't the active session
                 # (always active here since we have only one chat panel for now)
                 self._refresh_sidebar()
+
+                # Decide whether to have our Claude respond to this remote message.
+                # Only act on human messages (not Claude messages from other participants).
+                if relay_msg.sender_type == "human":
+                    content = relay_msg.content or ""
+                    mode = self._group_respond_mode
+                    should_respond = False
+
+                    if mode == "all":
+                        should_respond = True
+                    elif mode == "mentions" and self._is_mentioned(content):
+                        should_respond = True
+
+                    if should_respond and not self._sending:
+                        await self._respond_to_group_message(content)
+
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             self.notify(f"Relay receive error: {exc}", severity="error")
+
+    def _is_mentioned(self, content: str) -> bool:
+        """Return True if *content* contains an @mention targeting our Claude.
+
+        Matches any of the following (case-insensitive):
+        - ``@<name>'s Claude``  (full form, e.g. "@Ed's Claude")
+        - ``@<name>``           (short form, e.g. "@Ed")
+
+        The short form is matched as a whole word so that "@Eddie" does not
+        trigger a response meant for "@Ed".
+        """
+        name = self.config.participant_name
+        # Full form first (more specific — no word boundary needed after "Claude")
+        full_pattern = re.compile(
+            r"@" + re.escape(name) + r"'s\s+claude",
+            re.IGNORECASE,
+        )
+        if full_pattern.search(content):
+            return True
+        # Short form — require a word boundary after the name so partial names
+        # don't match unintentionally.
+        short_pattern = re.compile(
+            r"@" + re.escape(name) + r"\b",
+            re.IGNORECASE,
+        )
+        return bool(short_pattern.search(content))
+
+    async def _respond_to_group_message(self, content: str) -> None:
+        """Invoke our Claude in response to a remote group message.
+
+        Creates a placeholder assistant bubble, streams the response, and
+        broadcasts it to the relay room — mirroring the flow in
+        ``on_compose_area_submitted`` but triggered by an incoming message.
+
+        This method is a no-op if ``_sending`` is already True (concurrency
+        guard: skip rather than queue when multiple messages arrive quickly).
+        """
+        if self._sending:
+            return
+        self._sending = True
+
+        claude_name = f"{self.config.participant_name}'s Claude"
+        assistant_msg = Message(
+            role="assistant",
+            content="...",
+            session_id=self.session.id,
+            sender_name=claude_name,
+            sender_type="claude",
+        )
+        self.store.add_message(assistant_msg)
+
+        msg_list = self.query_one("#message-list", MessageList)
+        await msg_list.add_message(assistant_msg)
+
+        # Delegate streaming to the existing worker (handles relay broadcast too)
+        self._stream_response(content, assistant_msg, None)
 
     async def _stop_relay_client(self) -> None:
         """Gracefully disconnect the relay client and cancel the receive task."""
@@ -592,7 +680,7 @@ class ChatScreen(Screen):
         self.app.push_screen(PinnedScreen(self.store, self.session.id), on_pinned_selected)
 
     def action_cycle_model(self) -> None:
-        """Cycle through available models and apply to the current session (Ctrl+M)."""
+        """Cycle through available models and apply to the current session (F2)."""
         current = self._selected_model
         try:
             idx = self.MODELS.index(current) if current in self.MODELS else -1
@@ -605,6 +693,35 @@ class ChatScreen(Screen):
         self.store.update_session(self.session)
         self._update_status()
         self.notify(f"Model: {next_model}", timeout=2)
+
+    # Ordered cycle for F3 respond-mode toggle.
+    RESPOND_MODES = ["own", "mentions", "all", "off"]
+
+    def action_cycle_respond_mode(self) -> None:
+        """Cycle through group chat respond modes (F3).
+
+        Modes:
+          own      — Claude responds only to your own messages (default)
+          mentions — Claude responds when @mentioned
+          all      — Claude responds to every human message
+          off      — Claude never responds automatically
+        """
+        current = self._group_respond_mode
+        try:
+            idx = self.RESPOND_MODES.index(current)
+        except ValueError:
+            idx = -1
+        next_mode = self.RESPOND_MODES[(idx + 1) % len(self.RESPOND_MODES)]
+        self._group_respond_mode = next_mode
+        self._update_status()
+        descriptions = {
+            "own": "Responding to your messages only",
+            "mentions": "Responding to @mentions",
+            "all": "Responding to all human messages",
+            "off": "Auto-respond off",
+        }
+        label = descriptions.get(next_mode, next_mode)
+        self.notify(f"Group respond mode: [{next_mode}] — {label}", timeout=3)
 
     def _switch_to_session(self, session_id: str) -> None:
         """Switch the chat panel to a different session."""
@@ -734,6 +851,8 @@ class ChatScreen(Screen):
             "c           Copy to clipboard\n"
             "/           Search messages\n"
             "F2          Cycle model\n"
+            "F3          Cycle group respond mode\n"
+            "            (own/mentions/all/off)\n"
             "Ctrl+G      Group chat (Create/Join)\n"
             "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"
@@ -743,6 +862,13 @@ class ChatScreen(Screen):
             "Ctrl+D/C    Quit\n"
             "Esc         Deselect / cancel\n"
             "?           This help\n"
+            "\n"
+            "Group respond modes (F3)\n"
+            "  own      — respond to your messages\n"
+            "  mentions — respond when @mentioned\n"
+            "  all      — respond to every human msg\n"
+            "  off      — never auto-respond\n"
+            "@mention syntax: @<name> or @<name>'s Claude\n"
         )
         self.notify(help_text, title="Help", timeout=10)
 

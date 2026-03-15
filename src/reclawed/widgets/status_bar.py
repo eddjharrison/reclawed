@@ -28,6 +28,8 @@ class StatusBar(Static):
         self._message_count = 0
         # Streaming state: None = idle, "thinking" = waiting, float = tok/s
         self._streaming_indicator: str | None = None
+        # Group respond mode badge ("own" | "mentions" | "all" | "off" | None)
+        self._group_mode: str | None = None
 
     def update_info(
         self,
@@ -35,7 +37,21 @@ class StatusBar(Static):
         model: str | None = None,
         cost: float | None = None,
         message_count: int | None = None,
+        group_mode: str | None = None,
+        clear_group_mode: bool = False,
     ) -> None:
+        """Update one or more status bar fields.
+
+        Parameters
+        ----------
+        group_mode:
+            Pass a mode string ("own"/"mentions"/"all"/"off") to display a
+            ``[mode]`` badge when in a group session.  Pass ``None`` to leave
+            the current badge unchanged.
+        clear_group_mode:
+            Pass ``True`` to explicitly remove the group mode badge (e.g. when
+            leaving a group session).
+        """
         if session_name is not None:
             self._session_name = session_name
         if model is not None:
@@ -44,6 +60,10 @@ class StatusBar(Static):
             self._cost = cost
         if message_count is not None:
             self._message_count = message_count
+        if clear_group_mode:
+            self._group_mode = None
+        elif group_mode is not None:
+            self._group_mode = group_mode
         self._refresh_display()
 
     def set_streaming(
@@ -69,6 +89,8 @@ class StatusBar(Static):
 
     def _refresh_display(self) -> None:
         parts = [f"Re:Clawed | {self._session_name}"]
+        if self._group_mode is not None:
+            parts.append(f"[{self._group_mode}]")
         if self._streaming_indicator:
             parts.append(self._streaming_indicator)
         else:
