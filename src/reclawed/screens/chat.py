@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +19,7 @@ from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.models import Message, Session
 from reclawed.relay.client import RelayClient
 from reclawed.store import Store
+from reclawed.utils import copy_to_clipboard
 from reclawed.widgets.chat_sidebar import ChatSidebar
 from reclawed.widgets.compose_area import ComposeArea
 from reclawed.widgets.message_bubble import MessageBubble
@@ -558,20 +558,10 @@ class ChatScreen(Screen):
         msg_list = self.query_one("#message-list", MessageList)
         selected = msg_list.get_selected_message()
         if selected:
-            try:
-                proc = subprocess.run(
-                    ["pbcopy"], input=selected.content.encode(), check=True,
-                )
+            if copy_to_clipboard(selected.content):
                 self.notify("Copied to clipboard")
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                try:
-                    proc = subprocess.run(
-                        ["xclip", "-selection", "clipboard"],
-                        input=selected.content.encode(), check=True,
-                    )
-                    self.notify("Copied to clipboard")
-                except Exception:
-                    self.notify("Copy failed — pbcopy/xclip not available", severity="error")
+            else:
+                self.notify("Copy failed — no clipboard tool available", severity="error")
 
     def action_search(self) -> None:
         if self._compose_focused:

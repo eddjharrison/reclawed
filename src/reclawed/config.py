@@ -30,8 +30,25 @@ def _default_data_dir() -> Path:
 
 
 def _config_file_path() -> Path:
-    """Return the canonical config file location (~/.config/reclawed/config.toml)."""
-    return Path.home() / ".config" / "reclawed" / "config.toml"
+    """Return the canonical config file location, varying by platform.
+
+    - macOS:   ~/Library/Application Support/reclawed/config.toml
+    - Windows: %APPDATA%/reclawed/config.toml  (falls back to ~/AppData/Roaming)
+    - Linux:   ~/.config/reclawed/config.toml  (respects $XDG_CONFIG_HOME)
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / "reclawed" / "config.toml"
+    elif system == "Windows":
+        import os
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "reclawed" / "config.toml"
+    else:
+        import os
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        base = Path(xdg) if xdg else Path.home() / ".config"
+        return base / "reclawed" / "config.toml"
 
 
 @dataclass

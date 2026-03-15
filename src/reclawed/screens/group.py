@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import subprocess
 import uuid
 from urllib.parse import parse_qs, urlparse
+
+from reclawed.utils import copy_to_clipboard
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -203,8 +204,10 @@ class CreateGroupScreen(ModalScreen[dict | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-copy":
-            self._copy_to_clipboard(self._conn_string)
-            self.notify("Copied to clipboard!", timeout=2)
+            if copy_to_clipboard(self._conn_string):
+                self.notify("Copied to clipboard!", timeout=2)
+            else:
+                self.notify("Copy failed — no clipboard tool available", severity="error", timeout=2)
         elif event.button.id == "btn-start":
             self.dismiss({
                 "room_id": self._room_id,
@@ -225,23 +228,6 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         if self._relay_server is not None:
             self._relay_server.close()
         self.dismiss(None)
-
-    @staticmethod
-    def _copy_to_clipboard(text: str) -> None:
-        """Best-effort clipboard copy: pbcopy (macOS), then xclip (Linux)."""
-        try:
-            subprocess.run(["pbcopy"], input=text.encode(), check=True)
-            return
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
-        try:
-            subprocess.run(
-                ["xclip", "-selection", "clipboard"],
-                input=text.encode(),
-                check=True,
-            )
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
 
 
 class JoinGroupScreen(ModalScreen[dict | None]):
