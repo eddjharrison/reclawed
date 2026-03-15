@@ -77,14 +77,30 @@ class RelayClient:
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    async def connect(self) -> None:
+    async def connect(self, timeout: float = 10.0) -> None:
         """Start the background receive/reconnect loop and wait for the first
-        successful connection before returning."""
+        successful connection before returning.
+
+        Raises ``TimeoutError`` if the connection is not established within
+        *timeout* seconds.
+        """
         if self._running:
             return
         self._running = True
         self._bg_task = asyncio.create_task(self._run(), name="relay-client")
-        await self._connected.wait()
+        try:
+            await asyncio.wait_for(self._connected.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # Don't leave the background task running if we timed out
+            self._running = False
+            if self._bg_task:
+                self._bg_task.cancel()
+                try:
+                    await self._bg_task
+                except asyncio.CancelledError:
+                    pass
+                self._bg_task = None
+            raise TimeoutError(f"Could not connect to relay within {timeout}s")
 
     async def disconnect(self) -> None:
         """Gracefully close the connection and stop the background loop."""

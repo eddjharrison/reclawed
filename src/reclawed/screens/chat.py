@@ -206,14 +206,18 @@ class ChatScreen(Screen):
             token=None,  # token is embedded in relay_url query params via server config
         )
         try:
-            await self._relay_client.connect()
+            self.notify("Connecting to relay...", timeout=3)
+            await self._relay_client.connect(timeout=10.0)
             # Start the background receive loop as an asyncio task (non-blocking)
             self._relay_receive_task = asyncio.create_task(
                 self._relay_receive_loop(), name="relay-receive"
             )
             self.notify(f"Connected to group: {session.room_id[:8]}...", timeout=3)
+        except TimeoutError:
+            self.notify("Relay connection timed out — check the URL and try again", severity="error", timeout=8)
+            self._relay_client = None
         except Exception as exc:
-            self.notify(f"Relay connect failed: {exc}", severity="error")
+            self.notify(f"Relay connect failed: {exc}", severity="error", timeout=8)
             self._relay_client = None
 
     async def _relay_receive_loop(self) -> None:
