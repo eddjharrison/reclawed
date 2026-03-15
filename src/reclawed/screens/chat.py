@@ -59,7 +59,12 @@ class ChatScreen(Screen):
         super().__init__()
         self.store = store
         self.config = config
-        self.session = session or self._create_new_session()
+        if session:
+            self.session = session
+        else:
+            # Try to resume the most recent session instead of creating empty ones
+            sessions = store.list_sessions()
+            self.session = sessions[0] if sessions else self._create_new_session()
         self._claude = ClaudeProcess(config.claude_binary)
         self._sending = False
         # Restore the model stored on the session, or start with no override

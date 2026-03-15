@@ -73,7 +73,8 @@ class ChatListItem(Static):
         is_active: bool = False,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
+        # Build content string immediately so Static has it before mount
+        super().__init__(self._build_content(session, last_preview), **kwargs)
         self._session = session
         self._last_preview = last_preview
         self._is_active = is_active
@@ -93,37 +94,36 @@ class ChatListItem(Static):
     # Rendering
     # ------------------------------------------------------------------
 
-    def on_mount(self) -> None:
-        self._render_content()
-
-    def _render_content(self) -> None:
-        """Build the two-line display and push it to the Static renderer."""
-        session = self._session
+    @staticmethod
+    def _build_content(session: Session, preview_text: str) -> str:
+        """Build the two-line Rich markup string for this item."""
         ts_str = format_relative_time(session.updated_at)
 
         # --- Line 1: name + timestamp ---
-        name_display = session.name
+        name = session.name.replace("[", "\\[")
         if session.muted:
-            name_display = f"(muted) {name_display}"
+            name = f"(muted) {name}"
 
         if session.unread_count > 0:
-            line1 = f"[bold]{name_display}[/bold]  [green]{ts_str}[/green]"
+            line1 = f"[bold]{name}[/bold]  [green]{ts_str}[/green]"
         else:
-            line1 = f"{name_display}  [dim]{ts_str}[/dim]"
+            line1 = f"{name}  [dim]{ts_str}[/dim]"
 
         # --- Line 2: preview + unread badge ---
-        preview = self._last_preview.replace("\n", " ")
+        preview = preview_text.replace("\n", " ")
         if len(preview) > _PREVIEW_MAX:
             preview = preview[:_PREVIEW_MAX - 1] + "…"
-
-        # Escape any Rich markup in preview text
         preview = preview.replace("[", "\\[")
 
         line2 = f"[dim]{preview}[/dim]"
         if session.unread_count > 0:
             line2 += f"  [bold green]({session.unread_count})[/bold green]"
 
-        self.update(f"{line1}\n{line2}")
+        return f"{line1}\n{line2}"
+
+    def _render_content(self) -> None:
+        """Re-render the content after data changes."""
+        self.update(self._build_content(self._session, self._last_preview))
 
     def refresh_data(
         self,

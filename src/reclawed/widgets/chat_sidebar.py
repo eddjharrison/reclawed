@@ -112,7 +112,12 @@ class ChatSidebar(Vertical):
         if active_session_id is not None:
             self._active_id = active_session_id
 
-        self._sessions = self._store.list_sessions()
+        all_sessions = self._store.list_sessions()
+        # Hide empty sessions (no messages) unless they're the active one
+        self._sessions = [
+            s for s in all_sessions
+            if s.message_count > 0 or s.id == self._active_id
+        ]
 
         # Build preview text for each session from its last message.
         self._previews.clear()
