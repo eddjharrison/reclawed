@@ -160,10 +160,13 @@ class ChatScreen(Screen):
                 pass  # Best-effort; don't break the local send flow
 
         # Create placeholder assistant message
+        claude_name = f"{self.config.participant_name}'s Claude" if self.session.is_group else None
         assistant_msg = Message(
             role="assistant",
             content="...",
             session_id=self.session.id,
+            sender_name=claude_name,
+            sender_type="claude" if self.session.is_group else None,
         )
         self.store.add_message(assistant_msg)
         await msg_list.add_message(assistant_msg)
@@ -401,12 +404,15 @@ class ChatScreen(Screen):
                         self.session.name = self._derive_session_name(prompt)
                     self.store.update_session(self.session)
 
-                    # In a group session, broadcast Claude's final response so
-                    # all participants can see it.
+                    # In a group session, broadcast Claude's response so
+                    # all participants can see it. Tag it with our name.
                     if self.session.is_group and self._relay_client is not None:
                         try:
+                            claude_label = f"{self.config.participant_name}'s Claude"
                             await self._relay_client.send_message(
-                                assistant_msg.content, sender_type="claude"
+                                assistant_msg.content,
+                                sender_type="claude",
+                                sender_name_override=claude_label,
                             )
                         except Exception:
                             pass  # Best-effort; don't break the local UI

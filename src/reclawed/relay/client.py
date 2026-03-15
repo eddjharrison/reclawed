@@ -105,6 +105,7 @@ class RelayClient:
         content: str,
         sender_type: str | None = None,
         reply_to_seq: int | None = None,
+        sender_name_override: str | None = None,
     ) -> None:
         """Send a chat message to the room.
 
@@ -116,7 +117,7 @@ class RelayClient:
             type="message",
             room_id=self._room_id,
             sender_id=self._participant_id,
-            sender_name=self._participant_name,
+            sender_name=sender_name_override or self._participant_name,
             sender_type=sender_type or self._participant_type,
             timestamp=datetime.now(timezone.utc).isoformat(),
             content=content,
