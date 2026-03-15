@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import subprocess
 import uuid
@@ -86,44 +87,106 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         self._token: str = str(uuid.uuid4()).replace("-", "")[:16]
         self._participant_id: str = str(uuid.uuid4())
         self._relay_server = None  # asyncio.Server handle
+        self._tunnel_proc: asyncio.subprocess.Process | None = None
+        self._tunnel_url: str | None = None
         self._conn_string: str = ""
 
     def compose(self) -> ComposeResult:
-        hostname = self._get_hostname()
-        self._conn_string = (
-            f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
-        )
         with Vertical():
             yield Label("Create Group Chat", id="title")
-            yield Label(
-                "Starting relay server...",
-                id="status",
-            )
+            yield Label("Starting relay server...", id="status")
             yield Label("Share this connection string with participants:", id="conn-string-label")
-            yield Static(self._conn_string, id="conn-string")
-            yield Label(
-                "Note: Remote participants need your public IP / port forwarding.\n"
-                "Replace the hostname above with your public IP if needed.",
-                id="hint",
-            )
+            yield Static("Generating...", id="conn-string")
+            yield Label("", id="hint")
             with Horizontal():
                 yield Button("Copy", id="btn-copy", variant="default")
                 yield Button("Start Chat", id="btn-start", variant="primary")
                 yield Button("Cancel", id="btn-cancel", variant="error")
 
     async def on_mount(self) -> None:
-        """Start the embedded relay server once the screen is visible."""
+        """Start the embedded relay server and attempt cloudflare tunnel."""
         status = self.query_one("#status", Label)
+        hint = self.query_one("#hint", Label)
+        conn_label = self.query_one("#conn-string", Static)
+
+        # Step 1: Start the relay server
         try:
             from reclawed.relay.embedded import start_embedded_relay
             self._relay_server = await start_embedded_relay(
                 port=self._port,
                 token=self._token,
             )
-            status.update("Relay server running.")
+            status.update("Relay server running. Setting up tunnel...")
         except Exception as exc:
             status.update(f"Failed to start relay: {exc}")
             self.query_one("#btn-start", Button).disabled = True
+            return
+
+        # Step 2: Try to start cloudflare tunnel for automatic NAT traversal
+        tunnel_url = await self._start_tunnel()
+
+        if tunnel_url:
+            # Use the public tunnel URL — works from anywhere
+            self._tunnel_url = tunnel_url
+            self._conn_string = (
+                f"{tunnel_url}/room/{self._room_id}?token={self._token}"
+            )
+            status.update("Relay server running with public tunnel.")
+            hint.update("Public URL — anyone with this link can join, no port forwarding needed.")
+        else:
+            # Fall back to LAN IP
+            hostname = self._get_hostname()
+            self._conn_string = (
+                f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
+            )
+            status.update("Relay server running (LAN only).")
+            hint.update(
+                "cloudflared not found — install it for automatic public tunnels:\n"
+                "  brew install cloudflared\n"
+                "For now, remote users need your public IP + port forwarding on "
+                f"port {self._port}."
+            )
+
+        conn_label.update(self._conn_string)
+
+    async def _start_tunnel(self) -> str | None:
+        """Try to start a cloudflare quick tunnel. Returns the public wss:// URL or None."""
+        try:
+            self._tunnel_proc = await asyncio.create_subprocess_exec(
+                "cloudflared", "tunnel", "--url", f"http://localhost:{self._port}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            # cloudflared prints the public URL to stderr
+            # Wait up to 10 seconds for the URL to appear
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                if self._tunnel_proc.stderr:
+                    # Read available data without blocking
+                    try:
+                        data = await asyncio.wait_for(
+                            self._tunnel_proc.stderr.read(4096), timeout=0.1
+                        )
+                        text = data.decode()
+                        # Look for the trycloudflare.com URL
+                        for line in text.splitlines():
+                            if "trycloudflare.com" in line:
+                                # Extract URL from the line
+                                for word in line.split():
+                                    if "trycloudflare.com" in word:
+                                        url = word.strip()
+                                        if url.startswith("http"):
+                                            # Convert https:// to wss://
+                                            return url.replace("https://", "wss://").replace("http://", "ws://")
+                    except asyncio.TimeoutError:
+                        continue
+                if self._tunnel_proc.returncode is not None:
+                    break
+            return None
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
 
     @staticmethod
     def _get_hostname() -> str:
@@ -141,6 +204,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-copy":
             self._copy_to_clipboard(self._conn_string)
+            self.notify("Copied to clipboard!", timeout=2)
         elif event.button.id == "btn-start":
             self.dismiss({
                 "room_id": self._room_id,
@@ -149,12 +213,15 @@ class CreateGroupScreen(ModalScreen[dict | None]):
                 "port": self._port,
                 "participant_id": self._participant_id,
                 "relay_server": self._relay_server,
+                "tunnel_proc": self._tunnel_proc,
+                "conn_string": self._conn_string,
             })
         elif event.button.id == "btn-cancel":
             self.action_cancel()
 
     def action_cancel(self) -> None:
-        # Shut down the relay server if it was started but we're cancelling.
+        if self._tunnel_proc and self._tunnel_proc.returncode is None:
+            self._tunnel_proc.terminate()
         if self._relay_server is not None:
             self._relay_server.close()
         self.dismiss(None)
@@ -269,11 +336,12 @@ class JoinGroupScreen(ModalScreen[dict | None]):
 
     @staticmethod
     def _parse_conn_string(raw: str) -> dict | None:
-        """Parse a ws:// connection string into component parts.
+        """Parse a ws:// or wss:// connection string into component parts.
 
-        Expected format::
+        Supported formats::
 
             ws://<host>:<port>/room/<room_id>?token=<token>
+            wss://<host>/room/<room_id>?token=<token>  (cloudflare tunnel)
 
         Returns a dict with keys: relay_url, room_id, token, participant_id.
         Returns None on parse failure.
@@ -284,8 +352,7 @@ class JoinGroupScreen(ModalScreen[dict | None]):
                 return None
 
             host = parsed.hostname
-            port = parsed.port
-            if not host or not port:
+            if not host:
                 return None
 
             # Extract room_id from path: /room/<room_id>
@@ -297,7 +364,11 @@ class JoinGroupScreen(ModalScreen[dict | None]):
             params = parse_qs(parsed.query)
             token = (params.get("token") or [""])[0] or None
 
-            relay_url = f"{parsed.scheme}://{host}:{port}"
+            # Build relay URL — port is optional for wss:// tunnel URLs
+            if parsed.port:
+                relay_url = f"{parsed.scheme}://{host}:{parsed.port}"
+            else:
+                relay_url = f"{parsed.scheme}://{host}"
 
             return {
                 "room_id": room_id,

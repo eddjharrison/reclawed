@@ -76,6 +76,7 @@ class ChatScreen(Screen):
         # Group chat relay state
         self._relay_client: RelayClient | None = None
         self._relay_server = None  # asyncio.Server handle (host only)
+        self._tunnel_proc = None   # cloudflared subprocess
         self._relay_receive_task: asyncio.Task | None = None
 
     def _create_new_session(self) -> Session:
@@ -247,8 +248,9 @@ class ChatScreen(Screen):
         if result is None:
             return
 
-        # Store the relay server handle so we can clean up later
+        # Store handles for cleanup
         self._relay_server = result.get("relay_server")
+        self._tunnel_proc = result.get("tunnel_proc")
 
         session = Session(
             name="Group Chat",
@@ -716,6 +718,8 @@ class ChatScreen(Screen):
             asyncio.create_task(self._stop_relay_client())
         if self._relay_server is not None:
             self._relay_server.close()
+        if self._tunnel_proc is not None and self._tunnel_proc.returncode is None:
+            self._tunnel_proc.terminate()
         self.app.exit()
 
     def action_help(self) -> None:
