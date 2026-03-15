@@ -203,7 +203,7 @@ class ChatScreen(Screen):
             participant_id=participant_id,
             participant_name=self.config.participant_name,
             participant_type="human",
-            token=None,  # token is embedded in relay_url query params via server config
+            token=session.relay_token,
         )
         try:
             self.notify("Connecting to relay...", timeout=3)
@@ -353,6 +353,7 @@ class ChatScreen(Screen):
             relay_url=result["relay_url"],
             room_id=result["room_id"],
             participant_id=result["participant_id"],
+            relay_token=result.get("token"),
         )
         self.store.create_session(session)
         self.session = session
@@ -379,6 +380,7 @@ class ChatScreen(Screen):
             relay_url=result["relay_url"],
             room_id=result["room_id"],
             participant_id=result["participant_id"],
+            relay_token=result.get("token"),
         )
         self.store.create_session(session)
         self.session = session

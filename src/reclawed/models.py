@@ -52,3 +52,4 @@ class Session:
     relay_url: str | None = None
     room_id: str | None = None
     participant_id: str | None = None
+    relay_token: str | None = None

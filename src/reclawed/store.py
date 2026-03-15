@@ -72,6 +72,7 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN relay_url TEXT",
             "ALTER TABLE sessions ADD COLUMN room_id TEXT",
             "ALTER TABLE sessions ADD COLUMN participant_id TEXT",
+            "ALTER TABLE sessions ADD COLUMN relay_token TEXT",
             # Per-message sender identity (group chat)
             "ALTER TABLE messages ADD COLUMN sender_name TEXT",
             "ALTER TABLE messages ADD COLUMN sender_type TEXT",
@@ -93,13 +94,14 @@ class Store:
         self._conn.execute(
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
-            "is_group, relay_url, room_id, participant_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "is_group, relay_url, room_id, participant_id, relay_token) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
-             int(session.is_group), session.relay_url, session.room_id, session.participant_id),
+             int(session.is_group), session.relay_url, session.room_id, session.participant_id,
+             session.relay_token),
         )
         self._conn.commit()
         return session
@@ -126,12 +128,12 @@ class Store:
         self._conn.execute(
             "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
-            "is_group=?, relay_url=?, room_id=?, participant_id=? WHERE id=?",
+            "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
-             session.id),
+             session.relay_token, session.id),
         )
         self._conn.commit()
 
@@ -339,4 +341,5 @@ class Store:
             relay_url=row["relay_url"] if "relay_url" in keys else None,
             room_id=row["room_id"] if "room_id" in keys else None,
             participant_id=row["participant_id"] if "participant_id" in keys else None,
+            relay_token=row["relay_token"] if "relay_token" in keys else None,
         )
