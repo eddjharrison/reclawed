@@ -174,6 +174,51 @@ class Store:
             ).fetchall()
         return [self._row_to_message(r) for r in rows]
 
+    def export_session_markdown(self, session_id: str) -> str:
+        """Generate a markdown document from all messages in a session.
+
+        Returns an empty string if the session does not exist.  Messages that
+        have a ``reply_to_id`` include a blockquote showing a short excerpt of
+        the parent message so the thread context is visible when reading the
+        exported file.
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return ""
+
+        messages = self.get_session_messages(session_id)
+
+        # Build a lookup so we can resolve parent content in O(1).
+        msg_by_id: dict[str, Message] = {m.id: m for m in messages}
+
+        date_str = session.created_at.strftime("%Y-%m-%d")
+        lines: list[str] = [
+            f"# Session: {session.name}",
+            f"*{date_str}*",
+        ]
+
+        for msg in messages:
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+            if msg.reply_to_id:
+                parent = msg_by_id.get(msg.reply_to_id)
+                if parent:
+                    excerpt = parent.content[:120].replace("\n", " ")
+                    if len(parent.content) > 120:
+                        excerpt += "..."
+                    lines.append(f"> replying to: {excerpt}")
+                    lines.append("")
+
+            speaker = "You" if msg.role == "user" else "Claude"
+            time_str = msg.timestamp.strftime("%H:%M")
+            lines.append(f"**{speaker}** ({time_str})")
+            lines.append(msg.content)
+
+        lines.append("")
+        return "\n".join(lines)
+
     def get_reply_chain(self, message_id: str) -> list[Message]:
         chain: list[Message] = []
         current_id: str | None = message_id

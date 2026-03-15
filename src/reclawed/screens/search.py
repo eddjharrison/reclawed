@@ -79,3 +79,74 @@ class SearchScreen(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class PinnedScreen(ModalScreen[str | None]):
+    """Modal overlay that lists all pinned (bookmarked) messages."""
+
+    DEFAULT_CSS = """
+    PinnedScreen {
+        align: center middle;
+    }
+    PinnedScreen > #pinned-dialog {
+        width: 70;
+        height: 24;
+        border: thick $warning;
+        background: $surface;
+        padding: 1 2;
+    }
+    PinnedScreen #pinned-title {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    PinnedScreen #pinned-empty {
+        width: 100%;
+        text-align: center;
+        color: $text-muted;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, store: Store, session_id: str | None = None) -> None:
+        super().__init__()
+        self.store = store
+        self._session_id = session_id
+
+    def compose(self) -> ComposeResult:
+        with Static(id="pinned-dialog"):
+            yield Label("# Pinned Messages", id="pinned-title")
+            yield ListView(id="pinned-results")
+
+    async def on_mount(self) -> None:
+        results_view = self.query_one("#pinned-results", ListView)
+        pinned = self.store.get_bookmarked_messages(self._session_id)
+
+        if not pinned:
+            await results_view.append(
+                ListItem(Label("No pinned messages. Select a message and press b.", id="pinned-empty"))
+            )
+            return
+
+        for msg in pinned:
+            preview = msg.content[:80].replace("\n", " ")
+            role = "You" if msg.role == "user" else "Claude"
+            ts = msg.timestamp.strftime("%H:%M")
+            label = f"[{role} {ts}] {preview}"
+            item = ListItem(Label(label))
+            item._message_id = msg.id  # type: ignore[attr-defined]
+            await results_view.append(item)
+
+        results_view.focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        message_id = getattr(event.item, "_message_id", None)
+        if message_id:
+            self.dismiss(message_id)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

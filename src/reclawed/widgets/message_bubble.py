@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.events import Click
 from textual.message import Message as TMessage
 from textual.reactive import reactive
 from textual.widgets import Label, Markdown, Static
 
 from reclawed.models import Message
+
+
+class ReplyIndicator(Label):
+    """Clickable reply-quote banner that navigates back to the original message."""
+
+    def __init__(self, text: str, reply_to_id: str, **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._reply_to_id = reply_to_id
+
+    def on_click(self, event: Click) -> None:
+        # Stop propagation so the parent MessageBubble.on_click is not also fired.
+        event.stop()
+        self.post_message(MessageBubble.ReplyClicked(self._reply_to_id))
 
 
 class MessageBubble(Vertical):
@@ -48,6 +63,11 @@ class MessageBubble(Vertical):
         margin-bottom: 0;
         border-left: thick $accent;
     }
+    MessageBubble .pin-indicator {
+        color: $warning;
+        text-style: bold;
+        margin-bottom: 0;
+    }
     MessageBubble .bubble-meta {
         color: $text-disabled;
         text-style: dim;
@@ -61,6 +81,38 @@ class MessageBubble(Vertical):
         def __init__(self, message_id: str) -> None:
             super().__init__()
             self.message_id = message_id
+
+    class ReplyClicked(TMessage):
+        """Posted when the reply-indicator banner is clicked.
+
+        ``reply_to_id`` is the ID of the original message that should be
+        scrolled into view and selected.
+        """
+        def __init__(self, reply_to_id: str) -> None:
+            super().__init__()
+            self.reply_to_id = reply_to_id
+
+    @staticmethod
+    def _format_timestamp(ts: datetime) -> str:
+        """Return a human-readable relative timestamp.
+
+        Rules:
+          < 1 minute  -> "just now"
+          < 1 hour    -> "Xm ago"
+          < 24 hours  -> "Xh ago"
+          otherwise   -> abbreviated date, e.g. "Mar 15"
+        """
+        # Make both sides timezone-aware or both naive for safe subtraction.
+        now = datetime.now(tz=ts.tzinfo) if ts.tzinfo is not None else datetime.now()
+        delta_seconds = (now - ts).total_seconds()
+
+        if delta_seconds < 60:
+            return "just now"
+        if delta_seconds < 3600:
+            return f"{int(delta_seconds // 60)}m ago"
+        if delta_seconds < 86400:
+            return f"{int(delta_seconds // 3600)}h ago"
+        return ts.strftime("%b %-d")
 
     def __init__(self, message: Message, reply_preview: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -79,14 +131,20 @@ class MessageBubble(Vertical):
 
     def compose(self) -> ComposeResult:
         role_label = "You" if self._message.role == "user" else "Claude"
-        ts = self._message.timestamp.strftime("%H:%M")
-        bookmark = " *" if self._message.bookmarked else ""
+        ts = self._format_timestamp(self._message.timestamp)
 
-        if self._reply_preview:
+        if self._message.bookmarked:
+            yield Label("# Pinned", classes="pin-indicator")
+
+        if self._reply_preview and self._message.reply_to_id:
             preview_text = self._reply_preview[:80].replace("\n", " ")
-            yield Label(f">> {preview_text}", classes="reply-indicator")
+            yield ReplyIndicator(
+                f">> {preview_text}",
+                reply_to_id=self._message.reply_to_id,
+                classes="reply-indicator",
+            )
 
-        yield Label(f"{role_label}  {ts}{bookmark}", classes="bubble-header")
+        yield Label(f"{role_label}  {ts}", classes="bubble-header")
 
         self._content_widget = Markdown(self._message.content, id="bubble-content")
         yield self._content_widget

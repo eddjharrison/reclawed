@@ -58,10 +58,18 @@ class ClaudeProcess:
         prompt: str,
         session_id: str | None = None,
         reply_context: str | None = None,
+        model: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a message to Claude and yield streaming events.
 
         If the session is locked, automatically retries without --session-id.
+
+        Args:
+            prompt: The user message to send.
+            session_id: Claude session ID for conversation continuity.
+            reply_context: Optional quoted context prepended to the prompt.
+            model: Optional model override (e.g. "sonnet", "opus", "haiku").
+                   Passed as ``--model <model>`` to the CLI when provided.
         """
         full_prompt = prompt
         if reply_context:
@@ -77,6 +85,8 @@ class ClaudeProcess:
             ]
             if use_session_id:
                 cmd.extend(["--session-id", use_session_id])
+            if model:
+                cmd.extend(["--model", model])
 
             log.debug("Spawning (attempt %d): %s", attempt + 1, " ".join(cmd[:6]))
 
@@ -84,6 +94,7 @@ class ClaudeProcess:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=16 * 1024 * 1024,  # 16MB — Claude result lines can be very long
             )
 
             captured_session_id: str | None = None

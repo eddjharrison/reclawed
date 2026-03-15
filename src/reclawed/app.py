@@ -23,6 +23,9 @@ class ReclawedApp(App):
         self._resume_session_id = resume_session_id
 
     def on_mount(self) -> None:
+        # Apply the configured theme before the screen appears.
+        self.theme = self.config.textual_theme
+
         session = None
         if self._resume_session_id:
             session = self.store.get_session(self._resume_session_id)

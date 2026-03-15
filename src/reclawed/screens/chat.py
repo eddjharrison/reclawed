@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
+from pathlib import Path
 
 from textual import work
 from textual.app import ComposeResult
@@ -12,7 +14,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header
 
 from reclawed.claude import ClaudeProcess, StreamError, StreamResult, StreamSessionId, StreamToken
-from reclawed.config import Config
+from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.models import Message, Session
 from reclawed.store import Store
 from reclawed.widgets.compose_area import ComposeArea
@@ -26,6 +28,7 @@ class ChatScreen(Screen):
     """Main chat screen."""
 
     BINDINGS = [
+        Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D"),
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
         Binding("down", "select_next", "Next msg", show=False),
@@ -34,11 +37,19 @@ class ChatScreen(Screen):
         Binding("b", "bookmark", "Bookmark", show=True, key_display="b"),
         Binding("c", "copy_message", "Copy", show=True, key_display="c"),
         Binding("slash", "search", "Search", show=True, key_display="/"),
+        Binding("ctrl+b", "pinned", "Pinned", show=True, key_display="^B"),
+        Binding("ctrl+m", "cycle_model", "Model", show=True, key_display="^M"),
         Binding("ctrl+n", "new_chat", "New Chat", show=True),
         Binding("ctrl+s", "sessions", "Sessions", show=True),
+        Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T"),
         Binding("escape", "deselect", "Back to compose", show=False),
         Binding("question_mark", "help", "Help", show=True, key_display="?"),
+        Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E"),
     ]
+
+    # Ordered list of models to cycle through with Ctrl+M.
+    # Each entry is a short alias passed verbatim to ``--model`` on the CLI.
+    MODELS = ["sonnet", "opus", "haiku"]
 
     def __init__(self, store: Store, config: Config, session: Session | None = None) -> None:
         super().__init__()
@@ -47,6 +58,9 @@ class ChatScreen(Screen):
         self.session = session or self._create_new_session()
         self._claude = ClaudeProcess(config.claude_binary)
         self._sending = False
+        # Restore the model stored on the session, or start with no override
+        # (None means the CLI will use its own default).
+        self._selected_model: str | None = self.session.model
 
     def _create_new_session(self) -> Session:
         session = Session()
@@ -125,6 +139,26 @@ class ChatScreen(Screen):
         # Stream response
         self._stream_response(event.text, assistant_msg, reply_context)
 
+    @staticmethod
+    def _derive_session_name(prompt: str, max_len: int = 40) -> str:
+        """Return a short session name derived from the first user message.
+
+        Truncates at a word boundary so the name reads naturally. If the
+        prompt is shorter than *max_len* the full text is used (stripped).
+        """
+        text = prompt.strip()
+        # Replace interior newlines with spaces so multi-line prompts read as
+        # a single coherent phrase.
+        text = " ".join(text.splitlines())
+        if len(text) <= max_len:
+            return text
+        # Walk back from the limit to find a clean word boundary.
+        truncated = text[:max_len]
+        last_space = truncated.rfind(" ")
+        if last_space > 0:
+            truncated = truncated[:last_space]
+        return truncated + "..."
+
     @work(exclusive=True, thread=False)
     async def _stream_response(
         self, prompt: str, assistant_msg: Message, reply_context: str | None
@@ -133,11 +167,19 @@ class ChatScreen(Screen):
         bubble = msg_list.get_bubble(assistant_msg.id)
         content_parts: list[str] = []
 
+        status = self.query_one("#status-bar", StatusBar)
+        # Show "Claude is thinking..." while waiting for the first token.
+        status.set_streaming(active=True)
+
+        token_count = 0
+        stream_start: float | None = None  # set on receipt of first StreamToken
+
         try:
             async for event in self._claude.send_message(
                 prompt,
                 session_id=self.session.claude_session_id,
                 reply_context=reply_context,
+                model=self._selected_model,
             ):
                 if isinstance(event, StreamSessionId):
                     self.session.claude_session_id = event.session_id
@@ -145,6 +187,12 @@ class ChatScreen(Screen):
                     self.store.update_session(self.session)
 
                 elif isinstance(event, StreamToken):
+                    if stream_start is None:
+                        stream_start = time.monotonic()
+                    token_count += len(event.text.split())
+                    elapsed = time.monotonic() - stream_start
+                    status.set_streaming(tokens=token_count, elapsed=elapsed, active=True)
+
                     content_parts.append(event.text)
                     if bubble:
                         bubble.update_content("".join(content_parts))
@@ -169,7 +217,20 @@ class ChatScreen(Screen):
                     self.session.message_count = len(
                         self.store.get_session_messages(self.session.id)
                     )
+                    # Auto-name the session after the first assistant response.
+                    if self.session.name == "New Chat":
+                        self.session.name = self._derive_session_name(prompt)
                     self.store.update_session(self.session)
+
+                    # Prefer the authoritative output_tokens from the result over
+                    # our word-count approximation for the final tok/s display.
+                    final_tokens = event.output_tokens or token_count
+                    final_elapsed = (
+                        (time.monotonic() - stream_start) if stream_start else None
+                    )
+                    status.set_streaming(
+                        tokens=final_tokens, elapsed=final_elapsed, active=True
+                    )
 
                     # Re-render the final bubble with metadata
                     if bubble:
@@ -197,7 +258,13 @@ class ChatScreen(Screen):
             compose = self.query_one("#compose-area", ComposeArea)
             compose.set_enabled(True)
             compose.query_one("#compose-input").focus()
-            self._update_status()
+
+            # Keep the final tok/s visible for 3 seconds, then revert to normal.
+            def _clear_streaming_indicator() -> None:
+                status.set_streaming(active=False)
+                self._update_status()
+
+            self.set_timer(3.0, _clear_streaming_indicator)
 
     # --- Selection & interaction ---
 
@@ -216,6 +283,15 @@ class ChatScreen(Screen):
     def on_message_bubble_selected(self, event: MessageBubble.Selected) -> None:
         msg_list = self.query_one("#message-list", MessageList)
         msg_list.select_message(event.message_id)
+
+    def on_message_bubble_reply_clicked(self, event: MessageBubble.ReplyClicked) -> None:
+        """Scroll to and highlight the original message when a reply indicator is clicked."""
+        msg_list = self.query_one("#message-list", MessageList)
+        bubble = msg_list.get_bubble(event.reply_to_id)
+        if bubble is None:
+            self.notify("Original message not found", severity="warning")
+            return
+        msg_list.select_message(event.reply_to_id)
 
     def action_select_prev(self) -> None:
         if self._compose_focused:
@@ -313,9 +389,41 @@ class ChatScreen(Screen):
         from reclawed.screens.search import SearchScreen
         self.app.push_screen(SearchScreen(self.store, self.session.id))
 
+    def action_pinned(self) -> None:
+        """Open the pinned messages view (Ctrl+B).
+
+        Reuses the search modal pattern but lists only bookmarked messages.
+        Selecting an entry scrolls the chat to that message.
+        """
+        from reclawed.screens.search import PinnedScreen
+
+        def on_pinned_selected(message_id: str | None) -> None:
+            if message_id:
+                msg_list = self.query_one("#message-list", MessageList)
+                # select_message scrolls the bubble into view automatically
+                msg_list.select_message(message_id)
+
+        self.app.push_screen(PinnedScreen(self.store, self.session.id), on_pinned_selected)
+
+    def action_cycle_model(self) -> None:
+        """Cycle through available models and apply to the current session (Ctrl+M)."""
+        current = self._selected_model
+        try:
+            idx = self.MODELS.index(current) if current in self.MODELS else -1
+        except ValueError:
+            idx = -1
+        next_model = self.MODELS[(idx + 1) % len(self.MODELS)]
+        self._selected_model = next_model
+        # Persist on session so it survives reloads
+        self.session.model = next_model
+        self.store.update_session(self.session)
+        self._update_status()
+        self.notify(f"Model: {next_model}", timeout=2)
+
     def action_new_chat(self) -> None:
         self.session = self._create_new_session()
         self._claude = ClaudeProcess(self.config.claude_binary)
+        self._selected_model = None  # Reset model override for fresh sessions
 
         async def _reset():
             msg_list = self.query_one("#message-list", MessageList)
@@ -333,6 +441,8 @@ class ChatScreen(Screen):
                 if session:
                     self.session = session
                     self._claude = ClaudeProcess(self.config.claude_binary)
+                    # Restore the model preference stored on the session
+                    self._selected_model = session.model
 
                     async def _reload():
                         msg_list = self.query_one("#message-list", MessageList)
@@ -344,6 +454,10 @@ class ChatScreen(Screen):
 
         self.app.push_screen(SessionPickerScreen(self.store), on_session_selected)
 
+    def action_quit(self) -> None:
+        self._claude.cancel()
+        self.app.exit()
+
     def action_help(self) -> None:
         if self._compose_focused:
             return
@@ -352,18 +466,57 @@ class ChatScreen(Screen):
             "---------------------\n"
             "Enter       Send message\n"
             "Shift+Enter New line\n"
+            "Tab         Navigate/Type mode\n"
             "Up/Down     Navigate messages\n"
             "r           Reply to selected\n"
             "q           Quote selected\n"
-            "b           Bookmark toggle\n"
+            "b           Bookmark/pin toggle\n"
             "c           Copy to clipboard\n"
             "/           Search messages\n"
+            "Ctrl+B      Pinned messages\n"
+            "Ctrl+M      Cycle model\n"
             "Ctrl+N      New chat\n"
             "Ctrl+S      Session picker\n"
+            "Ctrl+T      Cycle theme\n"
+            "Ctrl+E      Export to markdown\n"
+            "Ctrl+D/C    Quit\n"
             "Esc         Deselect / cancel\n"
             "?           This help\n"
         )
         self.notify(help_text, title="Help", timeout=10)
+
+    def action_cycle_theme(self) -> None:
+        """Cycle to the next available theme and apply it immediately."""
+        current = self.config.theme
+        try:
+            idx = THEME_CYCLE.index(current)
+        except ValueError:
+            idx = 0
+        next_theme = THEME_CYCLE[(idx + 1) % len(THEME_CYCLE)]
+        self.config.theme = next_theme
+        self.app.theme = THEME_MAP[next_theme]
+        self.notify(f"Theme: {next_theme}", timeout=2)
+
+    def action_export_markdown(self) -> None:
+        """Export the current session to ~/Desktop/<session-name>.md."""
+        markdown = self.store.export_session_markdown(self.session.id)
+        if not markdown:
+            self.notify("Nothing to export — session is empty.", severity="warning")
+            return
+
+        # Build a safe filename from the session name: replace whitespace and
+        # special characters with underscores, strip leading/trailing ones.
+        safe_name = "".join(
+            c if c.isalnum() or c in "-_." else "_"
+            for c in self.session.name
+        ).strip("_") or "session"
+        dest = Path.home() / "Desktop" / f"{safe_name}.md"
+
+        try:
+            dest.write_text(markdown, encoding="utf-8")
+            self.notify(f"Exported to {dest}", title="Export complete")
+        except OSError as exc:
+            self.notify(f"Export failed: {exc}", severity="error")
 
     def on_quote_preview_cancelled(self, event: QuotePreview.Cancelled) -> None:
         pass  # QuotePreview already hides itself
