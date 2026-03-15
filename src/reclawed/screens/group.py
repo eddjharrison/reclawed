@@ -158,36 +158,36 @@ class CreateGroupScreen(ModalScreen[dict | None]):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            # cloudflared prints the public URL to stderr
-            # Wait up to 10 seconds for the URL to appear
-            for _ in range(20):
-                await asyncio.sleep(0.5)
-                if self._tunnel_proc.stderr:
-                    # Read available data without blocking
-                    try:
-                        data = await asyncio.wait_for(
-                            self._tunnel_proc.stderr.read(4096), timeout=0.1
-                        )
-                        text = data.decode()
-                        # Look for the trycloudflare.com URL
-                        for line in text.splitlines():
-                            if "trycloudflare.com" in line:
-                                # Extract URL from the line
-                                for word in line.split():
-                                    if "trycloudflare.com" in word:
-                                        url = word.strip()
-                                        if url.startswith("http"):
-                                            # Convert https:// to wss://
-                                            return url.replace("https://", "wss://").replace("http://", "ws://")
-                    except asyncio.TimeoutError:
-                        continue
-                if self._tunnel_proc.returncode is not None:
-                    break
-            return None
+            # cloudflared prints the public URL to stderr, line by line.
+            # Read lines with a 15s overall timeout.
+            assert self._tunnel_proc.stderr is not None
+            try:
+                url = await asyncio.wait_for(
+                    self._read_tunnel_url(self._tunnel_proc.stderr),
+                    timeout=15.0,
+                )
+                return url
+            except asyncio.TimeoutError:
+                return None
         except FileNotFoundError:
             return None
         except Exception:
             return None
+
+    @staticmethod
+    async def _read_tunnel_url(stream: asyncio.StreamReader) -> str | None:
+        """Read stderr lines until we find the trycloudflare.com URL."""
+        import re
+        url_pattern = re.compile(r'https?://[^\s|]*trycloudflare\.com[^\s|]*')
+        while True:
+            line = await stream.readline()
+            if not line:
+                return None
+            text = line.decode("utf-8", errors="replace")
+            match = url_pattern.search(text)
+            if match:
+                url = match.group(0).rstrip('.| ')
+                return url.replace("https://", "wss://").replace("http://", "ws://")
 
     @staticmethod
     def _get_hostname() -> str:
