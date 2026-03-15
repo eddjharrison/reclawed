@@ -1,0 +1,64 @@
+/* Re:Clawed main stylesheet */
+
+Screen {
+    layout: vertical;
+}
+
+Header {
+    dock: top;
+}
+
+Footer {
+    dock: bottom;
+}
+
+#message-list {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: $background;
+}
+
+#quote-preview {
+    width: 100%;
+    height: auto;
+    max-height: 3;
+    dock: bottom;
+}
+
+#compose-area {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    max-height: 10;
+    dock: bottom;
+    padding: 0 1;
+    background: $panel;
+}
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+}
+
+/* Message bubbles */
+MessageBubble {
+    width: 100%;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+MessageBubble.user {
+    background: $primary 15%;
+    border-left: thick $success;
+}
+
+MessageBubble.assistant {
+    background: $surface;
+    border-left: thick $primary;
+}
+
+MessageBubble.selected {
+    border: tall $accent;
+    background: $accent 10%;
+}

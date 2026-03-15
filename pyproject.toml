@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reclawed"
+version = "0.1.0"
+description = "WhatsApp-style TUI wrapper for Claude CLI with reply, quote, and threading"
+requires-python = ">=3.12"
+dependencies = [
+    "textual>=0.80.0",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "textual-dev>=1.0",
+]
+
+[project.scripts]
+reclawed = "reclawed.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
