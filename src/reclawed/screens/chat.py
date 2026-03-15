@@ -28,7 +28,15 @@ class ChatScreen(Screen):
     """Main chat screen."""
 
     BINDINGS = [
-        Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D"),
+        # priority=True ensures these work even when TextArea has focus
+        Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
+        Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
+        Binding("ctrl+s", "sessions", "Sessions", show=True, priority=True),
+        Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T", priority=True),
+        Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E", priority=True),
+        Binding("ctrl+p", "pinned", "Pinned", show=True, key_display="^P", priority=True),
+        Binding("f2", "cycle_model", "Model", show=True, key_display="F2", priority=True),
+        # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
         Binding("down", "select_next", "Next msg", show=False),
@@ -37,14 +45,8 @@ class ChatScreen(Screen):
         Binding("b", "bookmark", "Bookmark", show=True, key_display="b"),
         Binding("c", "copy_message", "Copy", show=True, key_display="c"),
         Binding("slash", "search", "Search", show=True, key_display="/"),
-        Binding("ctrl+b", "pinned", "Pinned", show=True, key_display="^B"),
-        Binding("ctrl+m", "cycle_model", "Model", show=True, key_display="^M"),
-        Binding("ctrl+n", "new_chat", "New Chat", show=True),
-        Binding("ctrl+s", "sessions", "Sessions", show=True),
-        Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T"),
         Binding("escape", "deselect", "Back to compose", show=False),
         Binding("question_mark", "help", "Help", show=True, key_display="?"),
-        Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E"),
     ]
 
     # Ordered list of models to cycle through with Ctrl+M.
@@ -473,12 +475,12 @@ class ChatScreen(Screen):
             "b           Bookmark/pin toggle\n"
             "c           Copy to clipboard\n"
             "/           Search messages\n"
-            "Ctrl+B      Pinned messages\n"
-            "Ctrl+M      Cycle model\n"
+            "F2          Cycle model\n"
+            "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"
-            "Ctrl+S      Session picker\n"
+            "Ctrl+S      Sessions\n"
             "Ctrl+T      Cycle theme\n"
-            "Ctrl+E      Export to markdown\n"
+            "Ctrl+E      Export markdown\n"
             "Ctrl+D/C    Quit\n"
             "Esc         Deselect / cancel\n"
             "?           This help\n"

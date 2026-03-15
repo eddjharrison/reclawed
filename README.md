@@ -24,20 +24,32 @@ reclawed --session <id>   # resume specific session
 
 ## Keybindings
 
+**Always available** (work even while typing):
+
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
-| `Tab` | Toggle navigate/type mode |
-| `Up/Down` | Select messages (navigate mode) |
-| `r` | Reply to selected message |
-| `q` | Quote selected into compose |
-| `b` | Bookmark toggle |
-| `c` | Copy to clipboard |
-| `/` | Search messages |
 | `Ctrl+N` | New chat |
 | `Ctrl+S` | Session picker |
-| `Esc` | Deselect / cancel reply |
+| `Ctrl+T` | Cycle theme (dark/light/dracula/monokai) |
+| `Ctrl+E` | Export session to markdown |
+| `Ctrl+P` | View pinned messages |
+| `F2` | Cycle model (sonnet/opus/haiku) |
+| `Ctrl+D` / `Ctrl+C` | Quit |
+
+**Navigate mode** (press `Tab` to toggle):
+
+| Key | Action |
+|-----|--------|
+| `Up/Down` | Select messages |
+| `r` | Reply to selected message |
+| `q` | Quote selected into compose |
+| `b` | Bookmark/pin toggle |
+| `c` | Copy to clipboard |
+| `/` | Search messages |
+| `Esc` | Deselect / back to typing |
+| `?` | Help |
 
 ## How it works
 
