@@ -2,7 +2,7 @@
 
 A WhatsApp-style TUI for the Claude CLI. Reply to messages, quote, bookmark, and manage sessions — all on top of your existing Claude Code subscription. No API key needed.
 
-
+![Re:Clawed Screenshot](screenshot.png)
 
 ## Install
 
