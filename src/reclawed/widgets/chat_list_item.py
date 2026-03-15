@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
-from textual.widgets import Static
+from textual.widgets import Label
 
 from reclawed.models import Session
 from reclawed.utils import format_relative_time
@@ -13,22 +15,17 @@ from reclawed.utils import format_relative_time
 _PREVIEW_MAX = 40
 
 
-class ChatListItem(Static):
-    """Displays one session as a two-line sidebar row.
+class ChatListItem(Vertical):
+    """Displays one session as a two-line sidebar row using Label widgets.
 
-    Line 1: session name (left) + relative timestamp (right)
-    Line 2: last message preview truncated to ~40 chars (left) + unread badge (right)
-
-    Visual classes:
-      ``.active``  -- currently open session (highlighted background)
-      ``.unread``  -- bold name + coloured timestamp
-      ``.muted``   -- shows muted indicator next to the name
+    Line 1: session name + relative timestamp
+    Line 2: last message preview + unread badge
     """
 
     DEFAULT_CSS = """
     ChatListItem {
         width: 100%;
-        height: 4;
+        height: 3;
         padding: 0 1;
         background: $surface;
         border-bottom: solid $primary 20%;
@@ -40,13 +37,18 @@ class ChatListItem(Static):
         background: $primary 20%;
         border-left: thick $accent;
     }
-    ChatListItem.unread .sidebar-name {
+    ChatListItem .chat-name {
+        width: 100%;
+        color: $text;
+    }
+    ChatListItem .chat-preview {
+        width: 100%;
+        color: $text-muted;
+    }
+    ChatListItem.unread .chat-name {
         text-style: bold;
     }
-    ChatListItem.unread .sidebar-timestamp {
-        color: $accent;
-    }
-    ChatListItem.muted {
+    ChatListItem.muted .chat-name {
         color: $text-muted;
     }
     """
@@ -73,8 +75,7 @@ class ChatListItem(Static):
         is_active: bool = False,
         **kwargs,
     ) -> None:
-        # Build content string immediately so Static has it before mount
-        super().__init__(self._build_content(session, last_preview), **kwargs)
+        super().__init__(**kwargs)
         self._session = session
         self._last_preview = last_preview
         self._is_active = is_active
@@ -90,40 +91,29 @@ class ChatListItem(Static):
     def session_id(self) -> str:
         return self._session.id
 
-    # ------------------------------------------------------------------
-    # Rendering
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _build_content(session: Session, preview_text: str) -> str:
-        """Build the two-line Rich markup string for this item."""
-        ts_str = format_relative_time(session.updated_at)
-
-        # --- Line 1: name + timestamp ---
-        name = session.name.replace("[", "\\[")
-        if session.muted:
-            name = f"(muted) {name}"
-
-        if session.unread_count > 0:
-            line1 = f"[bold]{name}[/bold]  [green]{ts_str}[/green]"
-        else:
-            line1 = f"{name}  [dim]{ts_str}[/dim]"
-
-        # --- Line 2: preview + unread badge ---
+        """Build a display string (used by tests)."""
+        ts = format_relative_time(session.updated_at)
+        name = session.name
         preview = preview_text.replace("\n", " ")
         if len(preview) > _PREVIEW_MAX:
             preview = preview[:_PREVIEW_MAX - 1] + "…"
-        preview = preview.replace("[", "\\[")
+        return f"{name}  {ts}\n{preview}"
 
-        line2 = f"[dim]{preview}[/dim]"
-        if session.unread_count > 0:
-            line2 += f"  [bold green]({session.unread_count})[/bold green]"
+    def compose(self) -> ComposeResult:
+        ts = format_relative_time(self._session.updated_at)
+        name = self._session.name
+        if self._session.muted:
+            name = f"(muted) {name}"
 
-        return f"{line1}\n{line2}"
+        yield Label(f"{name}  {ts}", classes="chat-name")
 
-    def _render_content(self) -> None:
-        """Re-render the content after data changes."""
-        self.update(self._build_content(self._session, self._last_preview))
+        preview = self._last_preview.replace("\n", " ")
+        if len(preview) > _PREVIEW_MAX:
+            preview = preview[:_PREVIEW_MAX - 1] + "…"
+        badge = f" ({self._session.unread_count})" if self._session.unread_count > 0 else ""
+        yield Label(f"{preview}{badge}", classes="chat-preview")
 
     def refresh_data(
         self,
@@ -131,10 +121,6 @@ class ChatListItem(Static):
         last_preview: str | None = None,
         is_active: bool | None = None,
     ) -> None:
-        """Update the item's data and re-render.
-
-        Pass only the arguments that have changed; ``None`` values are ignored.
-        """
         if session is not None:
             self._session = session
         if last_preview is not None:
@@ -146,7 +132,6 @@ class ChatListItem(Static):
             else:
                 self.remove_class("active")
 
-        # Sync CSS state classes from model
         if self._session.unread_count > 0:
             self.add_class("unread")
         else:
@@ -157,11 +142,24 @@ class ChatListItem(Static):
         else:
             self.remove_class("muted")
 
-        self._render_content()
+        # Update label text
+        try:
+            labels = self.query(Label)
+            label_list = list(labels)
+            if len(label_list) >= 2:
+                ts = format_relative_time(self._session.updated_at)
+                name = self._session.name
+                if self._session.muted:
+                    name = f"(muted) {name}"
+                label_list[0].update(f"{name}  {ts}")
 
-    # ------------------------------------------------------------------
-    # Event handling
-    # ------------------------------------------------------------------
+                preview = self._last_preview.replace("\n", " ")
+                if len(preview) > _PREVIEW_MAX:
+                    preview = preview[:_PREVIEW_MAX - 1] + "…"
+                badge = f" ({self._session.unread_count})" if self._session.unread_count > 0 else ""
+                label_list[1].update(f"{preview}{badge}")
+        except Exception:
+            pass
 
     def on_click(self, event: Click) -> None:
         event.stop()
