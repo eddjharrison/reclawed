@@ -5,7 +5,6 @@ from __future__ import annotations
 from textual.events import Click
 from textual.message import Message as TMessage
 from textual.widgets import Static
-from rich.text import Text
 
 from reclawed.models import Session
 from reclawed.utils import format_relative_time
@@ -98,37 +97,33 @@ class ChatListItem(Static):
         self._render_content()
 
     def _render_content(self) -> None:
-        """Build the two-line Rich Text and push it to the Static renderer."""
+        """Build the two-line display and push it to the Static renderer."""
         session = self._session
         ts_str = format_relative_time(session.updated_at)
 
-        # --- Line 1: name (left) + timestamp (right) ---
+        # --- Line 1: name + timestamp ---
         name_display = session.name
         if session.muted:
-            name_display = f"[muted] {name_display}"
+            name_display = f"(muted) {name_display}"
 
-        line1 = Text(overflow="fold", no_wrap=True)
-        line1.append(name_display, style="bold" if session.unread_count > 0 else "")
-        # Right-align timestamp by padding -- we pad at render time with justify
-        line1.append(f"  {ts_str}", style="dim" if session.unread_count == 0 else "$accent")
+        if session.unread_count > 0:
+            line1 = f"[bold]{name_display}[/bold]  [green]{ts_str}[/green]"
+        else:
+            line1 = f"{name_display}  [dim]{ts_str}[/dim]"
 
-        # --- Line 2: preview (left) + unread badge (right) ---
+        # --- Line 2: preview + unread badge ---
         preview = self._last_preview.replace("\n", " ")
         if len(preview) > _PREVIEW_MAX:
-            preview = preview[:_PREVIEW_MAX - 1] + "\u2026"  # ellipsis char
+            preview = preview[:_PREVIEW_MAX - 1] + "…"
 
-        line2 = Text(overflow="fold", no_wrap=True)
-        line2.append(preview, style="dim")
+        # Escape any Rich markup in preview text
+        preview = preview.replace("[", "\\[")
+
+        line2 = f"[dim]{preview}[/dim]"
         if session.unread_count > 0:
-            badge = f"  [{session.unread_count}]"
-            line2.append(badge, style="bold green")
+            line2 += f"  [bold green]({session.unread_count})[/bold green]"
 
-        combined = Text()
-        combined.append_text(line1)
-        combined.append("\n")
-        combined.append_text(line2)
-
-        self.update(combined)
+        self.update(f"{line1}\n{line2}")
 
     def refresh_data(
         self,
