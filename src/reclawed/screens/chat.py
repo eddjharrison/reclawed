@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from textual import work
@@ -17,6 +18,7 @@ from textual.widgets import Footer, Header
 from reclawed.claude import ClaudeProcess, StreamError, StreamResult, StreamSessionId, StreamToken
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.models import Message, Session
+from reclawed.relay.client import RelayClient
 from reclawed.store import Store
 from reclawed.widgets.chat_sidebar import ChatSidebar
 from reclawed.widgets.compose_area import ComposeArea
@@ -33,6 +35,7 @@ class ChatScreen(Screen):
         # priority=True ensures these work even when TextArea has focus
         Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
         Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
+        Binding("ctrl+g", "group_menu", "Group", show=True, key_display="^G", priority=True),
         Binding("ctrl+s", "toggle_sidebar", "Sidebar", show=True, priority=True),
         Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T", priority=True),
         Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E", priority=True),
@@ -70,6 +73,10 @@ class ChatScreen(Screen):
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
         self._selected_model: str | None = self.session.model
+        # Group chat relay state
+        self._relay_client: RelayClient | None = None
+        self._relay_server = None  # asyncio.Server handle (host only)
+        self._relay_receive_task: asyncio.Task | None = None
 
     def _create_new_session(self) -> Session:
         session = Session()
@@ -136,11 +143,20 @@ class ChatScreen(Screen):
             content=event.text,
             session_id=self.session.id,
             reply_to_id=reply_to_id,
+            sender_name=self.config.participant_name if self.session.is_group else None,
+            sender_type="human" if self.session.is_group else None,
         )
         self.store.add_message(user_msg)
 
         msg_list = self.query_one("#message-list", MessageList)
         await msg_list.add_message(user_msg)
+
+        # In group sessions, broadcast the user's message to all participants.
+        if self.session.is_group and self._relay_client is not None:
+            try:
+                await self._relay_client.send_message(event.text, sender_type="human")
+            except Exception:
+                pass  # Best-effort; don't break the local send flow
 
         # Create placeholder assistant message
         assistant_msg = Message(
@@ -153,6 +169,152 @@ class ChatScreen(Screen):
 
         # Stream response
         self._stream_response(event.text, assistant_msg, reply_context)
+
+    # --- Group chat relay helpers ---
+
+    async def _start_relay_client(self, session: Session) -> None:
+        """Create and connect a RelayClient for the given group session."""
+        if session.relay_url is None or session.room_id is None:
+            return
+        participant_id = session.participant_id or str(uuid.uuid4())
+        self._relay_client = RelayClient(
+            url=session.relay_url,
+            room_id=session.room_id,
+            participant_id=participant_id,
+            participant_name=self.config.participant_name,
+            participant_type="human",
+            token=None,  # token is embedded in relay_url query params via server config
+        )
+        try:
+            await self._relay_client.connect()
+            # Start the background receive loop as an asyncio task (non-blocking)
+            self._relay_receive_task = asyncio.create_task(
+                self._relay_receive_loop(), name="relay-receive"
+            )
+            self.notify(f"Connected to group: {session.room_id[:8]}...", timeout=3)
+        except Exception as exc:
+            self.notify(f"Relay connect failed: {exc}", severity="error")
+            self._relay_client = None
+
+    async def _relay_receive_loop(self) -> None:
+        """Background task: receive relay messages and add them to the message list."""
+        if self._relay_client is None:
+            return
+        try:
+            async for relay_msg in self._relay_client.receive_messages():
+                # Ignore presence/heartbeat/system messages
+                if relay_msg.type != "message":
+                    continue
+                # Ignore messages sent by this participant (already shown locally)
+                if relay_msg.sender_id == self._relay_client._participant_id:
+                    continue
+
+                msg = Message(
+                    role="user" if relay_msg.sender_type == "human" else "assistant",
+                    content=relay_msg.content or "",
+                    session_id=self.session.id,
+                    sender_name=relay_msg.sender_name,
+                    sender_type=relay_msg.sender_type,
+                )
+                self.store.add_message(msg)
+
+                msg_list = self.query_one("#message-list", MessageList)
+                await msg_list.add_message(msg)
+
+                # Increment unread if this isn't the active session
+                # (always active here since we have only one chat panel for now)
+                self._refresh_sidebar()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            self.notify(f"Relay receive error: {exc}", severity="error")
+
+    async def _stop_relay_client(self) -> None:
+        """Gracefully disconnect the relay client and cancel the receive task."""
+        if self._relay_receive_task is not None:
+            self._relay_receive_task.cancel()
+            try:
+                await self._relay_receive_task
+            except asyncio.CancelledError:
+                pass
+            self._relay_receive_task = None
+        if self._relay_client is not None:
+            await self._relay_client.disconnect()
+            self._relay_client = None
+
+    def _on_create_group_dismissed(self, result: dict | None) -> None:
+        """Called when CreateGroupScreen is dismissed."""
+        if result is None:
+            return
+
+        # Store the relay server handle so we can clean up later
+        self._relay_server = result.get("relay_server")
+
+        session = Session(
+            name="Group Chat",
+            is_group=True,
+            relay_url=result["relay_url"],
+            room_id=result["room_id"],
+            participant_id=result["participant_id"],
+        )
+        self.store.create_session(session)
+        self.session = session
+        self._claude = ClaudeProcess(self.config.claude_binary)
+        self._selected_model = None
+
+        async def _setup():
+            msg_list = self.query_one("#message-list", MessageList)
+            await msg_list.clear_messages()
+            self._update_status()
+            self._refresh_sidebar()
+            await self._start_relay_client(session)
+
+        self.app.call_later(_setup)
+
+    def _on_join_group_dismissed(self, result: dict | None) -> None:
+        """Called when JoinGroupScreen is dismissed."""
+        if result is None:
+            return
+
+        session = Session(
+            name="Group Chat",
+            is_group=True,
+            relay_url=result["relay_url"],
+            room_id=result["room_id"],
+            participant_id=result["participant_id"],
+        )
+        self.store.create_session(session)
+        self.session = session
+        self._claude = ClaudeProcess(self.config.claude_binary)
+        self._selected_model = None
+
+        async def _setup():
+            msg_list = self.query_one("#message-list", MessageList)
+            await msg_list.clear_messages()
+            self._update_status()
+            self._refresh_sidebar()
+            await self._start_relay_client(session)
+
+        self.app.call_later(_setup)
+
+    def action_group_menu(self) -> None:
+        """Show the Create Group / Join Group picker (Ctrl+G)."""
+        from reclawed.screens.group import CreateGroupScreen, JoinGroupScreen
+        from reclawed.widgets.group_menu import GroupMenuScreen
+
+        def on_choice(choice: str | None) -> None:
+            if choice == "create":
+                self.app.push_screen(
+                    CreateGroupScreen(port=self.config.relay_port),
+                    self._on_create_group_dismissed,
+                )
+            elif choice == "join":
+                self.app.push_screen(
+                    JoinGroupScreen(),
+                    self._on_join_group_dismissed,
+                )
+
+        self.app.push_screen(GroupMenuScreen(), on_choice)
 
     @staticmethod
     def _derive_session_name(prompt: str, max_len: int = 40) -> str:
@@ -233,9 +395,19 @@ class ChatScreen(Screen):
                         self.store.get_session_messages(self.session.id)
                     )
                     # Auto-name the session after the first assistant response.
-                    if self.session.name == "New Chat":
+                    if self.session.name in ("New Chat", "Group Chat"):
                         self.session.name = self._derive_session_name(prompt)
                     self.store.update_session(self.session)
+
+                    # In a group session, broadcast Claude's final response so
+                    # all participants can see it.
+                    if self.session.is_group and self._relay_client is not None:
+                        try:
+                            await self._relay_client.send_message(
+                                assistant_msg.content, sender_type="claude"
+                            )
+                        except Exception:
+                            pass  # Best-effort; don't break the local UI
 
                     # Prefer the authoritative output_tokens from the result over
                     # our word-count approximation for the final tok/s display.
@@ -448,11 +620,16 @@ class ChatScreen(Screen):
         self._selected_model = session.model
 
         async def _reload():
+            # Disconnect from the previous relay (if any) before switching
+            await self._stop_relay_client()
             msg_list = self.query_one("#message-list", MessageList)
             await msg_list.clear_messages()
             await self._load_session_messages()
             self._update_status()
             self._refresh_sidebar()
+            # Reconnect if the new session is a group session
+            if session.is_group:
+                await self._start_relay_client(session)
 
         self.app.call_later(_reload)
 
@@ -534,6 +711,11 @@ class ChatScreen(Screen):
 
     def action_quit(self) -> None:
         self._claude.cancel()
+        # Best-effort relay cleanup — fire-and-forget on exit
+        if self._relay_client is not None:
+            asyncio.create_task(self._stop_relay_client())
+        if self._relay_server is not None:
+            self._relay_server.close()
         self.app.exit()
 
     def action_help(self) -> None:
@@ -552,6 +734,7 @@ class ChatScreen(Screen):
             "c           Copy to clipboard\n"
             "/           Search messages\n"
             "F2          Cycle model\n"
+            "Ctrl+G      Group chat (Create/Join)\n"
             "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"
             "Ctrl+S      Toggle sidebar\n"

@@ -55,6 +55,12 @@ class MessageBubble(Vertical):
     MessageBubble.assistant .bubble-header {
         color: $primary;
     }
+    MessageBubble .bubble-header.sender-human {
+        color: $success;
+    }
+    MessageBubble .bubble-header.sender-claude {
+        color: $primary;
+    }
     MessageBubble .reply-indicator {
         color: $accent;
         text-style: italic;
@@ -108,7 +114,13 @@ class MessageBubble(Vertical):
         return self._message.id
 
     def compose(self) -> ComposeResult:
-        role_label = "You" if self._message.role == "user" else "Claude"
+        # If the message carries an explicit sender_name (group chat), use it.
+        # Otherwise fall back to the generic "You" / "Claude" role labels.
+        if self._message.sender_name:
+            role_label = self._message.sender_name
+        else:
+            role_label = "You" if self._message.role == "user" else "Claude"
+
         ts = format_relative_time(self._message.timestamp)
 
         if self._message.bookmarked:
@@ -122,7 +134,15 @@ class MessageBubble(Vertical):
                 classes="reply-indicator",
             )
 
-        yield Label(f"{role_label}  {ts}", classes="bubble-header")
+        # Build CSS classes for the header — add sender_type class when present
+        # so group chat messages get colour-coded regardless of the role field.
+        header_classes = "bubble-header"
+        if self._message.sender_type == "human":
+            header_classes += " sender-human"
+        elif self._message.sender_type == "claude":
+            header_classes += " sender-claude"
+
+        yield Label(f"{role_label}  {ts}", classes=header_classes)
 
         self._content_widget = Markdown(self._message.content, id="bubble-content")
         yield self._content_widget

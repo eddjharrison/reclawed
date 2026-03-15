@@ -31,6 +31,8 @@ class Message:
     model: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    sender_name: str | None = None  # display name, e.g. "Ed", "Brother"
+    sender_type: str | None = None  # "human" | "claude"
 
 
 @dataclass
@@ -46,3 +48,7 @@ class Session:
     muted: bool = False
     archived: bool = False
     unread_count: int = 0
+    is_group: bool = False
+    relay_url: str | None = None
+    room_id: str | None = None
+    participant_id: str | None = None

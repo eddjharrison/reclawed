@@ -41,6 +41,8 @@ class Config:
     stream_throttle_ms: int = 50
     max_quote_length: int = 200
     theme: str = "dark"
+    participant_name: str = "User"
+    relay_port: int = 8765
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -85,5 +87,9 @@ class Config:
             kwargs["max_quote_length"] = int(raw["max_quote_length"])  # type: ignore[arg-type]
         if "theme" in raw:
             kwargs["theme"] = str(raw["theme"])
+        if "participant_name" in raw:
+            kwargs["participant_name"] = str(raw["participant_name"])
+        if "relay_port" in raw:
+            kwargs["relay_port"] = int(raw["relay_port"])  # type: ignore[arg-type]
 
         return cls(**kwargs)  # type: ignore[arg-type]

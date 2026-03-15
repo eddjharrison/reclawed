@@ -51,6 +51,9 @@ class ChatListItem(Vertical):
     ChatListItem.muted .chat-name {
         color: $text-muted;
     }
+    ChatListItem.group .chat-name {
+        color: $accent;
+    }
     """
 
     class Clicked(TMessage):
@@ -86,6 +89,8 @@ class ChatListItem(Vertical):
             self.add_class("unread")
         if session.muted:
             self.add_class("muted")
+        if session.is_group:
+            self.add_class("group")
 
     @property
     def session_id(self) -> str:
@@ -104,6 +109,8 @@ class ChatListItem(Vertical):
     def compose(self) -> ComposeResult:
         ts = format_relative_time(self._session.updated_at)
         name = self._session.name
+        if self._session.is_group:
+            name = f"[G] {name}"
         if self._session.muted:
             name = f"(muted) {name}"
 
@@ -142,6 +149,11 @@ class ChatListItem(Vertical):
         else:
             self.remove_class("muted")
 
+        if self._session.is_group:
+            self.add_class("group")
+        else:
+            self.remove_class("group")
+
         # Update label text
         try:
             labels = self.query(Label)
@@ -149,6 +161,8 @@ class ChatListItem(Vertical):
             if len(label_list) >= 2:
                 ts = format_relative_time(self._session.updated_at)
                 name = self._session.name
+                if self._session.is_group:
+                    name = f"[G] {name}"
                 if self._session.muted:
                     name = f"(muted) {name}"
                 label_list[0].update(f"{name}  {ts}")

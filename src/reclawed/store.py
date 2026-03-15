@@ -67,6 +67,14 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN muted INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0",
+            # Group chat columns
+            "ALTER TABLE sessions ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE sessions ADD COLUMN relay_url TEXT",
+            "ALTER TABLE sessions ADD COLUMN room_id TEXT",
+            "ALTER TABLE sessions ADD COLUMN participant_id TEXT",
+            # Per-message sender identity (group chat)
+            "ALTER TABLE messages ADD COLUMN sender_name TEXT",
+            "ALTER TABLE messages ADD COLUMN sender_type TEXT",
         ]
         for sql in migrations:
             try:
@@ -84,12 +92,14 @@ class Store:
     def create_session(self, session: Session) -> Session:
         self._conn.execute(
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
-            "total_cost_usd, message_count, muted, archived, unread_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "total_cost_usd, message_count, muted, archived, unread_count, "
+            "is_group, relay_url, room_id, participant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
-             int(session.muted), int(session.archived), session.unread_count),
+             int(session.muted), int(session.archived), session.unread_count,
+             int(session.is_group), session.relay_url, session.room_id, session.participant_id),
         )
         self._conn.commit()
         return session
@@ -115,10 +125,13 @@ class Store:
         session.updated_at = datetime.now(timezone.utc)
         self._conn.execute(
             "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
-            "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=? WHERE id=?",
+            "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
+            "is_group=?, relay_url=?, room_id=?, participant_id=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
-             int(session.muted), int(session.archived), session.unread_count, session.id),
+             int(session.muted), int(session.archived), session.unread_count,
+             int(session.is_group), session.relay_url, session.room_id, session.participant_id,
+             session.id),
         )
         self._conn.commit()
 
@@ -152,12 +165,14 @@ class Store:
             msg.seq = row[0]
         self._conn.execute(
             "INSERT INTO messages (id, seq, role, content, timestamp, session_id, claude_session_id, "
-            "reply_to_id, bookmarked, cost_usd, duration_ms, model, input_tokens, output_tokens) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "reply_to_id, bookmarked, cost_usd, duration_ms, model, input_tokens, output_tokens, "
+            "sender_name, sender_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (msg.id, msg.seq, msg.role, msg.content, _fmt_dt(msg.timestamp),
              msg.session_id, msg.claude_session_id, msg.reply_to_id,
              int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
-             msg.model, msg.input_tokens, msg.output_tokens),
+             msg.model, msg.input_tokens, msg.output_tokens,
+             msg.sender_name, msg.sender_type),
         )
         self._conn.commit()
         # Update session message count
@@ -171,9 +186,10 @@ class Store:
     def update_message(self, msg: Message) -> None:
         self._conn.execute(
             "UPDATE messages SET content=?, bookmarked=?, cost_usd=?, duration_ms=?, model=?, "
-            "input_tokens=?, output_tokens=?, claude_session_id=? WHERE id=?",
+            "input_tokens=?, output_tokens=?, claude_session_id=?, sender_name=?, sender_type=? WHERE id=?",
             (msg.content, int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
-             msg.model, msg.input_tokens, msg.output_tokens, msg.claude_session_id, msg.id),
+             msg.model, msg.input_tokens, msg.output_tokens, msg.claude_session_id,
+             msg.sender_name, msg.sender_type, msg.id),
         )
         self._conn.commit()
 
@@ -285,6 +301,7 @@ class Store:
     # --- Helpers ---
 
     def _row_to_message(self, row: sqlite3.Row) -> Message:
+        keys = row.keys()
         return Message(
             id=row["id"],
             seq=row["seq"],
@@ -300,9 +317,12 @@ class Store:
             model=row["model"],
             input_tokens=row["input_tokens"],
             output_tokens=row["output_tokens"],
+            sender_name=row["sender_name"] if "sender_name" in keys else None,
+            sender_type=row["sender_type"] if "sender_type" in keys else None,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:
+        keys = row.keys()
         return Session(
             id=row["id"],
             claude_session_id=row["claude_session_id"],
@@ -315,4 +335,8 @@ class Store:
             muted=bool(row["muted"]),
             archived=bool(row["archived"]),
             unread_count=row["unread_count"],
+            is_group=bool(row["is_group"]) if "is_group" in keys else False,
+            relay_url=row["relay_url"] if "relay_url" in keys else None,
+            room_id=row["room_id"] if "room_id" in keys else None,
+            participant_id=row["participant_id"] if "participant_id" in keys else None,
         )
