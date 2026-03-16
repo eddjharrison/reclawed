@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
 from textual.widgets import Collapsible, Label
@@ -23,8 +23,8 @@ class _NewChatLabel(Label):
 class WorkspaceSection(Vertical):
     """A collapsible workspace section in the sidebar.
 
-    Contains ChatListItem widgets and a clickable '+ New Chat' label.
-    Posts ``NewChatInWorkspace(cwd)`` when the add label is clicked.
+    Contains ChatListItem widgets with a clickable '[+]' in the header.
+    Posts ``NewChatInWorkspace(cwd)`` when the add button is clicked.
     """
 
     DEFAULT_CSS = """
@@ -32,13 +32,17 @@ class WorkspaceSection(Vertical):
         width: 100%;
         height: auto;
     }
-    WorkspaceSection .ws-new-chat {
+    WorkspaceSection .ws-header {
         width: 100%;
         height: 1;
-        padding: 0 1;
-        color: $text-muted;
     }
-    WorkspaceSection .ws-new-chat:hover {
+    WorkspaceSection .ws-add-btn {
+        width: 4;
+        height: 1;
+        color: $text-muted;
+        text-align: center;
+    }
+    WorkspaceSection .ws-add-btn:hover {
         color: $accent;
         text-style: bold;
     }
@@ -72,9 +76,10 @@ class WorkspaceSection(Vertical):
         self._collapsed = collapsed
 
     def compose(self) -> ComposeResult:
+        with Horizontal(classes="ws-header"):
+            yield _NewChatLabel("[+]", classes="ws-add-btn")
         with Collapsible(title=self._workspace_name, collapsed=self._collapsed):
             yield Vertical(id=f"ws-items-{id(self)}")
-            yield _NewChatLabel("+ New Chat", classes="ws-new-chat")
 
     def on__new_chat_label_pressed(self, event: _NewChatLabel.Pressed) -> None:
         event.stop()
