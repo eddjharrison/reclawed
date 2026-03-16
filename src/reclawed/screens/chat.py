@@ -893,9 +893,13 @@ class ChatScreen(Screen):
                 if text:
                     context_parts.append(f"{role}: {text}")
             context = "\n".join(context_parts)
+            if not context.strip():
+                self.notify("No messages to generate name from", severity="warning", timeout=3)
+                return
             await self._run_name_generation(session_id, context, guard_name=None)
-        except Exception:
-            pass
+            self.notify("Name generated!", timeout=2)
+        except Exception as e:
+            self.notify(f"Name generation failed: {e}", severity="error", timeout=5)
 
     async def _run_name_generation(
         self, session_id: str, context: str, guard_name: str | None
