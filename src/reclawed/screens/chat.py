@@ -841,7 +841,6 @@ class ChatScreen(Screen):
 
         self.app.push_screen(GroupMenuScreen(), on_choice)
 
-    @staticmethod
     def _get_context_window_size(self) -> int:
         """Return the context window size for the current model."""
         model = self._selected_model or self.session.model or "sonnet"
