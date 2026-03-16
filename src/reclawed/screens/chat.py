@@ -331,7 +331,7 @@ class ChatScreen(Screen):
 
         # Build prompt with optional group context preamble
         prompt = event.text
-        if self.session.is_group and self.config.group_context_mode == "shared_history":
+        if self.session.is_group:
             preamble = self._build_group_context_preamble()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
@@ -578,10 +578,9 @@ class ChatScreen(Screen):
 
                     if should_respond and not self._sending:
                         prompt = content
-                        if self.config.group_context_mode == "shared_history":
-                            preamble = self._build_group_context_preamble()
-                            if preamble:
-                                prompt = preamble + "\n\n" + content
+                        preamble = self._build_group_context_preamble()
+                        if preamble:
+                            prompt = preamble + "\n\n" + content
                         await self._respond_to_group_message(prompt)
                 else:
                     # Background: increment unread and refresh sidebar for badge
@@ -1209,7 +1208,7 @@ class ChatScreen(Screen):
         compose.set_enabled(False)
 
         prompt = new_content
-        if self.session.is_group and self.config.group_context_mode == "shared_history":
+        if self.session.is_group:
             preamble = self._build_group_context_preamble()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
