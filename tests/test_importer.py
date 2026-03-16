@@ -4,6 +4,7 @@ import json
 
 from reclawed.importer import (
     DiscoveredProject,
+    _clean_user_text,
     discover_projects,
     import_project_sessions,
     parse_session_metadata,
@@ -103,6 +104,36 @@ def test_parse_session_metadata_skips_queue_ops(tmp_path):
     meta = parse_session_metadata(jsonl)
     assert meta is not None
     assert meta["name"] == "Real message"
+
+
+def test_parse_skips_system_messages_for_name(tmp_path):
+    """System-injected messages (local-command-caveat, etc.) are skipped."""
+    jsonl = tmp_path / "sess-sys.jsonl"
+    _write_jsonl(jsonl, [
+        _minimal_user_msg(
+            "<local-command-caveat>Caveat: The messages below were generated...</local-command-caveat>",
+            session_id="sess-sys",
+        ),
+        _minimal_user_msg(
+            "<command-name>/clear</command-name><command-args></command-args>",
+            session_id="sess-sys",
+        ),
+        _minimal_user_msg("Actual user question about Python", session_id="sess-sys"),
+        _minimal_assistant_msg(session_id="sess-sys"),
+    ])
+    meta = parse_session_metadata(jsonl)
+    assert meta is not None
+    assert meta["name"] == "Actual user question about Python"
+
+
+def test_clean_user_text_strips_xml_tags():
+    """XML tags are stripped from user text."""
+    assert _clean_user_text("Hello world") == "Hello world"
+    assert _clean_user_text("<local-command-caveat>Caveat</local-command-caveat>") is None
+    assert _clean_user_text("<command-name>/prompt</command-name>") is None
+    assert _clean_user_text("<task-notification>...</task-notification>") is None
+    assert _clean_user_text("") is None
+    assert _clean_user_text("   ") is None
 
 
 # --- discover_projects ---
