@@ -73,6 +73,19 @@ WhatsApp-style TUI wrapping the `claude` CLI via the Agent SDK. Python 3.12 + Te
 - `Session.permission_mode` persisted in DB — restored on switch and restart
 - Read receipts use `_pending_echo_ids` queue to map outgoing local message IDs to relay seq numbers via echo capture
 
+### Interactivity
+
+- `ClaudeSession` yields `StreamToolUse` and `StreamToolResult` events from `ToolUseBlock`/`ToolResultBlock` in `AssistantMessage.content`
+- `ToolActivityWidget` renders inline in `MessageBubble` — human-readable tool summaries with collapsible details
+- `MessageBubble.add_tool_use()` and `complete_tool()` manage the tool widget lifecycle
+- Tool approval uses SDK's `can_use_tool` callback → `asyncio.Future` bridge to TUI → `ToolApprovalWidget` with Approve/Deny buttons
+- `_pending_approvals` dict tracks `{tool_use_id: Future}` — resolved when user clicks
+- In `bypassPermissions` mode, `can_use_tool` is not set — SDK auto-approves
+- `detect_question()` in `utils.py` — heuristic: last paragraph ends with `?` outside code blocks
+- `detect_choices()` in `utils.py` — regex for `^\d+\.\s+` patterns, minimum 2 matches
+- `ChoiceButtons` widget renders clickable options, posts `Selected` message → fills compose area
+- Question detection adds `.has-question` CSS class to bubble (warning border)
+
 ### Workspaces
 
 - `Session.cwd` links sessions to project directories
