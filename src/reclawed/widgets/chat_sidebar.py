@@ -92,6 +92,14 @@ class ChatSidebar(Vertical):
             super().__init__()
             self.cwd = cwd
 
+    class RemoveWorkspaceRequested(TMessage):
+        """Posted when the user wants to remove a workspace from the sidebar."""
+
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -257,6 +265,10 @@ class ChatSidebar(Vertical):
     def on_workspace_section_new_chat_in_workspace(self, event: WorkspaceSection.NewChatInWorkspace) -> None:
         event.stop()
         self.post_message(self.NewChatInWorkspace(event.cwd))
+
+    def on_workspace_section_remove_workspace_requested(self, event: WorkspaceSection.RemoveWorkspaceRequested) -> None:
+        event.stop()
+        self.post_message(self.RemoveWorkspaceRequested(event.cwd, event.name))
 
     def start_rename(self, session_id: str) -> None:
         """Trigger inline rename on the ChatListItem for the given session."""

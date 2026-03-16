@@ -869,6 +869,51 @@ class ChatScreen(Screen):
         return truncated + "..."
 
     @work(thread=False)
+    async def _auto_name_session(
+        self, session_id: str, first_message: str, fallback_name: str
+    ) -> None:
+        """Ask Claude (haiku) to generate a short session name in the background."""
+        try:
+            from reclawed.claude import ClaudeProcess, StreamResult as SR
+
+            naming_prompt = (
+                "Generate a short, descriptive title (3-5 words) for a chat session "
+                "that started with this message. Return ONLY the title — no quotes, "
+                "no punctuation, no explanation.\n\n"
+                f"Message: {first_message[:500]}"
+            )
+            claude = ClaudeProcess(self.config.claude_binary)
+            generated_name: str | None = None
+            async for ev in claude.send_message(naming_prompt, model="haiku"):
+                if isinstance(ev, SR):
+                    generated_name = ev.content
+                    break
+
+            if not generated_name:
+                return
+
+            # Clean up the result
+            cleaned = generated_name.strip().strip('"\'').strip()
+            # Remove trailing period if present
+            cleaned = cleaned.rstrip(".")
+            if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
+                return
+
+            # Race-condition guard: only update if name hasn't been manually changed
+            session = self.store.get_session(session_id)
+            if not session or session.name != fallback_name:
+                return
+
+            session.name = cleaned
+            self.store.update_session(session)
+            if self.session.id == session_id:
+                self.session.name = cleaned
+                self._update_status()
+            self._refresh_sidebar()
+        except Exception:
+            pass  # Silent failure — fallback name already set
+
+    @work(thread=False)
     async def _stream_response(
         self, prompt: str, assistant_msg: Message, reply_context: str | None
     ) -> None:
@@ -957,8 +1002,16 @@ class ChatScreen(Screen):
                     stream_session.message_count = len(
                         self.store.get_session_messages(stream_session.id)
                     )
-                    if stream_session.name in ("New Chat", "Group Chat"):
+                    was_unnamed = stream_session.name in ("New Chat", "Group Chat")
+                    if was_unnamed:
                         stream_session.name = self._derive_session_name(prompt)
+                    # Fire background auto-naming after first exchange
+                    if was_unnamed and self.config.auto_name_sessions:
+                        self._auto_name_session(
+                            stream_session.id,
+                            prompt,
+                            self._derive_session_name(prompt),
+                        )
                     # Update context gauge
                     if event.input_tokens:
                         stream_session.last_input_tokens = event.input_tokens
@@ -1701,6 +1754,31 @@ class ChatScreen(Screen):
         self.app.push_screen(
             ContextMenu(event.session_id, is_muted=event.is_muted),
             on_result,
+        )
+
+    def on_chat_sidebar_remove_workspace_requested(self, event: ChatSidebar.RemoveWorkspaceRequested) -> None:
+        """Handle workspace removal from the sidebar via right-click."""
+
+        def on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            self.config.workspaces = [
+                w for w in self.config.workspaces
+                if w.expanded_path != event.cwd
+            ]
+            self.config.save()
+            sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+            sidebar._workspaces = self.config.workspaces
+            sidebar.refresh_sessions(active_session_id=self.session.id)
+            self.notify(f"Removed workspace: {event.name}", timeout=3)
+
+        from reclawed.widgets.confirm_screen import ConfirmScreen
+        self.app.push_screen(
+            ConfirmScreen(
+                title="Remove Workspace",
+                message=f'Remove "{event.name}" from the sidebar?\nSessions will be kept.',
+            ),
+            on_confirm,
         )
 
     def action_toggle_sidebar(self) -> None:

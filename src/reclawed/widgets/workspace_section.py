@@ -51,6 +51,14 @@ class WorkspaceSection(Vertical):
             super().__init__()
             self.cwd = cwd
 
+    class RemoveWorkspaceRequested(TMessage):
+        """Posted when the user requests to remove a workspace."""
+
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
+
     def __init__(
         self,
         workspace_name: str,
@@ -71,6 +79,12 @@ class WorkspaceSection(Vertical):
     def on__new_chat_label_pressed(self, event: _NewChatLabel.Pressed) -> None:
         event.stop()
         self.post_message(self.NewChatInWorkspace(self._cwd))
+
+    def on_click(self, event: Click) -> None:
+        # Right-click on workspace header → remove workspace
+        if event.button == 3 and self._cwd is not None:
+            event.stop()
+            self.post_message(self.RemoveWorkspaceRequested(self._cwd, self._workspace_name))
 
     @property
     def items_container(self) -> Vertical:

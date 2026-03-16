@@ -86,6 +86,8 @@ class Config:
     # Agent SDK settings
     permission_mode: str = "acceptEdits"  # "default" | "acceptEdits" | "bypassPermissions"
     allowed_tools: str = "Read,Edit,Bash,Glob,Grep,Write"  # comma-separated tool list
+    # Auto-name sessions using Claude after the first exchange
+    auto_name_sessions: bool = True
     # Workspaces — multi-project session grouping
     workspaces: list[Workspace] = field(default_factory=list)
     # Relay daemon settings
@@ -154,6 +156,7 @@ class Config:
         lines.append(f"group_context_window = {self.group_context_window}")
         lines.append(f"permission_mode = {_toml_str(self.permission_mode)}")
         lines.append(f"allowed_tools = {_toml_str(self.allowed_tools)}")
+        lines.append(f"auto_name_sessions = {'true' if self.auto_name_sessions else 'false'}")
         lines.append(f"relay_mode = {_toml_str(self.relay_mode)}")
         if self.relay_url:
             lines.append(f"relay_url = {_toml_str(self.relay_url)}")
@@ -226,6 +229,8 @@ class Config:
             kwargs["permission_mode"] = str(raw["permission_mode"])
         if "allowed_tools" in raw:
             kwargs["allowed_tools"] = str(raw["allowed_tools"])
+        if "auto_name_sessions" in raw:
+            kwargs["auto_name_sessions"] = bool(raw["auto_name_sessions"])
         if "relay_mode" in raw:
             kwargs["relay_mode"] = str(raw["relay_mode"])
         if "relay_url" in raw:
