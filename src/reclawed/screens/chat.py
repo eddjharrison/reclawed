@@ -937,10 +937,14 @@ class ChatScreen(Screen):
 
         session.name = cleaned
         self.store.update_session(session)
-        if self.session.id == session_id:
-            self.session.name = cleaned
-            self._update_status()
-        self._refresh_sidebar()
+
+        def _apply_name() -> None:
+            if self.session.id == session_id:
+                self.session.name = cleaned
+                self._update_status()
+            self._refresh_sidebar()
+
+        self.app.call_later(_apply_name)
 
     @work(thread=False)
     async def _stream_response(
