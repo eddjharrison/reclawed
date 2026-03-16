@@ -138,6 +138,42 @@ Then `Ctrl+G` → **Create** — the connection string uses the stable company U
 2. Paste the connection string (encryption key is extracted automatically)
 3. Press **Join**
 
+### Inviting to an Existing Chat
+
+Already mid-conversation with Claude? Press `Ctrl+I` to upgrade the session into a group. Your Claude keeps full context — no fresh start. Share the connection string and others can join.
+
+### How Group Chat Works
+
+Each participant runs their **own Claude locally on their own machine**. The relay server is just an encrypted message pipe — it routes text between participants but never sees plaintext.
+
+**Isolation model:**
+
+| | Alice's Claude | Bob's Claude |
+|---|---|---|
+| **Runs on** | Alice's machine | Bob's machine |
+| **Can access** | Alice's files only | Bob's files only |
+| **Permissions** | Alice's config | Bob's config |
+| **Sees from others** | Message text only | Message text only |
+
+When Alice types `@Bob's Claude can you run the tests?`, that message travels through the encrypted relay to Bob's machine. Bob's Claude reads it, runs `pytest` on **Bob's machine**, and sends the results back as a message. Alice never gets filesystem access to Bob's machine, and Bob's Claude never touches Alice's files.
+
+**Context and forking:**
+- When you create a group or invite someone (`Ctrl+I`), **your** Claude carries your full prior conversation context into the room via session forking
+- Other participants' Claudes start fresh in the group (or carry their own context if they were mid-conversation)
+- No participant can see another's Claude session history or tool usage from before the group started
+
+**Think of it as a group chat where everyone brought their own assistant.** The assistants can talk to each other and collaborate, but each one only has access to their own owner's workspace.
+
+### Scaling
+
+The relay server handles any number of participants and rooms. Practical considerations:
+
+- **2-5 people** — ideal for pair programming, small team collaboration
+- **5-10 people** — works well in "Humans Only" or "Claude Assists" mode to control response volume
+- **10+ people** — use "Humans Only" mode and a VPS relay; the bottleneck is Claude response volume, not the relay infrastructure
+
+In "Full Auto" or "C2C" mode, every participant's Claude generates responses — costs and noise scale linearly with participant count.
+
 ## Keybindings
 
 **Always available** (work even while typing):
