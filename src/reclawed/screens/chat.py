@@ -882,9 +882,19 @@ class ChatScreen(Screen):
     @work(thread=False)
     async def _generate_name_for_session(self, session_id: str) -> None:
         """Generate a name from session messages (triggered via context menu)."""
+        import logging
+        _log = logging.getLogger("reclawed.naming")
+        _log.setLevel(logging.DEBUG)
+        # File handler for debugging
+        from pathlib import Path
+        _fh = logging.FileHandler(Path.home() / "AppData" / "Local" / "reclawed" / "naming.log")
+        _fh.setLevel(logging.DEBUG)
+        _log.addHandler(_fh)
+
         try:
             self.notify("Generating name...", timeout=2)
             messages = self.store.get_session_messages(session_id)
+            _log.debug(f"Session {session_id}: {len(messages)} messages")
             # Build context from first few messages
             context_parts: list[str] = []
             for msg in messages[:6]:
@@ -892,16 +902,21 @@ class ChatScreen(Screen):
                 text = msg.content[:200] if msg.content else ""
                 if text:
                     context_parts.append(f"{role}: {text}")
+                    _log.debug(f"  {role}: {text[:80]}")
             context = "\n".join(context_parts)
             if not context.strip():
                 self.notify("No messages to generate name from", severity="warning", timeout=3)
+                _log.debug("No context, aborting")
                 return
+            _log.debug(f"Calling _run_name_generation with {len(context)} chars of context")
             result = await self._run_name_generation(session_id, context, guard_name=None)
+            _log.debug(f"Result: {result!r}")
             if result:
                 self.notify(f"Renamed to: {result}", timeout=3)
             else:
                 self.notify("Could not generate name", severity="warning", timeout=3)
         except Exception as e:
+            _log.exception(f"Name generation failed: {e}")
             self.notify(f"Name generation failed: {e}", severity="error", timeout=5)
 
     async def _run_name_generation(
