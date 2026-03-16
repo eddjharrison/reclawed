@@ -43,7 +43,7 @@ class ChatScreen(Screen):
         # priority=True ensures these work even when TextArea has focus
         Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
         Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
-        Binding("ctrl+shift+n", "workspace_new_chat", "New Chat in...", show=False, priority=True),
+        Binding("f6", "workspace_new_chat", "New Chat in...", show=False, priority=True),
         Binding("ctrl+g", "group_menu", "Group", show=True, key_display="^G", priority=True),
         Binding("ctrl+i", "invite_to_chat", "Invite", show=True, key_display="^I", priority=True),
         Binding("ctrl+s", "toggle_sidebar", "Sidebar", show=True, priority=True),
