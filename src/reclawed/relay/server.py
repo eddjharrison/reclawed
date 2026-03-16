@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
+import signal
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -303,9 +305,17 @@ def main(host: str, port: int, token: str | None, db_path: str | None, log_level
     handler = functools.partial(_handler, shared_token=token)
 
     async def _serve() -> None:
+        stop = asyncio.Event()
+        if platform.system() != "Windows":
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, stop.set)
         async with serve(handler, host, port):
             logger.info("Re:Clawed relay listening on ws://%s:%d", host, port)
-            await asyncio.Future()  # run forever
+            await stop.wait()
+        logger.info("Relay server shutting down")
+        if _db is not None:
+            _db.close()
 
     asyncio.run(_serve())
 

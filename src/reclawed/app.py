@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from textual.app import App
 
+from reclawed.commands import ReclawedCommands
 from reclawed.config import Config
 from reclawed.crypto import load_or_create_local_key
 from reclawed.screens.chat import ChatScreen
@@ -16,6 +17,7 @@ class ReclawedApp(App):
     TITLE = "Re:Clawed"
     SUB_TITLE = "Claude Chat TUI"
     CSS_PATH = "styles/app.tcss"
+    COMMANDS = App.COMMANDS | {ReclawedCommands}
 
     def __init__(self, config: Config | None = None, resume_session_id: str | None = None) -> None:
         super().__init__()

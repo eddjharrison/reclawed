@@ -79,6 +79,7 @@ class RelayClient:
         self._last_read_sent: int = 0  # dedup read receipts
         self._status_callback: Any | None = None  # Callable[[str, int], None]
         self._reconnect_attempt: int = 0
+        self._seen_message_ids: set[str] = set()  # dedup for sync_response replay
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -376,6 +377,10 @@ class RelayClient:
             # Track highest seq we've seen
             if msg.seq and msg.seq > self._last_seq:
                 self._last_seq = msg.seq
+
+            # Track message IDs for dedup (sync_response replay)
+            if msg.message_id:
+                self._seen_message_ids.add(msg.message_id)
 
             await self._recv_queue.put(msg)
 

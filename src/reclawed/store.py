@@ -84,6 +84,8 @@ class Store:
             # Encryption
             "ALTER TABLE sessions ADD COLUMN encryption_passphrase TEXT",
             "ALTER TABLE messages ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
+            # Workspaces
+            "ALTER TABLE sessions ADD COLUMN cwd TEXT",
         ]
         for sql in migrations:
             try:
@@ -102,14 +104,14 @@ class Store:
         self._conn.execute(
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
-            "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, cwd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
-             session.relay_token, session.encryption_passphrase),
+             session.relay_token, session.encryption_passphrase, session.cwd),
         )
         self._conn.commit()
         return session
@@ -137,12 +139,12 @@ class Store:
             "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
-            "encryption_passphrase=? WHERE id=?",
+            "encryption_passphrase=?, cwd=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
-             session.relay_token, session.encryption_passphrase, session.id),
+             session.relay_token, session.encryption_passphrase, session.cwd, session.id),
         )
         self._conn.commit()
 
@@ -159,6 +161,22 @@ class Store:
             "UPDATE sessions SET unread_count = unread_count + 1 WHERE id = ?", (session_id,)
         )
         self._conn.commit()
+
+    def list_sessions_by_cwd(self, cwd: str) -> list[Session]:
+        """Return non-archived sessions matching the given working directory."""
+        rows = self._conn.execute(
+            "SELECT * FROM sessions WHERE cwd = ? AND archived = 0 ORDER BY updated_at DESC",
+            (cwd,),
+        ).fetchall()
+        return [self._row_to_session(r) for r in rows]
+
+    def has_claude_session(self, claude_session_id: str) -> bool:
+        """Return True if a session with this claude_session_id already exists."""
+        row = self._conn.execute(
+            "SELECT 1 FROM sessions WHERE claude_session_id = ? LIMIT 1",
+            (claude_session_id,),
+        ).fetchone()
+        return row is not None
 
     def delete_session(self, session_id: str) -> None:
         self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -402,4 +420,5 @@ class Store:
             participant_id=row["participant_id"] if "participant_id" in keys else None,
             relay_token=row["relay_token"] if "relay_token" in keys else None,
             encryption_passphrase=row["encryption_passphrase"] if "encryption_passphrase" in keys else None,
+            cwd=row["cwd"] if "cwd" in keys else None,
         )

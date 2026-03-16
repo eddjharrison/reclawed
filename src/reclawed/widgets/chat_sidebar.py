@@ -8,9 +8,11 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.widgets import Input, Static
 
+from reclawed.config import Workspace
 from reclawed.models import Session
 from reclawed.store import Store
 from reclawed.widgets.chat_list_item import ChatListItem
+from reclawed.widgets.workspace_section import WorkspaceSection
 
 
 class ChatSidebar(Vertical):
@@ -83,13 +85,21 @@ class ChatSidebar(Vertical):
             self.session_id = session_id
             self.new_name = new_name
 
+    class NewChatInWorkspace(TMessage):
+        """Posted when '+ New Chat' is clicked inside a workspace section."""
+
+        def __init__(self, cwd: str | None) -> None:
+            super().__init__()
+            self.cwd = cwd
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def __init__(self, store: Store, **kwargs) -> None:
+    def __init__(self, store: Store, workspaces: list[Workspace] | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._store = store
+        self._workspaces = workspaces or []
         # Ordered list of all sessions (refreshed from the store)
         self._sessions: list[Session] = []
         # Map session_id -> last assistant/user message preview
@@ -157,12 +167,60 @@ class ChatSidebar(Vertical):
         chat_list.remove_children()
 
         visible = self._filtered_sessions()
+
+        if not self._workspaces:
+            # No workspaces configured — flat list (100% backward compatible)
+            for session in visible:
+                preview = self._previews.get(session.id, "")
+                is_active = session.id == self._active_id
+                chat_list.mount(
+                    ChatListItem(session, last_preview=preview, is_active=is_active)
+                )
+            return
+
+        # Group sessions by workspace cwd
+        ws_expanded = {ws.expanded_path: ws for ws in self._workspaces}
+        grouped: dict[str, list[Session]] = {ws.expanded_path: [] for ws in self._workspaces}
+        ungrouped: list[Session] = []
+
         for session in visible:
-            preview = self._previews.get(session.id, "")
-            is_active = session.id == self._active_id
-            chat_list.mount(
-                ChatListItem(session, last_preview=preview, is_active=is_active)
+            if session.cwd and session.cwd in ws_expanded:
+                grouped[session.cwd].append(session)
+            else:
+                ungrouped.append(session)
+
+        # Render workspace sections
+        for ws in self._workspaces:
+            sessions_in_ws = grouped[ws.expanded_path]
+            if not sessions_in_ws and self._search_query:
+                continue  # Hide empty sections during search
+            section = WorkspaceSection(
+                workspace_name=ws.name,
+                cwd=ws.expanded_path,
             )
+            chat_list.mount(section)
+            container = section.items_container
+            for session in sessions_in_ws:
+                preview = self._previews.get(session.id, "")
+                is_active = session.id == self._active_id
+                container.mount(
+                    ChatListItem(session, last_preview=preview, is_active=is_active)
+                )
+
+        # Render ungrouped sessions under "Default" section
+        if ungrouped:
+            section = WorkspaceSection(
+                workspace_name="Default",
+                cwd=None,
+            )
+            chat_list.mount(section)
+            container = section.items_container
+            for session in ungrouped:
+                preview = self._previews.get(session.id, "")
+                is_active = session.id == self._active_id
+                container.mount(
+                    ChatListItem(session, last_preview=preview, is_active=is_active)
+                )
 
     def _filtered_sessions(self) -> list[Session]:
         """Return sessions matching the current search query (case-insensitive)."""
@@ -191,6 +249,10 @@ class ChatSidebar(Vertical):
     def on_chat_list_item_renamed(self, event: ChatListItem.Renamed) -> None:
         event.stop()
         self.post_message(self.SessionRenamed(event.session_id, event.new_name))
+
+    def on_workspace_section_new_chat_in_workspace(self, event: WorkspaceSection.NewChatInWorkspace) -> None:
+        event.stop()
+        self.post_message(self.NewChatInWorkspace(event.cwd))
 
     def start_rename(self, session_id: str) -> None:
         """Trigger inline rename on the ChatListItem for the given session."""

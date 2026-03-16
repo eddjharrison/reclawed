@@ -56,3 +56,4 @@ class Session:
     participant_id: str | None = None
     relay_token: str | None = None
     encryption_passphrase: str | None = None
+    cwd: str | None = None

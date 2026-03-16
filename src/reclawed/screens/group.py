@@ -7,7 +7,9 @@ import socket
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from reclawed.config import Config
 from reclawed.crypto import generate_passphrase
+from reclawed.relay.daemon import ensure_daemon
 from reclawed.utils import copy_to_clipboard
 
 from textual.app import ComposeResult
@@ -82,17 +84,18 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         Binding("escape", "cancel", "Cancel", priority=True),
     ]
 
-    def __init__(self, port: int = 8765) -> None:
+    def __init__(self, config: Config) -> None:
         super().__init__()
-        self._port = port
+        self._config = config
+        self._port = config.relay_port
         self._room_id: str = str(uuid.uuid4())
-        self._token: str = str(uuid.uuid4()).replace("-", "")[:16]
         self._participant_id: str = str(uuid.uuid4())
         self._passphrase: str = generate_passphrase()
-        self._relay_server = None  # asyncio.Server handle
         self._tunnel_proc: asyncio.subprocess.Process | None = None
         self._tunnel_url: str | None = None
         self._conn_string: str = ""
+        # Token: in local mode, comes from daemon; in remote mode, from config
+        self._token: str = ""
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -107,21 +110,44 @@ class CreateGroupScreen(ModalScreen[dict | None]):
                 yield Button("Cancel", id="btn-cancel", variant="error")
 
     async def on_mount(self) -> None:
-        """Start the embedded relay server and attempt cloudflare tunnel."""
+        """Start/connect to the relay and generate a connection string."""
         status = self.query_one("#status", Label)
         hint = self.query_one("#hint", Label)
         conn_label = self.query_one("#conn-string", Static)
 
-        # Step 1: Start the relay server
+        if self._config.relay_mode == "remote":
+            await self._setup_remote_mode(status, hint, conn_label)
+        else:
+            await self._setup_local_mode(status, hint, conn_label)
+
+    async def _setup_remote_mode(self, status, hint, conn_label) -> None:
+        """Remote mode: use the configured external relay server."""
+        if not self._config.relay_url:
+            status.update("Error: relay_url not configured for remote mode")
+            self.query_one("#btn-start", Button).disabled = True
+            return
+
+        self._token = self._config.relay_token or ""
+        relay_url = self._config.relay_url.rstrip("/")
+        self._conn_string = (
+            f"{relay_url}/room/{self._room_id}?token={self._token}"
+            f"&key={self._passphrase}"
+        )
+        status.update(f"Using remote relay: {relay_url}")
+        hint.update("Connected to external relay server. Share the link to invite.")
+        conn_label.update(self._conn_string)
+
+    async def _setup_local_mode(self, status, hint, conn_label) -> None:
+        """Local mode: ensure daemon is running, then set up tunnel."""
+        # Step 1: Ensure the relay daemon is running
         try:
-            from reclawed.relay.embedded import start_embedded_relay
-            self._relay_server = await start_embedded_relay(
-                port=self._port,
-                token=self._token,
+            daemon_info = await asyncio.to_thread(
+                ensure_daemon, self._config.data_dir, self._port,
             )
-            status.update("Relay server running. Setting up tunnel...")
+            self._token = daemon_info["token"]
+            status.update("Relay daemon running. Setting up tunnel...")
         except Exception as exc:
-            status.update(f"Failed to start relay: {exc}")
+            status.update(f"Failed to start relay daemon: {exc}")
             self.query_one("#btn-start", Button).disabled = True
             return
 
@@ -129,22 +155,20 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         tunnel_url = await self._start_tunnel()
 
         if tunnel_url:
-            # Use the public tunnel URL — works from anywhere
             self._tunnel_url = tunnel_url
             self._conn_string = (
                 f"{tunnel_url}/room/{self._room_id}?token={self._token}"
                 f"&key={self._passphrase}"
             )
-            status.update("Relay server running with public tunnel.")
+            status.update("Relay daemon running with public tunnel.")
             hint.update("Public URL — anyone with this link can join, no port forwarding needed.")
         else:
-            # Fall back to LAN IP
             hostname = self._get_hostname()
             self._conn_string = (
                 f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
                 f"&key={self._passphrase}"
             )
-            status.update("Relay server running (LAN only).")
+            status.update("Relay daemon running (LAN only).")
             hint.update(
                 "cloudflared not found — install it for automatic public tunnels:\n"
                 "  brew install cloudflared\n"
@@ -213,13 +237,15 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             else:
                 self.notify("Copy failed — no clipboard tool available", severity="error", timeout=2)
         elif event.button.id == "btn-start":
+            relay_url = f"ws://127.0.0.1:{self._port}"
+            if self._config.relay_mode == "remote" and self._config.relay_url:
+                relay_url = self._config.relay_url
             self.dismiss({
                 "room_id": self._room_id,
-                "relay_url": f"ws://127.0.0.1:{self._port}",
+                "relay_url": relay_url,
                 "token": self._token,
                 "port": self._port,
                 "participant_id": self._participant_id,
-                "relay_server": self._relay_server,
                 "tunnel_proc": self._tunnel_proc,
                 "conn_string": self._conn_string,
                 "encryption_passphrase": self._passphrase,
@@ -230,8 +256,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
     def action_cancel(self) -> None:
         if self._tunnel_proc and self._tunnel_proc.returncode is None:
             self._tunnel_proc.terminate()
-        if self._relay_server is not None:
-            self._relay_server.close()
+        # Don't stop the relay daemon — it persists for other groups
         self.dismiss(None)
 
 

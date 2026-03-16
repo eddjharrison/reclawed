@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import platform
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +19,19 @@ THEME_MAP: dict[str, str] = {
 
 # Ordered list used for cycling (Ctrl+T).
 THEME_CYCLE: list[str] = list(THEME_MAP.keys())
+
+
+@dataclass
+class Workspace:
+    """A named project directory for grouping sessions."""
+
+    name: str
+    path: str
+
+    @property
+    def expanded_path(self) -> str:
+        """Return the path with ~ expanded to the user's home directory."""
+        return str(Path(self.path).expanduser().resolve())
 
 
 def _default_data_dir() -> Path:
@@ -71,6 +86,12 @@ class Config:
     # Agent SDK settings
     permission_mode: str = "acceptEdits"  # "default" | "acceptEdits" | "bypassPermissions"
     allowed_tools: str = "Read,Edit,Bash,Glob,Grep,Write"  # comma-separated tool list
+    # Workspaces — multi-project session grouping
+    workspaces: list[Workspace] = field(default_factory=list)
+    # Relay daemon settings
+    relay_mode: str = "local"  # "local" (TUI manages daemon) | "remote" (external server)
+    relay_url: str | None = None  # remote mode: "wss://relay.company.com"
+    relay_token: str | None = None  # remote mode: shared server token
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -81,6 +102,8 @@ class Config:
             self.group_auto_respond = "own"
         if self.group_context_mode not in {"isolated", "shared_history"}:
             self.group_context_mode = "isolated"
+        if self.relay_mode not in {"local", "remote"}:
+            self.relay_mode = "local"
 
     @property
     def db_path(self) -> Path:
@@ -91,6 +114,75 @@ class Config:
     def textual_theme(self) -> str:
         """Return the Textual theme name for the current theme setting."""
         return THEME_MAP.get(self.theme, "textual-dark")
+
+    def workspace_for_cwd(self, cwd: str | None) -> Workspace | None:
+        """Return the workspace whose expanded_path matches *cwd*, or None."""
+        if not cwd or not self.workspaces:
+            return None
+        resolved = str(Path(cwd).expanduser().resolve())
+        for ws in self.workspaces:
+            if ws.expanded_path == resolved:
+                return ws
+        return None
+
+    def save(self, config_path: Path | None = None) -> None:
+        """Write config to a TOML file.
+
+        Parameters
+        ----------
+        config_path:
+            Override the default config file location.  Useful in tests.
+        """
+        path = config_path or _config_file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        lines: list[str] = []
+
+        def _toml_str(value: str) -> str:
+            return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        # Scalar fields
+        lines.append(f"data_dir = {_toml_str(str(self.data_dir))}")
+        lines.append(f"claude_binary = {_toml_str(self.claude_binary)}")
+        lines.append(f"stream_throttle_ms = {self.stream_throttle_ms}")
+        lines.append(f"max_quote_length = {self.max_quote_length}")
+        lines.append(f"theme = {_toml_str(self.theme)}")
+        lines.append(f"participant_name = {_toml_str(self.participant_name)}")
+        lines.append(f"relay_port = {self.relay_port}")
+        lines.append(f"group_auto_respond = {_toml_str(self.group_auto_respond)}")
+        lines.append(f"group_context_mode = {_toml_str(self.group_context_mode)}")
+        lines.append(f"group_context_window = {self.group_context_window}")
+        lines.append(f"permission_mode = {_toml_str(self.permission_mode)}")
+        lines.append(f"allowed_tools = {_toml_str(self.allowed_tools)}")
+        lines.append(f"relay_mode = {_toml_str(self.relay_mode)}")
+        if self.relay_url:
+            lines.append(f"relay_url = {_toml_str(self.relay_url)}")
+        if self.relay_token:
+            lines.append(f"relay_token = {_toml_str(self.relay_token)}")
+
+        # Workspaces
+        for ws in self.workspaces:
+            lines.append("")
+            lines.append("[[workspaces]]")
+            lines.append(f"name = {_toml_str(ws.name)}")
+            lines.append(f"path = {_toml_str(ws.path)}")
+
+        lines.append("")  # trailing newline
+
+        # Atomic write: temp file then rename
+        fd, tmp = tempfile.mkstemp(
+            dir=path.parent, suffix=".toml.tmp", prefix=".reclawed-"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines))
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> "Config":
@@ -134,5 +226,19 @@ class Config:
             kwargs["permission_mode"] = str(raw["permission_mode"])
         if "allowed_tools" in raw:
             kwargs["allowed_tools"] = str(raw["allowed_tools"])
+        if "relay_mode" in raw:
+            kwargs["relay_mode"] = str(raw["relay_mode"])
+        if "relay_url" in raw:
+            kwargs["relay_url"] = str(raw["relay_url"])
+        if "relay_token" in raw:
+            kwargs["relay_token"] = str(raw["relay_token"])
+
+        # Parse [[workspaces]] array
+        if "workspaces" in raw and isinstance(raw["workspaces"], list):
+            kwargs["workspaces"] = [
+                Workspace(name=str(w["name"]), path=str(w["path"]))
+                for w in raw["workspaces"]
+                if "name" in w and "path" in w
+            ]
 
         return cls(**kwargs)  # type: ignore[arg-type]

@@ -372,6 +372,92 @@ def test_unencrypted_messages_still_readable():
     s.close()
 
 
+# --- Workspace / cwd tests ---
+
+
+def test_session_cwd_persisted(store: Store):
+    """cwd is persisted and loaded correctly."""
+    s = Session(name="Work Chat", cwd="/home/user/project")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.cwd == "/home/user/project"
+
+
+def test_session_cwd_default_none(store: Store):
+    """Sessions without cwd default to None."""
+    s = Session(name="Default")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.cwd is None
+
+
+def test_session_cwd_update(store: Store):
+    """cwd can be updated via update_session."""
+    s = Session(name="Chat", cwd="/old/path")
+    store.create_session(s)
+    s.cwd = "/new/path"
+    store.update_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.cwd == "/new/path"
+
+
+def test_list_sessions_by_cwd(store: Store):
+    """list_sessions_by_cwd returns only sessions matching the given cwd."""
+    s1 = Session(name="A", cwd="/project/a")
+    s2 = Session(name="B", cwd="/project/b")
+    s3 = Session(name="A2", cwd="/project/a")
+    store.create_session(s1)
+    store.create_session(s2)
+    store.create_session(s3)
+
+    results = store.list_sessions_by_cwd("/project/a")
+    assert len(results) == 2
+    names = {s.name for s in results}
+    assert names == {"A", "A2"}
+
+
+def test_list_sessions_by_cwd_excludes_archived(store: Store):
+    """list_sessions_by_cwd excludes archived sessions."""
+    s1 = Session(name="Active", cwd="/proj")
+    s2 = Session(name="Archived", cwd="/proj", archived=True)
+    store.create_session(s1)
+    store.create_session(s2)
+
+    results = store.list_sessions_by_cwd("/proj")
+    assert len(results) == 1
+    assert results[0].name == "Active"
+
+
+def test_list_sessions_by_cwd_empty(store: Store):
+    """list_sessions_by_cwd returns empty list when no match."""
+    s = Session(name="Other", cwd="/other")
+    store.create_session(s)
+    assert store.list_sessions_by_cwd("/nonexistent") == []
+
+
+def test_backward_compat_cwd_null(store: Store):
+    """Old sessions with cwd=NULL are loaded with cwd=None."""
+    s = Session(name="Legacy")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.cwd is None
+    # list_sessions still returns them
+    all_sessions = store.list_sessions()
+    assert any(sess.id == s.id for sess in all_sessions)
+
+
+def test_has_claude_session_found(store: Store):
+    """has_claude_session returns True when a matching session exists."""
+    s = Session(name="SDK", claude_session_id="abc-123")
+    store.create_session(s)
+    assert store.has_claude_session("abc-123") is True
+
+
+def test_has_claude_session_not_found(store: Store):
+    """has_claude_session returns False when no matching session exists."""
+    assert store.has_claude_session("nonexistent-id") is False
+
+
 def test_session_encryption_passphrase():
     """Session encryption_passphrase is persisted and loaded."""
     s = Store(":memory:")

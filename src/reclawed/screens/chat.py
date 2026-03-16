@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 import uuid
@@ -18,7 +19,8 @@ from textual.widgets import Footer, Header
 from reclawed.claude import StreamError, StreamResult, StreamSessionId, StreamToken
 from reclawed.claude_session import ClaudeSession
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
-from reclawed.crypto import derive_room_key
+from reclawed.crypto import decrypt_content, derive_room_key, is_encrypted
+from reclawed.relay.protocol import RelayMessage
 from reclawed.models import Message, Session
 from reclawed.relay.client import RelayClient
 from reclawed.store import Store
@@ -45,6 +47,7 @@ class ChatScreen(Screen):
         Binding("ctrl+p", "pinned", "Pinned", show=True, key_display="^P", priority=True),
         Binding("f2", "cycle_model", "Model", show=True, key_display="F2", priority=True),
         Binding("f3", "cycle_respond_mode", "Respond mode", show=True, key_display="F3", priority=True),
+        Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -81,10 +84,12 @@ class ChatScreen(Screen):
         # (None means the CLI will use its own default).
         self._selected_model: str | None = self.session.model
         # Group chat relay state
-        self._relay_client: RelayClient | None = None
-        self._relay_server = None  # asyncio.Server handle (host only)
+        self._relay_client: RelayClient | None = None  # active session's relay
         self._tunnel_proc = None   # cloudflared subprocess
-        self._relay_receive_task: asyncio.Task | None = None
+        self._relay_receive_task: asyncio.Task | None = None  # active session's task
+        # Pool of live relay connections (like _claude_sessions for Claude)
+        self._relay_clients: dict[str, RelayClient] = {}
+        self._relay_receive_tasks: dict[str, asyncio.Task] = {}
         # Runtime group respond mode — loaded from config but NOT persisted to DB.
         # Cycles via F3: "own" → "mentions" → "all" → "off" → "own"
         self._group_respond_mode: str = config.group_auto_respond
@@ -96,15 +101,15 @@ class ChatScreen(Screen):
         # Map local message IDs to relay seqs for read receipt/edit/delete
         self._msg_id_to_seq: dict[str, int] = {}
 
-    def _create_new_session(self) -> Session:
-        session = Session()
+    def _create_new_session(self, cwd: str | None = None) -> Session:
+        session = Session(cwd=cwd)
         self.store.create_session(session)
         return session
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="main-layout"):
-            yield ChatSidebar(self.store, id="chat-sidebar")
+            yield ChatSidebar(self.store, workspaces=self.config.workspaces, id="chat-sidebar")
             with Vertical(id="chat-panel"):
                 yield MessageList(id="message-list")
                 yield QuotePreview(id="quote-preview")
@@ -143,6 +148,7 @@ class ChatScreen(Screen):
             session_id=resume_id,
             fork_session=fork,
             model=self._selected_model,
+            cwd=self.session.cwd,
             permission_mode=self.config.permission_mode,
             allowed_tools=self.config.allowed_tools.split(","),
         )
@@ -171,9 +177,26 @@ class ChatScreen(Screen):
             await self._load_session_messages()
         # Start the Claude SDK session (resume if we have a prior session ID)
         await self._start_claude_session(resume_id=self.session.claude_session_id)
-        # Auto-reconnect group sessions on startup (non-blocking)
+        # Ensure relay daemon is running before reconnecting group sessions
+        has_groups = self.session.is_group or any(
+            s.is_group and s.relay_url for s in self.store.list_sessions()
+        )
+        if has_groups and self.config.relay_mode == "local":
+            try:
+                from reclawed.relay.daemon import ensure_daemon
+                await asyncio.to_thread(
+                    ensure_daemon, self.config.data_dir, self.config.relay_port,
+                )
+            except Exception:
+                pass  # Non-fatal — relay connections will retry with backoff
+
+        # Auto-reconnect ALL group sessions on startup (non-blocking)
         if self.session.is_group and self.session.relay_url:
             asyncio.create_task(self._try_reconnect_group())
+        # Also reconnect background group sessions so they receive messages
+        for s in self.store.list_sessions():
+            if s.is_group and s.relay_url and s.id != self.session.id:
+                asyncio.create_task(self._background_reconnect_group(s))
 
     async def _load_session_messages(self) -> None:
         msg_list = self.query_one("#message-list", MessageList)
@@ -184,6 +207,8 @@ class ChatScreen(Screen):
     def _update_status(self) -> None:
         status = self.query_one("#status-bar", StatusBar)
         group_mode = self._group_respond_mode if self.session.is_group else None
+        ws = self.config.workspace_for_cwd(self.session.cwd)
+        workspace_name = ws.name if ws else None
         status.update_info(
             session_name=self.session.name,
             model=self.session.model,
@@ -191,6 +216,7 @@ class ChatScreen(Screen):
             message_count=self.session.message_count,
             group_mode=group_mode,
             clear_group_mode=not self.session.is_group,
+            workspace_name=workspace_name,
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
 
@@ -278,15 +304,43 @@ class ChatScreen(Screen):
         except Exception:
             self.notify("Group relay unavailable — use Ctrl+G to rejoin", timeout=5)
 
-    async def _start_relay_client(self, session: Session) -> None:
-        """Create and connect a RelayClient for the given group session."""
+    async def _background_reconnect_group(self, session: Session) -> None:
+        """Silently reconnect a background group session into the pool."""
+        # Save active pointers so _start_relay_client doesn't overwrite them
+        prev_client = self._relay_client
+        prev_task = self._relay_receive_task
+        try:
+            await self._start_relay_client(session, silent=True)
+        except Exception:
+            pass  # Silent — this is a background reconnection
+        # Restore active pointers (background session shouldn't become active)
+        self._relay_client = prev_client
+        self._relay_receive_task = prev_task
+
+    async def _start_relay_client(self, session: Session, silent: bool = False) -> None:
+        """Create or reuse a pooled RelayClient for the given group session.
+
+        Relay clients are pooled in ``_relay_clients`` so switching between
+        sessions doesn't kill background connections — mirroring the Claude
+        session pooling in ``_claude_sessions``.
+
+        Set ``silent=True`` for background reconnections that shouldn't
+        spam the user with notifications.
+        """
         if session.relay_url is None or session.room_id is None:
             return
+
+        # Reuse existing client if already pooled for this session
+        if session.id in self._relay_clients:
+            self._relay_client = self._relay_clients[session.id]
+            self._relay_receive_task = self._relay_receive_tasks.get(session.id)
+            return
+
         participant_id = session.participant_id or str(uuid.uuid4())
         room_key: bytes | None = None
         if session.encryption_passphrase and session.room_id:
             room_key = derive_room_key(session.encryption_passphrase, session.room_id)
-        self._relay_client = RelayClient(
+        client = RelayClient(
             url=session.relay_url,
             room_id=session.room_id,
             participant_id=participant_id,
@@ -295,130 +349,223 @@ class ChatScreen(Screen):
             token=session.relay_token,
             room_key=room_key,
         )
-        self._relay_client.set_status_callback(self._on_relay_status)
+        client.set_status_callback(self._make_relay_status_callback(session.id))
         try:
-            self.notify("Connecting to relay...", timeout=3)
-            await self._relay_client.connect(timeout=10.0)
-            # Start the background receive loop as an asyncio task (non-blocking)
-            self._relay_receive_task = asyncio.create_task(
-                self._relay_receive_loop(), name="relay-receive"
+            if not silent:
+                self.notify("Connecting to relay...", timeout=3)
+            await client.connect(timeout=10.0)
+            # Pool the client and start a session-bound receive loop
+            self._relay_clients[session.id] = client
+            self._relay_client = client
+            task = asyncio.create_task(
+                self._relay_receive_loop(session.id),
+                name=f"relay-receive-{session.id[:8]}",
             )
-            self.notify(f"Connected to group: {session.room_id[:8]}...", timeout=3)
+            self._relay_receive_tasks[session.id] = task
+            self._relay_receive_task = task
+            if not silent:
+                self.notify(f"Connected to group: {session.room_id[:8]}...", timeout=3)
         except TimeoutError:
-            self.notify("Relay connection timed out — check the URL and try again", severity="error", timeout=8)
-            self._relay_client = None
+            if not silent:
+                self.notify("Relay connection timed out — check the URL and try again", severity="error", timeout=8)
         except Exception as exc:
-            self.notify(f"Relay connect failed: {exc}", severity="error", timeout=8)
-            self._relay_client = None
+            if not silent:
+                self.notify(f"Relay connect failed: {exc}", severity="error", timeout=8)
 
-    async def _relay_receive_loop(self) -> None:
-        """Background task: receive relay messages and add them to the message list."""
-        if self._relay_client is None:
+    async def _relay_receive_loop(self, session_id: str) -> None:
+        """Background task: receive relay messages for a specific session.
+
+        Runs for the lifetime of the pooled relay connection, regardless of
+        which session is active in the UI.  Store writes always happen;
+        UI updates are gated on ``_is_active()``.
+        """
+        client = self._relay_clients.get(session_id)
+        if client is None:
             return
+
+        def _is_active() -> bool:
+            return self.session.id == session_id
+
         try:
-            async for relay_msg in self._relay_client.receive_messages():
+            async for relay_msg in client.receive_messages():
                 # Ignore messages sent by this participant (already shown locally)
-                if relay_msg.sender_id == self._relay_client._participant_id:
+                if relay_msg.sender_id == client._participant_id:
                     continue
 
-                # Handle typing indicators
+                # Handle sync_response — replay missed messages
+                if relay_msg.type == "sync_response":
+                    await self._handle_sync_response(relay_msg, session_id, client, _is_active)
+                    continue
+
+                # Handle typing indicators (UI-only, skip if not active)
                 if relay_msg.type == "typing":
-                    self._typing_users[relay_msg.sender_name] = time.monotonic()
-                    status = self.query_one("#status-bar", StatusBar)
-                    status.set_typing_indicator(list(self._typing_users.keys()))
-                    self._start_typing_timer()
+                    if _is_active():
+                        self._typing_users[relay_msg.sender_name] = time.monotonic()
+                        status = self.query_one("#status-bar", StatusBar)
+                        status.set_typing_indicator(list(self._typing_users.keys()))
+                        self._start_typing_timer()
                     continue
 
-                # Handle read receipts
+                # Handle read receipts (UI-only, skip if not active)
                 if relay_msg.type == "read" and relay_msg.read_up_to_seq is not None:
-                    self._read_receipts[relay_msg.sender_id] = relay_msg.read_up_to_seq
-                    self._update_delivery_status()
+                    if _is_active():
+                        self._read_receipts[relay_msg.sender_id] = relay_msg.read_up_to_seq
+                        self._update_delivery_status()
                     continue
 
-                # Handle edits from remote participants
+                # Handle edits from remote participants (store always, UI if active)
                 if relay_msg.type == "edit" and relay_msg.target_message_id:
-                    # Find the local message matching the target ID
                     target_msg = self.store.get_message(relay_msg.target_message_id)
                     if target_msg:
                         from datetime import datetime, timezone as tz
                         target_msg.content = relay_msg.content or ""
                         target_msg.edited_at = datetime.now(tz.utc)
                         self.store.update_message(target_msg)
-                        msg_list = self.query_one("#message-list", MessageList)
-                        bubble = msg_list.get_bubble(relay_msg.target_message_id)
-                        if bubble:
-                            bubble.update_content(target_msg.content)
-                            bubble._message.edited_at = target_msg.edited_at
+                        if _is_active():
+                            msg_list = self.query_one("#message-list", MessageList)
+                            bubble = msg_list.get_bubble(relay_msg.target_message_id)
+                            if bubble:
+                                bubble.update_content(target_msg.content)
+                                bubble._message.edited_at = target_msg.edited_at
                     continue
 
-                # Handle deletes from remote participants
+                # Handle deletes from remote participants (store always, UI if active)
                 if relay_msg.type == "delete" and relay_msg.target_message_id:
                     target_msg = self.store.get_message(relay_msg.target_message_id)
                     if target_msg:
                         self.store.soft_delete_message(relay_msg.target_message_id)
-                        msg_list = self.query_one("#message-list", MessageList)
-                        bubble = msg_list.get_bubble(relay_msg.target_message_id)
-                        if bubble:
-                            await bubble.mark_deleted()
+                        if _is_active():
+                            msg_list = self.query_one("#message-list", MessageList)
+                            bubble = msg_list.get_bubble(relay_msg.target_message_id)
+                            if bubble:
+                                await bubble.mark_deleted()
                     continue
 
                 # Ignore non-message types (presence/heartbeat/system)
                 if relay_msg.type != "message":
                     continue
 
+                # Store message — always, regardless of active state
                 msg = Message(
                     role="user" if relay_msg.sender_type == "human" else "assistant",
                     content=relay_msg.content or "",
-                    session_id=self.session.id,
+                    session_id=session_id,
                     sender_name=relay_msg.sender_name,
                     sender_type=relay_msg.sender_type,
                 )
                 self.store.add_message(msg)
 
-                # Track message ID to relay seq for read receipts
                 if relay_msg.seq:
                     self._msg_id_to_seq[msg.id] = relay_msg.seq
 
-                msg_list = self.query_one("#message-list", MessageList)
-                await msg_list.add_message(msg)
+                if _is_active():
+                    # Render to screen
+                    msg_list = self.query_one("#message-list", MessageList)
+                    await msg_list.add_message(msg)
+                    self._send_read_receipt_for_latest()
+                    self._refresh_sidebar()
 
-                # Send read receipt for this message
-                self._send_read_receipt_for_latest()
+                    # Clear typing indicator for this sender
+                    self._typing_users.pop(relay_msg.sender_name, None)
+                    status = self.query_one("#status-bar", StatusBar)
+                    status.set_typing_indicator(list(self._typing_users.keys()))
 
-                # Increment unread if this isn't the active session
-                # (always active here since we have only one chat panel for now)
-                self._refresh_sidebar()
-
-                # Clear typing indicator for this sender
-                self._typing_users.pop(relay_msg.sender_name, None)
-                status = self.query_one("#status-bar", StatusBar)
-                status.set_typing_indicator(list(self._typing_users.keys()))
-
-                # Decide whether to have our Claude respond to this remote message.
-                # Only act on human messages (not Claude messages from other participants).
-                if relay_msg.sender_type == "human":
-                    content = relay_msg.content or ""
-                    mode = self._group_respond_mode
-                    should_respond = False
-
-                    if mode == "all":
-                        should_respond = True
-                    elif mode == "mentions" and self._is_mentioned(content):
-                        should_respond = True
-
-                    if should_respond and not self._sending:
-                        # Build prompt with optional group context preamble
-                        prompt = content
-                        if self.config.group_context_mode == "shared_history":
-                            preamble = self._build_group_context_preamble()
-                            if preamble:
-                                prompt = preamble + "\n\n" + content
-                        await self._respond_to_group_message(prompt)
+                    # Auto-respond if configured
+                    if relay_msg.sender_type == "human":
+                        content = relay_msg.content or ""
+                        mode = self._group_respond_mode
+                        should_respond = False
+                        if mode == "all":
+                            should_respond = True
+                        elif mode == "mentions" and self._is_mentioned(content):
+                            should_respond = True
+                        if should_respond and not self._sending:
+                            prompt = content
+                            if self.config.group_context_mode == "shared_history":
+                                preamble = self._build_group_context_preamble()
+                                if preamble:
+                                    prompt = preamble + "\n\n" + content
+                            await self._respond_to_group_message(prompt)
+                else:
+                    # Background: increment unread and refresh sidebar for badge
+                    self.store.increment_unread(session_id)
+                    self._refresh_sidebar()
 
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            self.notify(f"Relay receive error: {exc}", severity="error")
+            if _is_active():
+                self.notify(f"Relay receive error: {exc}", severity="error")
+
+    async def _handle_sync_response(
+        self,
+        sync_msg: RelayMessage,
+        session_id: str,
+        client: RelayClient,
+        is_active: callable,
+    ) -> None:
+        """Unpack and process missed messages from a sync_response."""
+        if not sync_msg.content:
+            return
+        try:
+            payloads = json.loads(sync_msg.content)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        for raw_payload in payloads:
+            try:
+                relay_msg = RelayMessage.from_json(raw_payload)
+            except Exception:
+                continue
+
+            # Skip own messages
+            if relay_msg.sender_id == client._participant_id:
+                continue
+
+            # Dedup: skip messages already seen via live receive
+            if relay_msg.message_id and relay_msg.message_id in client._seen_message_ids:
+                continue
+            if relay_msg.message_id:
+                client._seen_message_ids.add(relay_msg.message_id)
+
+            # Decrypt if needed (server stores ciphertext)
+            if client._room_key and relay_msg.content and is_encrypted(relay_msg.content):
+                try:
+                    relay_msg.content = decrypt_content(relay_msg.content, client._room_key)
+                except Exception:
+                    pass
+
+            # Track seq
+            if relay_msg.seq and relay_msg.seq > client._last_seq:
+                client._last_seq = relay_msg.seq
+
+            if relay_msg.type == "message":
+                msg = Message(
+                    role="user" if relay_msg.sender_type == "human" else "assistant",
+                    content=relay_msg.content or "",
+                    session_id=session_id,
+                    sender_name=relay_msg.sender_name,
+                    sender_type=relay_msg.sender_type,
+                )
+                self.store.add_message(msg)
+                if is_active():
+                    msg_list = self.query_one("#message-list", MessageList)
+                    await msg_list.add_message(msg)
+                else:
+                    self.store.increment_unread(session_id)
+
+            elif relay_msg.type == "edit" and relay_msg.target_message_id:
+                target = self.store.get_message(relay_msg.target_message_id)
+                if target:
+                    from datetime import datetime, timezone as tz
+                    target.content = relay_msg.content or ""
+                    target.edited_at = datetime.now(tz.utc)
+                    self.store.update_message(target)
+
+            elif relay_msg.type == "delete" and relay_msg.target_message_id:
+                self.store.soft_delete_message(relay_msg.target_message_id)
+
+        self._refresh_sidebar()
 
     def _is_mentioned(self, content: str) -> bool:
         """Return True if *content* contains an @mention targeting our Claude.
@@ -476,18 +623,36 @@ class ChatScreen(Screen):
         # Delegate streaming to the existing worker (handles relay broadcast too)
         self._stream_response(content, assistant_msg, None)
 
-    async def _stop_relay_client(self) -> None:
-        """Gracefully disconnect the relay client and cancel the receive task."""
-        if self._relay_receive_task is not None:
-            self._relay_receive_task.cancel()
+    def _detach_relay_client(self) -> None:
+        """Clear the active relay pointers without disconnecting.
+
+        The client and its receive task stay alive in the pool so
+        background messages continue to be received and stored.
+        """
+        self._relay_client = None
+        self._relay_receive_task = None
+
+    async def _stop_relay_client(self, session_id: str) -> None:
+        """Fully disconnect and remove a specific relay client from the pool."""
+        task = self._relay_receive_tasks.pop(session_id, None)
+        if task is not None:
+            task.cancel()
             try:
-                await self._relay_receive_task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._relay_receive_task = None
-        if self._relay_client is not None:
-            await self._relay_client.disconnect()
+        client = self._relay_clients.pop(session_id, None)
+        if client is not None:
+            await client.disconnect()
+        # Clear active pointers if they reference this session
+        if self._relay_client is client:
             self._relay_client = None
+            self._relay_receive_task = None
+
+    async def _stop_all_relay_clients(self) -> None:
+        """Disconnect all pooled relay clients. Called on app shutdown."""
+        for sid in list(self._relay_clients.keys()):
+            await self._stop_relay_client(sid)
 
     def _on_create_group_dismissed(self, result: dict | None) -> None:
         """Called when CreateGroupScreen is dismissed."""
@@ -497,8 +662,7 @@ class ChatScreen(Screen):
         # Capture prior Claude session ID for forking into the group
         prior_claude_id = self.session.claude_session_id
 
-        # Store handles for cleanup
-        self._relay_server = result.get("relay_server")
+        # Store tunnel handle for cleanup (daemon manages itself)
         self._tunnel_proc = result.get("tunnel_proc")
 
         session = Session(
@@ -569,7 +733,7 @@ class ChatScreen(Screen):
         def on_choice(choice: str | None) -> None:
             if choice == "create":
                 self.app.push_screen(
-                    CreateGroupScreen(port=self.config.relay_port),
+                    CreateGroupScreen(config=self.config),
                     self._on_create_group_dismissed,
                 )
             elif choice == "join":
@@ -607,6 +771,7 @@ class ChatScreen(Screen):
         # Capture context at start so session switches don't confuse us
         stream_session = self.session
         stream_claude = self._claude
+        stream_relay = self._relay_client
         msg_list = self.query_one("#message-list", MessageList)
         bubble = msg_list.get_bubble(assistant_msg.id)
         content_parts: list[str] = []
@@ -680,10 +845,10 @@ class ChatScreen(Screen):
                     self.store.update_session(stream_session)
 
                     # Broadcast in group chat
-                    if stream_session.is_group and self._relay_client is not None:
+                    if stream_session.is_group and stream_relay is not None:
                         try:
                             claude_label = f"{self.config.participant_name}'s Claude"
-                            await self._relay_client.send_message(
+                            await stream_relay.send_message(
                                 assistant_msg.content,
                                 sender_type="claude",
                                 sender_name_override=claude_label,
@@ -1042,20 +1207,23 @@ class ChatScreen(Screen):
 
     # --- Connection status callback ---
 
-    def _on_relay_status(self, status: str, attempt: int) -> None:
-        """Called by RelayClient on connection state changes."""
-        try:
-            status_bar = self.query_one("#status-bar", StatusBar)
-            if status == "connected":
-                status_bar.set_connection_status(None)
-                # Send read receipt on reconnect
-                self._send_read_receipt_for_latest()
-            elif status == "reconnecting":
-                status_bar.set_connection_status(f"Reconnecting... (attempt {attempt})")
-            elif status == "disconnected":
-                status_bar.set_connection_status("Disconnected")
-        except Exception:
-            pass
+    def _make_relay_status_callback(self, session_id: str):
+        """Return a session-bound status callback for a pooled relay client."""
+        def _on_status(status: str, attempt: int) -> None:
+            if self.session.id != session_id:
+                return  # Don't update UI for background sessions
+            try:
+                status_bar = self.query_one("#status-bar", StatusBar)
+                if status == "connected":
+                    status_bar.set_connection_status(None)
+                    self._send_read_receipt_for_latest()
+                elif status == "reconnecting":
+                    status_bar.set_connection_status(f"Reconnecting... (attempt {attempt})")
+                elif status == "disconnected":
+                    status_bar.set_connection_status("Disconnected")
+            except Exception:
+                pass
+        return _on_status
 
     # --- Group context preamble ---
 
@@ -1150,8 +1318,8 @@ class ChatScreen(Screen):
     def _switch_to_session(self, session_id: str) -> None:
         """Switch the chat panel to a different session.
 
-        The old session's ClaudeSession stays alive in the pool so any
-        in-progress responses continue in the background.
+        The old session's ClaudeSession and RelayClient stay alive in their
+        pools so background work continues (streaming, group messages).
         """
         session = self.store.get_session(session_id)
         if not session:
@@ -1164,8 +1332,8 @@ class ChatScreen(Screen):
         self._sending = False
 
         async def _reload():
-            # Disconnect from the previous relay (if any) before switching
-            await self._stop_relay_client()
+            # Detach the active relay pointer (connection stays alive in pool)
+            self._detach_relay_client()
             msg_list = self.query_one("#message-list", MessageList)
             await msg_list.clear_messages()
             await self._load_session_messages()
@@ -1195,6 +1363,9 @@ class ChatScreen(Screen):
 
     def on_chat_sidebar_new_chat_requested(self, event: ChatSidebar.NewChatRequested) -> None:
         self.action_new_chat()
+
+    def on_chat_sidebar_new_chat_in_workspace(self, event: ChatSidebar.NewChatInWorkspace) -> None:
+        self._new_chat_with_cwd(event.cwd)
 
     def on_chat_sidebar_session_renamed(self, event: ChatSidebar.SessionRenamed) -> None:
         """Handle session rename from inline edit."""
@@ -1238,6 +1409,7 @@ class ChatScreen(Screen):
                     self.action_new_chat()
             elif action == ACTION_DELETE:
                 self.store.delete_session(session_id)
+                asyncio.create_task(self._stop_relay_client(session_id))
                 if session_id == self.session.id:
                     self.action_new_chat()
             elif action == ACTION_RENAME:
@@ -1256,8 +1428,40 @@ class ChatScreen(Screen):
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
         sidebar.toggle_class("hidden")
 
+    def action_settings(self) -> None:
+        from reclawed.screens.settings import SettingsScreen
+
+        def on_settings_dismissed(changed: bool | None) -> None:
+            if changed:
+                sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+                sidebar._workspaces = self.config.workspaces
+                sidebar.refresh_sessions(active_session_id=self.session.id)
+
+        self.app.push_screen(
+            SettingsScreen(self.config, self.store),
+            on_settings_dismissed,
+        )
+
+    def action_change_display_name(self) -> None:
+        from reclawed.screens.settings import DisplayNameScreen
+
+        def on_dismissed(new_name: str | None) -> None:
+            if new_name:
+                self.config.participant_name = new_name
+                self.config.save()
+                self.notify(f"Display name changed to: {new_name}", timeout=2)
+
+        self.app.push_screen(
+            DisplayNameScreen(self.config.participant_name),
+            on_dismissed,
+        )
+
     def action_new_chat(self) -> None:
-        self.session = self._create_new_session()
+        # Ctrl+N creates a chat in the same workspace as the active session
+        self._new_chat_with_cwd(self.session.cwd)
+
+    def _new_chat_with_cwd(self, cwd: str | None = None) -> None:
+        self.session = self._create_new_session(cwd=cwd)
         self._selected_model = None
 
         async def _reset():
@@ -1274,11 +1478,8 @@ class ChatScreen(Screen):
         for session in self._claude_sessions.values():
             session.cancel()
             asyncio.create_task(session.stop())
-        # Best-effort relay cleanup — fire-and-forget on exit
-        if self._relay_client is not None:
-            asyncio.create_task(self._stop_relay_client())
-        if self._relay_server is not None:
-            self._relay_server.close()
+        # Disconnect all pooled relay clients (daemon stays running)
+        asyncio.create_task(self._stop_all_relay_clients())
         if self._tunnel_proc is not None and self._tunnel_proc.returncode is None:
             self._tunnel_proc.terminate()
         self.app.exit()
@@ -1303,6 +1504,7 @@ class ChatScreen(Screen):
             "F2          Cycle model\n"
             "F3          Cycle group respond mode\n"
             "            (own/mentions/all/off)\n"
+            "F4          Settings / Import\n"
             "Ctrl+G      Group chat (Create/Join)\n"
             "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"

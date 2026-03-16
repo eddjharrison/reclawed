@@ -36,6 +36,8 @@ class StatusBar(Static):
         self._connection_status: str | None = None
         # Encryption indicator
         self._encrypted: bool = False
+        # Workspace name
+        self._workspace_name: str | None = None
 
     def update_info(
         self,
@@ -45,6 +47,7 @@ class StatusBar(Static):
         message_count: int | None = None,
         group_mode: str | None = None,
         clear_group_mode: bool = False,
+        workspace_name: str | None = ...,
     ) -> None:
         """Update one or more status bar fields.
 
@@ -57,6 +60,10 @@ class StatusBar(Static):
         clear_group_mode:
             Pass ``True`` to explicitly remove the group mode badge (e.g. when
             leaving a group session).
+        workspace_name:
+            Pass a string to display ``[WorkspaceName]`` in the status bar.
+            Pass ``None`` to clear it.  Omit (or pass ``...``) to leave
+            the current value unchanged.
         """
         if session_name is not None:
             self._session_name = session_name
@@ -70,6 +77,8 @@ class StatusBar(Static):
             self._group_mode = None
         elif group_mode is not None:
             self._group_mode = group_mode
+        if workspace_name is not ...:
+            self._workspace_name = workspace_name
         self._refresh_display()
 
     def set_streaming(
@@ -115,6 +124,8 @@ class StatusBar(Static):
 
     def _refresh_display(self) -> None:
         parts = [f"Re:Clawed | {self._session_name}"]
+        if self._workspace_name:
+            parts.append(f"[{self._workspace_name}]")
         if self._encrypted:
             parts.append("Encrypted")
         if self._group_mode is not None:
