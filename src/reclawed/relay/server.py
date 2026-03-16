@@ -48,6 +48,9 @@ _rooms: dict[str, dict[str, _ClientState]] = {}
 # Monotonic seq counter per room
 _room_seqs: dict[str, int] = {}
 
+# Current room mode per room
+_room_modes: dict[str, str] = {}
+
 
 def _next_seq(room_id: str) -> int:
     _room_seqs[room_id] = _room_seqs.get(room_id, 0) + 1
@@ -132,6 +135,7 @@ async def _broadcast_presence(room_id: str, event_type: str, trigger: _ClientSta
         sender_type=trigger.participant_type,
         timestamp=now,
         participants=_build_participants(room_id),
+        content=_room_modes.get(room_id),  # include current room mode
     )
     await _broadcast(room_id, msg.to_json())
 
@@ -260,6 +264,14 @@ async def _handle_message(client: _ClientState, raw: str | bytes) -> None:
         msg.room_id = client.room_id
         payload = msg.to_json()
         _persist(msg)
+        await _broadcast(client.room_id, payload)
+        return
+
+    if msg_type == "room_mode":
+        # Store and broadcast room mode to ALL participants (including sender)
+        _room_modes[client.room_id] = msg.content or "claude_assists"
+        msg.room_id = client.room_id
+        payload = msg.to_json()
         await _broadcast(client.room_id, payload)
         return
 

@@ -188,6 +188,23 @@ class RelayClient:
             assert self._ws is not None
             await self._ws.send(msg.to_json())
 
+    async def send_room_mode(self, mode: str) -> None:
+        """Broadcast a room mode change to all participants."""
+        if not self.is_connected:
+            return
+        msg = RelayMessage(
+            type="room_mode",
+            room_id=self._room_id,
+            sender_id=self._participant_id,
+            sender_name=self._participant_name,
+            sender_type=self._participant_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            content=mode,
+        )
+        async with self._send_lock:
+            assert self._ws is not None
+            await self._ws.send(msg.to_json())
+
     async def send_read_receipt(self, seq: int) -> None:
         """Send a read receipt for messages up to *seq*, with deduplication."""
         if seq <= self._last_read_sent:

@@ -19,7 +19,7 @@ class RelayMessage:
     deduplication — re-sends of the same message carry the same UUID.
     """
 
-    type: str  # "message" | "join" | "leave" | "presence" | "heartbeat" | "sync_request" | "sync_response" | "error"
+    type: str  # "message" | "join" | "leave" | "presence" | "heartbeat" | "sync_request" | "sync_response" | "room_mode" | "error"
     room_id: str
     sender_id: str
     sender_name: str

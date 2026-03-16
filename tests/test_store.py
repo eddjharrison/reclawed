@@ -458,6 +458,32 @@ def test_has_claude_session_not_found(store: Store):
     assert store.has_claude_session("nonexistent-id") is False
 
 
+def test_room_mode_persisted(store: Store):
+    """room_mode is persisted and loaded correctly."""
+    s = Session(name="Group", is_group=True, room_mode="full_auto")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.room_mode == "full_auto"
+
+
+def test_room_mode_update(store: Store):
+    """room_mode can be updated."""
+    s = Session(name="Group", is_group=True, room_mode="claude_assists")
+    store.create_session(s)
+    s.room_mode = "claude_to_claude"
+    store.update_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.room_mode == "claude_to_claude"
+
+
+def test_room_mode_default_none(store: Store):
+    """Sessions without room_mode default to None."""
+    s = Session(name="Solo")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.room_mode is None
+
+
 def test_session_encryption_passphrase():
     """Session encryption_passphrase is persisted and loaded."""
     s = Store(":memory:")

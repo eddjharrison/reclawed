@@ -129,7 +129,16 @@ class StatusBar(Static):
         if self._encrypted:
             parts.append("Encrypted")
         if self._group_mode is not None:
-            parts.append(f"[{self._group_mode}]")
+            _mode_labels = {
+                "humans_only": "Humans Only",
+                "claude_assists": "Claude Assists",
+                "full_auto": "Full Auto",
+                "claude_to_claude": "C2C",
+                # Legacy
+                "own": "Claude Assists", "mentions": "Humans Only",
+                "all": "Full Auto", "off": "Humans Only",
+            }
+            parts.append(_mode_labels.get(self._group_mode, self._group_mode))
         if self._connection_status:
             parts.append(self._connection_status)
         if self._typing_indicator:

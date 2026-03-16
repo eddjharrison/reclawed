@@ -57,3 +57,4 @@ class Session:
     relay_token: str | None = None
     encryption_passphrase: str | None = None
     cwd: str | None = None
+    room_mode: str | None = None  # "humans_only" | "claude_assists" | "full_auto" | "claude_to_claude"

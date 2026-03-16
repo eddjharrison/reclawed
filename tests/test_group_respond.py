@@ -176,20 +176,27 @@ class TestIsMentioned:
 class TestRespondModeCycle:
     def test_cycle_order(self):
         from reclawed.screens.chat import ChatScreen
-        modes = ChatScreen.RESPOND_MODES
-        assert modes == ["own", "mentions", "all", "off"]
+        modes = ChatScreen.ROOM_MODES
+        assert modes == ["humans_only", "claude_assists", "full_auto", "claude_to_claude"]
 
     def test_cycle_wraps_around(self):
         from reclawed.screens.chat import ChatScreen
-        modes = ChatScreen.RESPOND_MODES
-        # Starting from last ("off") should wrap to first ("own")
-        idx = modes.index("off")
+        modes = ChatScreen.ROOM_MODES
+        idx = modes.index("claude_to_claude")
         next_mode = modes[(idx + 1) % len(modes)]
-        assert next_mode == "own"
+        assert next_mode == "humans_only"
 
     def test_all_modes_covered(self):
         from reclawed.screens.chat import ChatScreen
-        assert set(ChatScreen.RESPOND_MODES) == {"own", "mentions", "all", "off"}
+        assert set(ChatScreen.ROOM_MODES) == {
+            "humans_only", "claude_assists", "full_auto", "claude_to_claude"
+        }
+
+    def test_all_modes_have_labels(self):
+        from reclawed.screens.chat import ChatScreen
+        for mode in ChatScreen.ROOM_MODES:
+            assert mode in ChatScreen.ROOM_MODE_LABELS
+            assert mode in ChatScreen.ROOM_MODE_DESCRIPTIONS
 
 
 # ---------------------------------------------------------------------------
@@ -222,37 +229,52 @@ class TestStatusBarGroupMode:
 
     def test_group_mode_shown_when_set(self):
         bar = self._make_bar()
-        bar.update_info(group_mode="mentions")
-        assert "[mentions]" in bar._last_render
+        bar.update_info(group_mode="humans_only")
+        assert "Humans Only" in bar._last_render
 
     def test_group_mode_cleared(self):
         bar = self._make_bar()
-        bar.update_info(group_mode="all")
-        assert "[all]" in bar._last_render
+        bar.update_info(group_mode="full_auto")
+        assert "Full Auto" in bar._last_render
         bar.update_info(clear_group_mode=True)
-        assert "[" not in bar._last_render
+        # No mode label when cleared
+        assert "Full Auto" not in bar._last_render
 
     def test_group_mode_cycles_through_all_values(self):
         bar = self._make_bar()
-        for mode in ("own", "mentions", "all", "off"):
+        expected = {
+            "humans_only": "Humans Only",
+            "claude_assists": "Claude Assists",
+            "full_auto": "Full Auto",
+            "claude_to_claude": "C2C",
+        }
+        for mode, label in expected.items():
             bar.update_info(group_mode=mode)
-            assert f"[{mode}]" in bar._last_render, f"Expected [{mode}] in status bar"
+            assert label in bar._last_render, f"Expected '{label}' in status bar for mode '{mode}'"
 
     def test_none_group_mode_does_not_clear_existing(self):
         bar = self._make_bar()
-        bar.update_info(group_mode="all")
+        bar.update_info(group_mode="full_auto")
         # Passing group_mode=None should leave the existing badge unchanged
         bar.update_info(group_mode=None)
-        assert "[all]" in bar._last_render
+        assert "Full Auto" in bar._last_render
 
     def test_group_mode_badge_position_before_streaming(self):
         bar = self._make_bar()
-        bar.update_info(group_mode="own")
+        bar.update_info(group_mode="claude_assists")
         bar._streaming_indicator = "Claude is thinking..."
         bar._refresh_display()
         render = bar._last_render
         # Badge should appear before the streaming indicator
-        assert render.index("[own]") < render.index("Claude is thinking...")
+        assert render.index("Claude Assists") < render.index("Claude is thinking...")
+
+    def test_legacy_modes_display_correctly(self):
+        """Old mode names should map to new display labels."""
+        bar = self._make_bar()
+        bar.update_info(group_mode="own")
+        assert "Claude Assists" in bar._last_render
+        bar.update_info(group_mode="all")
+        assert "Full Auto" in bar._last_render
 
 
 # ---------------------------------------------------------------------------

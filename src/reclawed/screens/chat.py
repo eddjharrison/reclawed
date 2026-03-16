@@ -41,6 +41,7 @@ class ChatScreen(Screen):
         Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
         Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
         Binding("ctrl+g", "group_menu", "Group", show=True, key_display="^G", priority=True),
+        Binding("ctrl+i", "invite_to_chat", "Invite", show=True, key_display="^I", priority=True),
         Binding("ctrl+s", "toggle_sidebar", "Sidebar", show=True, priority=True),
         Binding("ctrl+t", "cycle_theme", "Theme", show=True, key_display="^T", priority=True),
         Binding("ctrl+e", "export_markdown", "Export", show=True, key_display="^E", priority=True),
@@ -67,6 +68,23 @@ class ChatScreen(Screen):
     # Each entry is a short alias passed verbatim to ``--model`` on the CLI.
     MODELS = ["sonnet", "opus", "haiku"]
 
+    # Room modes — clear, per-room, synchronized via relay
+    ROOM_MODES = ["humans_only", "claude_assists", "full_auto", "claude_to_claude"]
+    ROOM_MODE_LABELS = {
+        "humans_only": "Humans Only",
+        "claude_assists": "Claude Assists",
+        "full_auto": "Full Auto",
+        "claude_to_claude": "C2C",
+    }
+    ROOM_MODE_DESCRIPTIONS = {
+        "humans_only": "No Claude responds unless @mentioned",
+        "claude_assists": "Claude responds to your messages only",
+        "full_auto": "All Claudes respond to all human messages",
+        "claude_to_claude": "Claudes work autonomously",
+    }
+    # Map old mode names to new for backward compatibility
+    _MODE_COMPAT = {"own": "claude_assists", "mentions": "humans_only", "all": "full_auto", "off": "humans_only"}
+
     def __init__(self, store: Store, config: Config, session: Session | None = None) -> None:
         super().__init__()
         self.store = store
@@ -90,9 +108,11 @@ class ChatScreen(Screen):
         # Pool of live relay connections (like _claude_sessions for Claude)
         self._relay_clients: dict[str, RelayClient] = {}
         self._relay_receive_tasks: dict[str, asyncio.Task] = {}
-        # Runtime group respond mode — loaded from config but NOT persisted to DB.
-        # Cycles via F3: "own" → "mentions" → "all" → "off" → "own"
-        self._group_respond_mode: str = config.group_auto_respond
+        # Room mode — per-room, synchronized via relay, persisted on Session
+        _default = self._MODE_COMPAT.get(config.group_auto_respond, config.group_auto_respond)
+        if _default not in self.ROOM_MODES:
+            _default = "claude_assists"
+        self._group_respond_mode: str = _default
         # Typing indicator tracking: {sender_name: monotonic_time}
         self._typing_users: dict[str, float] = {}
         self._typing_timer_running = False
@@ -265,13 +285,14 @@ class ChatScreen(Screen):
             except Exception:
                 pass  # Best-effort; don't break the local send flow
 
-        # In group sessions with mode "off", skip Claude entirely.
-        if self.session.is_group and self._group_respond_mode == "off":
-            self._sending = False
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.set_enabled(True)
-            compose.query_one("#compose-input").focus()
-            return
+        # In "Humans Only" mode, skip Claude unless the user @mentions their Claude.
+        if self.session.is_group and self._group_respond_mode == "humans_only":
+            if not self._is_mentioned(event.text):
+                self._sending = False
+                compose = self.query_one("#compose-area", ComposeArea)
+                compose.set_enabled(True)
+                compose.query_one("#compose-input").focus()
+                return
 
         # Build prompt with optional group context preamble
         prompt = event.text
@@ -397,6 +418,33 @@ class ChatScreen(Screen):
                     await self._handle_sync_response(relay_msg, session_id, client, _is_active)
                     continue
 
+                # Handle room mode changes (synchronized across all participants)
+                if relay_msg.type == "room_mode" and relay_msg.content:
+                    new_mode = relay_msg.content
+                    if new_mode in self.ROOM_MODES:
+                        self._group_respond_mode = new_mode
+                        session_obj = self.store.get_session(session_id)
+                        if session_obj:
+                            session_obj.room_mode = new_mode
+                            self.store.update_session(session_obj)
+                        if _is_active():
+                            self.session.room_mode = new_mode
+                            self._update_status()
+                            label = self.ROOM_MODE_LABELS.get(new_mode, new_mode)
+                            self.notify(
+                                f"{relay_msg.sender_name} changed mode to: {label}",
+                                timeout=3,
+                            )
+                    continue
+
+                # Extract room mode from presence updates (for new joiners)
+                if relay_msg.type in ("join", "presence") and relay_msg.content:
+                    if relay_msg.content in self.ROOM_MODES:
+                        self._group_respond_mode = relay_msg.content
+                        if _is_active():
+                            self.session.room_mode = relay_msg.content
+                            self._update_status()
+
                 # Handle typing indicators (UI-only, skip if not active)
                 if relay_msg.type == "typing":
                     if _is_active():
@@ -470,22 +518,33 @@ class ChatScreen(Screen):
                     status = self.query_one("#status-bar", StatusBar)
                     status.set_typing_indicator(list(self._typing_users.keys()))
 
-                    # Auto-respond if configured
-                    if relay_msg.sender_type == "human":
-                        content = relay_msg.content or ""
-                        mode = self._group_respond_mode
-                        should_respond = False
-                        if mode == "all":
+                    # Auto-respond based on room mode
+                    content = relay_msg.content or ""
+                    mode = self._group_respond_mode
+                    should_respond = False
+
+                    if mode == "humans_only":
+                        # Only respond if explicitly @mentioned
+                        if self._is_mentioned(content):
                             should_respond = True
-                        elif mode == "mentions" and self._is_mentioned(content):
+                    elif mode == "claude_assists":
+                        # Don't respond to remote messages (local sends handled separately)
+                        pass
+                    elif mode == "full_auto":
+                        # Respond to all human messages
+                        if relay_msg.sender_type == "human":
                             should_respond = True
-                        if should_respond and not self._sending:
-                            prompt = content
-                            if self.config.group_context_mode == "shared_history":
-                                preamble = self._build_group_context_preamble()
-                                if preamble:
-                                    prompt = preamble + "\n\n" + content
-                            await self._respond_to_group_message(prompt)
+                    elif mode == "claude_to_claude":
+                        # Respond to everything — human and Claude messages
+                        should_respond = True
+
+                    if should_respond and not self._sending:
+                        prompt = content
+                        if self.config.group_context_mode == "shared_history":
+                            preamble = self._build_group_context_preamble()
+                            if preamble:
+                                prompt = preamble + "\n\n" + content
+                        await self._respond_to_group_message(prompt)
                 else:
                     # Background: increment unread and refresh sidebar for badge
                     self.store.increment_unread(session_id)
@@ -1073,7 +1132,7 @@ class ChatScreen(Screen):
                 pass
 
         # 5. In group sessions with mode "off", skip Claude entirely
-        if self.session.is_group and self._group_respond_mode == "off":
+        if self.session.is_group and self._group_respond_mode == "humans_only":
             self.notify("Message edited", timeout=2)
             return
 
@@ -1286,34 +1345,28 @@ class ChatScreen(Screen):
         self._update_status()
         self.notify(f"Model: {next_model}", timeout=2)
 
-    # Ordered cycle for F3 respond-mode toggle.
-    RESPOND_MODES = ["own", "mentions", "all", "off"]
-
     def action_cycle_respond_mode(self) -> None:
-        """Cycle through group chat respond modes (F3).
-
-        Modes:
-          own      — Claude responds only to your own messages (default)
-          mentions — Claude responds when @mentioned
-          all      — Claude responds to every human message
-          off      — Claude never responds automatically
-        """
+        """Cycle through room modes (F3). Broadcasts to all participants."""
         current = self._group_respond_mode
         try:
-            idx = self.RESPOND_MODES.index(current)
+            idx = self.ROOM_MODES.index(current)
         except ValueError:
             idx = -1
-        next_mode = self.RESPOND_MODES[(idx + 1) % len(self.RESPOND_MODES)]
+        next_mode = self.ROOM_MODES[(idx + 1) % len(self.ROOM_MODES)]
         self._group_respond_mode = next_mode
+
+        # Persist on session
+        self.session.room_mode = next_mode
+        self.store.update_session(self.session)
+
+        # Broadcast to all participants via relay
+        if self.session.is_group and self._relay_client is not None:
+            asyncio.create_task(self._relay_client.send_room_mode(next_mode))
+
         self._update_status()
-        descriptions = {
-            "own": "Responding to your messages only",
-            "mentions": "Responding to @mentions",
-            "all": "Responding to all human messages",
-            "off": "Auto-respond off",
-        }
-        label = descriptions.get(next_mode, next_mode)
-        self.notify(f"Group respond mode: [{next_mode}] — {label}", timeout=3)
+        label = self.ROOM_MODE_LABELS.get(next_mode, next_mode)
+        desc = self.ROOM_MODE_DESCRIPTIONS.get(next_mode, "")
+        self.notify(f"Room mode: {label} — {desc}", timeout=3)
 
     def _switch_to_session(self, session_id: str) -> None:
         """Switch the chat panel to a different session.
@@ -1330,6 +1383,9 @@ class ChatScreen(Screen):
         self._selected_model = session.model
         # Reset send state so compose is usable in the new session
         self._sending = False
+        # Restore room mode from session (per-room persistence)
+        if session.room_mode and session.room_mode in self.ROOM_MODES:
+            self._group_respond_mode = session.room_mode
 
         async def _reload():
             # Detach the active relay pointer (connection stays alive in pool)
@@ -1428,6 +1484,40 @@ class ChatScreen(Screen):
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
         sidebar.toggle_class("hidden")
 
+    def action_invite_to_chat(self) -> None:
+        """Upgrade the current 1:1 session into a group chat (Ctrl+I)."""
+        if self.session.is_group:
+            self.notify("Already in a group chat", severity="warning", timeout=3)
+            return
+        from reclawed.screens.group import InviteToChatScreen
+        self.app.push_screen(
+            InviteToChatScreen(config=self.config),
+            self._on_invite_dismissed,
+        )
+
+    def _on_invite_dismissed(self, result: dict | None) -> None:
+        if result is None:
+            return
+
+        self._tunnel_proc = result.get("tunnel_proc")
+
+        # Upgrade existing session to group — NO new session, NO fork
+        self.session.is_group = True
+        self.session.relay_url = result["relay_url"]
+        self.session.room_id = result["room_id"]
+        self.session.participant_id = result["participant_id"]
+        self.session.relay_token = result.get("token")
+        self.session.encryption_passphrase = result.get("encryption_passphrase")
+        self.session.room_mode = self._group_respond_mode
+        self.store.update_session(self.session)
+
+        async def _setup():
+            self._update_status()
+            self._refresh_sidebar()
+            await self._start_relay_client(self.session)
+
+        self.app.call_later(_setup)
+
     def action_settings(self) -> None:
         from reclawed.screens.settings import SettingsScreen
 
@@ -1502,10 +1592,12 @@ class ChatScreen(Screen):
             "d           Delete message\n"
             "/           Search messages\n"
             "F2          Cycle model\n"
-            "F3          Cycle group respond mode\n"
-            "            (own/mentions/all/off)\n"
+            "F3          Cycle room mode\n"
+            "            (Humans Only/Claude Assists/\n"
+            "             Full Auto/C2C)\n"
             "F4          Settings / Import\n"
             "Ctrl+G      Group chat (Create/Join)\n"
+            "Ctrl+I      Invite to group chat\n"
             "Ctrl+P      Pinned messages\n"
             "Ctrl+N      New chat\n"
             "Ctrl+S      Toggle sidebar\n"

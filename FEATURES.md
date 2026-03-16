@@ -48,6 +48,8 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 ## Group Chat Enhancements
 
+- [ ] **Invite to chat** — upgrade an existing 1:1 session into a group chat. Fork your current Claude context into the room. `Ctrl+I` generates a connection string mid-conversation
+- [ ] **Clear room modes** — replace cryptic F3 cycling with a clear, group-specific mode selector. Modes: "Humans Only" (no Claude unless @mentioned), "Claude Assists" (Claude responds to your messages), "Full Auto" (all Claudes respond to everything), "Claude-to-Claude" (Claudes work autonomously while humans are away). Mode is per-room (all participants see the same setting), shown prominently in status bar with plain English labels
 - [ ] **Autonomous Claude-to-Claude** — Claudes can continue working together while humans are away
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
