@@ -61,12 +61,12 @@ reclawed --session <id>   # resume a specific session by ID
 
 ```toml
 [[workspaces]]
-name = "Re:Clawed"
-path = "~/EIR/reclawed"
+name = "Frontend"
+path = "~/projects/frontend"
 
 [[workspaces]]
-name = "MarketMakers"
-path = "~/EIR/marketmakersmaker"
+name = "Backend"
+path = "~/projects/backend"
 ```
 
 ### Session Management
@@ -247,12 +247,12 @@ group_context_window = 20
 
 # Workspaces (add as many as you like)
 [[workspaces]]
-name = "Re:Clawed"
-path = "~/EIR/reclawed"
+name = "Frontend"
+path = "~/projects/frontend"
 
 [[workspaces]]
-name = "MarketMakers"
-path = "~/EIR/marketmakersmaker"
+name = "Backend"
+path = "~/projects/backend"
 ```
 
 ## Security
