@@ -87,7 +87,7 @@ class Config:
     permission_mode: str = "acceptEdits"  # "default" | "acceptEdits" | "bypassPermissions"
     allowed_tools: str = "Read,Edit,Bash,Glob,Grep,Write"  # comma-separated tool list
     # Auto-name sessions using Claude after the first exchange
-    auto_name_sessions: bool = True
+    auto_name_sessions: bool = False
     # Workspaces — multi-project session grouping
     workspaces: list[Workspace] = field(default_factory=list)
     # Relay daemon settings

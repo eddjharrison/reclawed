@@ -15,6 +15,7 @@ ACTION_UNMUTE = "unmute"
 ACTION_ARCHIVE = "archive"
 ACTION_DELETE = "delete"
 ACTION_RENAME = "rename"
+ACTION_GENERATE_NAME = "generate_name"
 
 
 class ContextMenu(ModalScreen[tuple[str, str] | None]):
@@ -86,6 +87,7 @@ class ContextMenu(ModalScreen[tuple[str, str] | None]):
             (mute_action,        mute_label,       "action-mute"),
             (ACTION_ARCHIVE,     "Archive",         "action-archive"),
             (ACTION_RENAME,      "Rename",          "action-rename"),
+            (ACTION_GENERATE_NAME, "Generate name",  "action-generate-name"),
             (ACTION_DELETE,      "Delete",          "action-delete"),
         ]
 

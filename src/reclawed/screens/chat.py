@@ -874,44 +874,69 @@ class ChatScreen(Screen):
     ) -> None:
         """Ask Claude (haiku) to generate a short session name in the background."""
         try:
-            from reclawed.claude import ClaudeProcess, StreamResult as SR
-
-            naming_prompt = (
-                "Generate a short, descriptive title (3-5 words) for a chat session "
-                "that started with this message. Return ONLY the title — no quotes, "
-                "no punctuation, no explanation.\n\n"
-                f"Message: {first_message[:500]}"
-            )
-            claude = ClaudeProcess(self.config.claude_binary)
-            generated_name: str | None = None
-            async for ev in claude.send_message(naming_prompt, model="haiku"):
-                if isinstance(ev, SR):
-                    generated_name = ev.content
-                    break
-
-            if not generated_name:
-                return
-
-            # Clean up the result
-            cleaned = generated_name.strip().strip('"\'').strip()
-            # Remove trailing period if present
-            cleaned = cleaned.rstrip(".")
-            if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
-                return
-
-            # Race-condition guard: only update if name hasn't been manually changed
-            session = self.store.get_session(session_id)
-            if not session or session.name != fallback_name:
-                return
-
-            session.name = cleaned
-            self.store.update_session(session)
-            if self.session.id == session_id:
-                self.session.name = cleaned
-                self._update_status()
-            self._refresh_sidebar()
+            context = f"Message: {first_message[:500]}"
+            await self._run_name_generation(session_id, context, guard_name=fallback_name)
         except Exception:
             pass  # Silent failure — fallback name already set
+
+    @work(thread=False)
+    async def _generate_name_for_session(self, session_id: str) -> None:
+        """Generate a name from session messages (triggered via context menu)."""
+        try:
+            self.notify("Generating name...", timeout=2)
+            messages = self.store.get_session_messages(session_id)
+            # Build context from first few messages
+            context_parts: list[str] = []
+            for msg in messages[:6]:
+                role = "Human" if msg.role == "user" else "Claude"
+                text = msg.content[:200] if msg.content else ""
+                if text:
+                    context_parts.append(f"{role}: {text}")
+            context = "\n".join(context_parts)
+            await self._run_name_generation(session_id, context, guard_name=None)
+        except Exception:
+            pass
+
+    async def _run_name_generation(
+        self, session_id: str, context: str, guard_name: str | None
+    ) -> None:
+        """Shared logic for generating a session name via haiku."""
+        from reclawed.claude import ClaudeProcess, StreamResult as SR
+
+        naming_prompt = (
+            "Generate a short, descriptive title (3-5 words) for a chat session. "
+            "Return ONLY the title — no quotes, no punctuation, no explanation.\n\n"
+            f"{context}"
+        )
+        claude = ClaudeProcess(self.config.claude_binary)
+        generated_name: str | None = None
+        async for ev in claude.send_message(naming_prompt, model="haiku"):
+            if isinstance(ev, SR):
+                generated_name = ev.content
+                break
+
+        if not generated_name:
+            return
+
+        # Clean up the result
+        cleaned = generated_name.strip().strip('"\'').strip()
+        cleaned = cleaned.rstrip(".")
+        if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
+            return
+
+        # Race-condition guard: for auto-naming, only update if name unchanged
+        session = self.store.get_session(session_id)
+        if not session:
+            return
+        if guard_name is not None and session.name != guard_name:
+            return
+
+        session.name = cleaned
+        self.store.update_session(session)
+        if self.session.id == session_id:
+            self.session.name = cleaned
+            self._update_status()
+        self._refresh_sidebar()
 
     @work(thread=False)
     async def _stream_response(
@@ -1714,7 +1739,7 @@ class ChatScreen(Screen):
     def on_chat_sidebar_context_menu_requested(self, event: ChatSidebar.ContextMenuRequested) -> None:
         from reclawed.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
-            ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME,
+            ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
         )
 
         def on_result(result: tuple[str, str] | None) -> None:
@@ -1748,6 +1773,9 @@ class ChatScreen(Screen):
                 sidebar = self.query_one("#chat-sidebar", ChatSidebar)
                 sidebar.start_rename(session_id)
                 return  # Don't refresh — it would destroy the rename Input
+            elif action == ACTION_GENERATE_NAME:
+                self._generate_name_for_session(session_id)
+                return  # Worker handles refresh
 
             self._refresh_sidebar()
 
