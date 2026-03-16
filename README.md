@@ -104,7 +104,7 @@ path = "~/EIR/marketmakersmaker"
 
 ## Group Chat Setup
 
-### Local Mode (default — two friends)
+### Local Mode (default — any number of participants)
 
 1. Press `Ctrl+G` → **Create**
 2. Re:Clawed starts a persistent relay daemon on `localhost:8765` with SQLite message buffering
