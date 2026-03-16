@@ -55,14 +55,16 @@ class WorkspaceSection(Vertical):
         self,
         workspace_name: str,
         cwd: str | None = None,
+        collapsed: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._workspace_name = workspace_name
         self._cwd = cwd
+        self._collapsed = collapsed
 
     def compose(self) -> ComposeResult:
-        with Collapsible(title=self._workspace_name, collapsed=False):
+        with Collapsible(title=self._workspace_name, collapsed=self._collapsed):
             yield Vertical(id=f"ws-items-{id(self)}")
             yield _NewChatLabel("+ New Chat", classes="ws-new-chat")
 

@@ -189,14 +189,16 @@ class ChatSidebar(Vertical):
             else:
                 ungrouped.append(session)
 
-        # Render workspace sections
+        # Render workspace sections — only expand the one containing the active session
         for ws in self._workspaces:
             sessions_in_ws = grouped[ws.expanded_path]
             if not sessions_in_ws and self._search_query:
                 continue  # Hide empty sections during search
+            has_active = any(s.id == self._active_id for s in sessions_in_ws)
             section = WorkspaceSection(
                 workspace_name=ws.name,
                 cwd=ws.expanded_path,
+                collapsed=not has_active,
             )
             chat_list.mount(section)
             container = section.items_container
@@ -209,9 +211,11 @@ class ChatSidebar(Vertical):
 
         # Render ungrouped sessions under "Default" section
         if ungrouped:
+            has_active = any(s.id == self._active_id for s in ungrouped)
             section = WorkspaceSection(
                 workspace_name="Default",
                 cwd=None,
+                collapsed=not has_active,
             )
             chat_list.mount(section)
             container = section.items_container
