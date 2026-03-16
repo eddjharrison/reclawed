@@ -44,6 +44,7 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 - [x] **Status bar redesign** — decluttered minimal bar. Only shows what matters NOW. Conditional badges (bypass perms, room mode) appear only when non-default
 - [x] **Context gauge** — `████████░░ 78%` progress bar showing context window usage. Tracks input_tokens from SDK, persisted per-session
+- [ ] **BUG: Status bar invisible** — StatusBar widget not rendering in the chat panel Vertical layout. Needs CSS investigation — likely height:1 being compressed to 0 in the flex container. The widget exists and updates correctly (verified in tests), just not visible in the TUI
 - [x] **Full settings editor** — tabbed settings screen (General, Claude, Group Chat, Workspaces) with Select dropdowns and Input fields. All config fields editable from TUI
 - [ ] **Color-coded workspace badges** — different colors per workspace in status bar
 - Open to ideas
