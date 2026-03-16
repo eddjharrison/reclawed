@@ -218,6 +218,8 @@ class TestStatusBarGroupMode:
         bar._encrypted = False
         bar._workspace_name = None
         bar._permission_mode = None
+        bar._context_tokens = 0
+        bar._context_max = 200_000
         # Patch update() so we can inspect the rendered string
         bar._last_render = ""
         bar.update = lambda text: setattr(bar, "_last_render", text)
@@ -260,14 +262,15 @@ class TestStatusBarGroupMode:
         bar.update_info(group_mode=None)
         assert "Full Auto" in bar._last_render
 
-    def test_group_mode_badge_position_before_streaming(self):
+    def test_group_mode_and_streaming_both_shown(self):
         bar = self._make_bar()
         bar.update_info(group_mode="claude_assists")
-        bar._streaming_indicator = "Claude is thinking..."
+        bar._streaming_indicator = "thinking..."
         bar._refresh_display()
         render = bar._last_render
-        # Badge should appear before the streaming indicator
-        assert render.index("Claude Assists") < render.index("Claude is thinking...")
+        # Both should be present in the status bar
+        assert "Claude Assists" in render
+        assert "thinking..." in render
 
     def test_legacy_modes_display_correctly(self):
         """Old mode names should map to new display labels."""

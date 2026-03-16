@@ -1,12 +1,25 @@
-"""Status bar showing model, cost, and session info."""
+"""Minimal status bar — context gauge, model, cost, conditional badges."""
 
 from __future__ import annotations
 
 from textual.widgets import Static
 
+_BAR_WIDTH = 10
+
+
+def _context_bar(tokens: int, max_tokens: int) -> str:
+    """Render a compact progress bar: ████████░░ 78%"""
+    if max_tokens <= 0 or tokens <= 0:
+        return ""
+    pct = min(tokens / max_tokens, 1.0)
+    filled = round(pct * _BAR_WIDTH)
+    empty = _BAR_WIDTH - filled
+    bar = "\u2588" * filled + "\u2591" * empty
+    return f"{bar} {pct:.0%}"
+
 
 class StatusBar(Static):
-    """Bottom status bar with session metadata."""
+    """Bottom status bar — clean, minimal, context-aware."""
 
     DEFAULT_CSS = """
     StatusBar {
@@ -26,20 +39,15 @@ class StatusBar(Static):
         self._model = ""
         self._cost = 0.0
         self._message_count = 0
-        # Streaming state: None = idle, "thinking" = waiting, float = tok/s
         self._streaming_indicator: str | None = None
-        # Group respond mode badge ("own" | "mentions" | "all" | "off" | None)
         self._group_mode: str | None = None
-        # Typing indicator
         self._typing_indicator: str | None = None
-        # Connection status
         self._connection_status: str | None = None
-        # Encryption indicator
         self._encrypted: bool = False
-        # Workspace name
         self._workspace_name: str | None = None
-        # Permission mode
         self._permission_mode: str | None = None
+        self._context_tokens: int = 0
+        self._context_max: int = 200_000
 
     def update_info(
         self,
@@ -52,22 +60,6 @@ class StatusBar(Static):
         workspace_name: str | None = ...,
         permission_mode: str | None = ...,
     ) -> None:
-        """Update one or more status bar fields.
-
-        Parameters
-        ----------
-        group_mode:
-            Pass a mode string ("own"/"mentions"/"all"/"off") to display a
-            ``[mode]`` badge when in a group session.  Pass ``None`` to leave
-            the current badge unchanged.
-        clear_group_mode:
-            Pass ``True`` to explicitly remove the group mode badge (e.g. when
-            leaving a group session).
-        workspace_name:
-            Pass a string to display ``[WorkspaceName]`` in the status bar.
-            Pass ``None`` to clear it.  Omit (or pass ``...``) to leave
-            the current value unchanged.
-        """
         if session_name is not None:
             self._session_name = session_name
         if model is not None:
@@ -92,23 +84,16 @@ class StatusBar(Static):
         elapsed: float | None = None,
         active: bool = True,
     ) -> None:
-        """Update the streaming indicator in the status bar.
-
-        Call with active=True and no tokens/elapsed to show "Claude is thinking...".
-        Call with tokens and elapsed (both > 0) to show a live tok/s rate.
-        Call with active=False to clear the streaming indicator.
-        """
         if not active:
             self._streaming_indicator = None
         elif tokens is not None and elapsed is not None and elapsed > 0 and tokens > 0:
             rate = tokens / elapsed
             self._streaming_indicator = f"{rate:.0f} tok/s"
         else:
-            self._streaming_indicator = "Claude is thinking..."
+            self._streaming_indicator = "thinking..."
         self._refresh_display()
 
     def set_typing_indicator(self, names: list[str]) -> None:
-        """Show typing indicator for the given user names."""
         if not names:
             self._typing_indicator = None
         elif len(names) == 1:
@@ -118,51 +103,66 @@ class StatusBar(Static):
         self._refresh_display()
 
     def set_connection_status(self, status: str | None) -> None:
-        """Set connection status text (e.g. 'Reconnecting... (attempt 2)')."""
         self._connection_status = status
         self._refresh_display()
 
     def set_encrypted(self, encrypted: bool) -> None:
-        """Show or hide the encryption lock indicator."""
         self._encrypted = encrypted
         self._refresh_display()
 
+    def set_context(self, tokens: int, max_tokens: int) -> None:
+        """Update the context usage gauge."""
+        self._context_tokens = tokens
+        self._context_max = max_tokens
+        self._refresh_display()
+
     def _refresh_display(self) -> None:
-        parts = [f"Re:Clawed | {self._session_name}"]
+        parts: list[str] = []
+
+        # Left: session name
+        parts.append(self._session_name)
+
+        # Workspace (only if set)
         if self._workspace_name:
             parts.append(f"[{self._workspace_name}]")
-        if self._encrypted:
-            parts.append("Encrypted")
-        if self._group_mode is not None:
-            _mode_labels = {
-                "humans_only": "Humans Only",
-                "claude_assists": "Claude Assists",
-                "full_auto": "Full Auto",
-                "claude_to_claude": "C2C",
-                # Legacy
-                "own": "Claude Assists", "mentions": "Humans Only",
-                "all": "Full Auto", "off": "Humans Only",
-            }
-            parts.append(_mode_labels.get(self._group_mode, self._group_mode))
-        if self._permission_mode:
-            _perm_labels = {
-                "default": "Perms: default",
-                "acceptEdits": "Perms: acceptEdits",
-                "bypassPermissions": "!! BYPASS PERMS !!",
-            }
-            parts.append(_perm_labels.get(self._permission_mode, self._permission_mode))
+
+        # Transient states take priority
         if self._connection_status:
             parts.append(self._connection_status)
-        if self._typing_indicator:
+        elif self._typing_indicator:
             parts.append(self._typing_indicator)
-        if self._streaming_indicator:
+        elif self._streaming_indicator:
             parts.append(self._streaming_indicator)
         else:
+            # Context gauge (only when not streaming/typing)
+            ctx = _context_bar(self._context_tokens, self._context_max)
+            if ctx:
+                parts.append(ctx)
+            # Model
             if self._model:
                 parts.append(self._model)
-            if self._message_count:
-                parts.append(f"{self._message_count} msgs")
-            if self._cost > 0:
-                parts.append(f"${self._cost:.4f}")
-        parts.append("? for help")
+
+        # Conditional badges (only when non-default)
+        if self._encrypted:
+            parts.append("Encrypted")
+
+        _mode_labels = {
+            "humans_only": "Humans Only",
+            "claude_assists": "Claude Assists",
+            "full_auto": "Full Auto",
+            "claude_to_claude": "C2C",
+            "own": "Claude Assists", "mentions": "Humans Only",
+            "all": "Full Auto", "off": "Humans Only",
+        }
+        if self._group_mode is not None:
+            parts.append(_mode_labels.get(self._group_mode, self._group_mode))
+
+        # Only show bypass permissions — other modes are normal operation
+        if self._permission_mode == "bypassPermissions":
+            parts.append("!! BYPASS !!")
+
+        # Cost (always, right side)
+        if self._cost > 0:
+            parts.append(f"${self._cost:.4f}")
+
         self.update(" | ".join(parts))

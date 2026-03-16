@@ -59,3 +59,4 @@ class Session:
     cwd: str | None = None
     room_mode: str | None = None  # "humans_only" | "claude_assists" | "full_auto" | "claude_to_claude"
     permission_mode: str | None = None  # "default" | "acceptEdits" | "bypassPermissions"
+    last_input_tokens: int = 0  # last known context size for context gauge

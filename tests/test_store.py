@@ -500,6 +500,22 @@ def test_permission_mode_default_none(store: Store):
     assert fetched.permission_mode is None
 
 
+def test_last_input_tokens_persisted(store: Store):
+    """last_input_tokens is persisted and loaded."""
+    s = Session(name="Test", last_input_tokens=50000)
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.last_input_tokens == 50000
+
+
+def test_last_input_tokens_default_zero(store: Store):
+    """Sessions default to 0 last_input_tokens."""
+    s = Session(name="Default")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.last_input_tokens == 0
+
+
 def test_session_encryption_passphrase():
     """Session encryption_passphrase is persisted and loaded."""
     s = Store(":memory:")

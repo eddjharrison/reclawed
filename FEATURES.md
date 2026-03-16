@@ -42,8 +42,9 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 ## Visuals
 
-- [ ] **Usage toolbar** — show context window usage, token budget remaining, cost so far
-- [ ] **Context indicator** — visual indicator of how much context Claude has
+- [x] **Status bar redesign** — decluttered minimal bar. Only shows what matters NOW. Conditional badges (bypass perms, room mode) appear only when non-default
+- [x] **Context gauge** — `████████░░ 78%` progress bar showing context window usage. Tracks input_tokens from SDK, persisted per-session
+- [x] **Full settings editor** — tabbed settings screen (General, Claude, Group Chat, Workspaces) with Select dropdowns and Input fields. All config fields editable from TUI
 - [ ] **Color-coded workspace badges** — different colors per workspace in status bar
 - Open to ideas
 

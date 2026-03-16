@@ -421,6 +421,8 @@ def test_status_bar_typing_indicator():
     bar._encrypted = False
     bar._workspace_name = None
     bar._permission_mode = None
+    bar._context_tokens = 0
+    bar._context_max = 200_000
     bar._last_render = ""
     bar.update = lambda text: setattr(bar, "_last_render", text)
 
@@ -449,6 +451,8 @@ def test_status_bar_connection_status():
     bar._encrypted = False
     bar._workspace_name = None
     bar._permission_mode = None
+    bar._context_tokens = 0
+    bar._context_max = 200_000
     bar._last_render = ""
     bar.update = lambda text: setattr(bar, "_last_render", text)
 

@@ -90,6 +90,8 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN room_mode TEXT",
             # Per-session permission mode
             "ALTER TABLE sessions ADD COLUMN permission_mode TEXT",
+            # Context tracking
+            "ALTER TABLE sessions ADD COLUMN last_input_tokens INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in migrations:
             try:
@@ -109,15 +111,15 @@ class Store:
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
             "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, "
-            "cwd, room_mode, permission_mode) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cwd, room_mode, permission_mode, last_input_tokens) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
-             session.room_mode, session.permission_mode),
+             session.room_mode, session.permission_mode, session.last_input_tokens),
         )
         self._conn.commit()
         return session
@@ -145,13 +147,15 @@ class Store:
             "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
-            "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=? WHERE id=?",
+            "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=?, "
+            "last_input_tokens=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
-             session.room_mode, session.permission_mode, session.id),
+             session.room_mode, session.permission_mode,
+             session.last_input_tokens, session.id),
         )
         self._conn.commit()
 
@@ -430,4 +434,5 @@ class Store:
             cwd=row["cwd"] if "cwd" in keys else None,
             room_mode=row["room_mode"] if "room_mode" in keys else None,
             permission_mode=row["permission_mode"] if "permission_mode" in keys else None,
+            last_input_tokens=row["last_input_tokens"] if "last_input_tokens" in keys else 0,
         )

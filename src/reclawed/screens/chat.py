@@ -72,6 +72,9 @@ class ChatScreen(Screen):
     # Each entry is a short alias passed verbatim to ``--model`` on the CLI.
     MODELS = ["sonnet", "opus", "haiku"]
 
+    # Known context window sizes per model family
+    _CONTEXT_WINDOWS = {"opus": 200_000, "sonnet": 200_000, "haiku": 200_000}
+
     # Room modes — clear, per-room, synchronized via relay
     ROOM_MODES = ["humans_only", "claude_assists", "full_auto", "claude_to_claude"]
     ROOM_MODE_LABELS = {
@@ -266,6 +269,10 @@ class ChatScreen(Screen):
             permission_mode=self._selected_permission,
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
+        # Restore context gauge from persisted value
+        if self.session.last_input_tokens:
+            ctx_max = self._get_context_window_size()
+            status.set_context(self.session.last_input_tokens, ctx_max)
 
     # --- Message handling ---
 
@@ -835,6 +842,15 @@ class ChatScreen(Screen):
         self.app.push_screen(GroupMenuScreen(), on_choice)
 
     @staticmethod
+    def _get_context_window_size(self) -> int:
+        """Return the context window size for the current model."""
+        model = self._selected_model or self.session.model or "sonnet"
+        for key, size in self._CONTEXT_WINDOWS.items():
+            if key in model.lower():
+                return size
+        return 200_000
+
+    @staticmethod
     def _derive_session_name(prompt: str, max_len: int = 40) -> str:
         """Return a short session name derived from the first user message.
 
@@ -945,7 +961,14 @@ class ChatScreen(Screen):
                     )
                     if stream_session.name in ("New Chat", "Group Chat"):
                         stream_session.name = self._derive_session_name(prompt)
+                    # Update context gauge
+                    if event.input_tokens:
+                        stream_session.last_input_tokens = event.input_tokens
                     self.store.update_session(stream_session)
+
+                    if _is_active() and event.input_tokens:
+                        ctx_max = self._get_context_window_size()
+                        status.set_context(event.input_tokens, ctx_max)
 
                     # Broadcast in group chat
                     if stream_session.is_group and stream_relay is not None:
