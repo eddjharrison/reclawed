@@ -882,49 +882,32 @@ class ChatScreen(Screen):
     @work(thread=False)
     async def _generate_name_for_session(self, session_id: str) -> None:
         """Generate a name from session messages (triggered via context menu)."""
-        import logging
-        _log = logging.getLogger("reclawed.naming")
-        _log.setLevel(logging.DEBUG)
-        # File handler for debugging
-        from pathlib import Path
-        _fh = logging.FileHandler(Path.home() / "AppData" / "Local" / "reclawed" / "naming.log")
-        _fh.setLevel(logging.DEBUG)
-        _log.addHandler(_fh)
-
         try:
             self.notify("Generating name...", timeout=2)
             session = self.store.get_session(session_id)
             messages = self.store.get_session_messages(session_id)
-            _log.debug(f"Session {session_id}: {len(messages)} messages, name={session.name[:60] if session else 'N/A'}")
             # Build context from messages + session name
             context_parts: list[str] = []
             # Use the session name as primary context (it's the first user message)
             if session and session.name and session.name not in ("New Chat", "Group Chat"):
                 context_parts.append(f"Topic: {session.name}")
-                _log.debug(f"  Topic from name: {session.name[:80]}")
             for msg in messages[:6]:
                 role = "Human" if msg.role == "user" else "Claude"
                 text = msg.content[:200] if msg.content else ""
                 # Skip synthetic import messages and encrypted content
                 if not text or "Imported session" in text or text.startswith('{"v":'):
-                    _log.debug(f"  Skipping {role}: {text[:50]}")
                     continue
                 context_parts.append(f"{role}: {text}")
-                _log.debug(f"  {role}: {text[:80]}")
             context = "\n".join(context_parts)
             if not context.strip():
                 self.notify("No messages to generate name from", severity="warning", timeout=3)
-                _log.debug("No context, aborting")
                 return
-            _log.debug(f"Calling _run_name_generation with {len(context)} chars of context")
             result = await self._run_name_generation(session_id, context, guard_name=None)
-            _log.debug(f"Result: {result!r}")
             if result:
                 self.notify(f"Renamed to: {result}", timeout=3)
             else:
                 self.notify("Could not generate name", severity="warning", timeout=3)
         except Exception as e:
-            _log.exception(f"Name generation failed: {e}")
             self.notify(f"Name generation failed: {e}", severity="error", timeout=5)
 
     async def _run_name_generation(
@@ -934,9 +917,6 @@ class ChatScreen(Screen):
 
         Returns the generated name, or None if generation failed.
         """
-        import logging
-        _log = logging.getLogger("reclawed.naming")
-
         from reclawed.claude import ClaudeProcess, StreamResult as SR
 
         naming_prompt = (
@@ -949,14 +929,11 @@ class ChatScreen(Screen):
         generated_name: str | None = None
         # No session_id — fresh subprocess, no prior context
         async for ev in claude.send_message(naming_prompt, model="haiku"):
-            _log.debug(f"  Event: {type(ev).__name__}")
             if isinstance(ev, SR):
                 generated_name = ev.content
-                _log.debug(f"  Raw result: {repr(generated_name[:200]) if generated_name else 'None'}")
                 break
 
         if not generated_name:
-            _log.debug("  No generated_name from haiku")
             return None
 
         # Clean up the result
@@ -972,9 +949,7 @@ class ChatScreen(Screen):
                 cleaned = truncated[:last_space]
             else:
                 cleaned = truncated
-        _log.debug(f"  Cleaned: {repr(cleaned)}, len={len(cleaned)}")
         if not cleaned or len(cleaned) < 3:
-            _log.debug(f"  Rejected: empty or too short")
             return None
 
         # Race-condition guard: for auto-naming, only update if name unchanged
