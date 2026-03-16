@@ -35,6 +35,8 @@ reclawed --session <id>   # resume a specific session by ID
 ## Features
 
 ### Chat
+- **Persistent Claude sessions** — powered by the Claude Agent SDK. Claude remembers your full conversation across app restarts — no more lost context
+- **Concurrent sessions** — multiple chats run independently. Switch between them while Claude is mid-response; background sessions keep streaming and show unread badges when done
 - **Streaming chat** — responses stream token-by-token with live markdown rendering and tok/s counter
 - **Message editing** — press `e` on a selected user message to edit; Claude re-generates its response. Edited messages show an `[edited]` indicator
 - **Message deletion** — press `d` to soft-delete a message and its paired Claude reply
@@ -58,6 +60,7 @@ reclawed --session <id>   # resume a specific session by ID
 - **Relative timestamps** — message times shown as "just now", "5m ago", etc.
 
 ### Group Chat
+- **Session-aware group chat** — when you create or join a group, your Claude's full conversation history is forked into the room. Claude remembers everything you've been working on
 - **Multi-participant rooms** over WebSocket with automatic Cloudflare tunnel
 - **E2E encryption** — AES-256-GCM with room-level key derived from a shared passphrase (see below)
 - **Typing indicators** — "Alice is typing..." in the status bar with 3s debounce and 5s auto-expire
@@ -233,6 +236,7 @@ If the `local.key` file is lost, locally encrypted messages become unreadable. T
 
 ## Stack
 
+- **claude-agent-sdk** — persistent Claude sessions with real memory, resume, and fork
 - **textual** — TUI framework
 - **cryptography** — AES-256-GCM encryption, PBKDF2 key derivation
 - **websockets** — group chat relay (server + client)

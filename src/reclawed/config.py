@@ -68,6 +68,9 @@ class Config:
     group_auto_respond: str = "own"
     group_context_mode: str = "isolated"  # "isolated" | "shared_history"
     group_context_window: int = 20  # number of recent messages to include as context
+    # Agent SDK settings
+    permission_mode: str = "acceptEdits"  # "default" | "acceptEdits" | "bypassPermissions"
+    allowed_tools: str = "Read,Edit,Bash,Glob,Grep,Write"  # comma-separated tool list
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -127,5 +130,9 @@ class Config:
             kwargs["group_context_mode"] = str(raw["group_context_mode"])
         if "group_context_window" in raw:
             kwargs["group_context_window"] = int(raw["group_context_window"])  # type: ignore[arg-type]
+        if "permission_mode" in raw:
+            kwargs["permission_mode"] = str(raw["permission_mode"])
+        if "allowed_tools" in raw:
+            kwargs["allowed_tools"] = str(raw["allowed_tools"])
 
         return cls(**kwargs)  # type: ignore[arg-type]

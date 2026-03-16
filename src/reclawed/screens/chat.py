@@ -15,7 +15,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header
 
-from reclawed.claude import ClaudeProcess, StreamError, StreamResult, StreamSessionId, StreamToken
+from reclawed.claude import StreamError, StreamResult, StreamSessionId, StreamToken
+from reclawed.claude_session import ClaudeSession
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.crypto import derive_room_key
 from reclawed.models import Message, Session
@@ -73,7 +74,8 @@ class ChatScreen(Screen):
             # Try to resume the most recent session instead of creating empty ones
             sessions = store.list_sessions()
             self.session = sessions[0] if sessions else self._create_new_session()
-        self._claude = ClaudeProcess(config.claude_binary)
+        self._claude: ClaudeSession | None = None
+        self._claude_sessions: dict[str, ClaudeSession] = {}  # pool of live sessions
         self._sending = False
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
@@ -110,6 +112,55 @@ class ChatScreen(Screen):
         yield StatusBar(id="status-bar")
         yield Footer()
 
+    async def _start_claude_session(
+        self,
+        resume_id: str | None = None,
+        fork: bool = False,
+    ) -> None:
+        """Create or reuse a ClaudeSession for the current chat.
+
+        Sessions are pooled in ``_claude_sessions`` so switching between
+        chats doesn't destroy background work.  If a session already has
+        a live client, we just point ``_claude`` at it.
+        """
+        session_key = self.session.id
+
+        # Reuse existing client if we already have one for this session
+        if session_key in self._claude_sessions:
+            self._claude = self._claude_sessions[session_key]
+            return
+
+        # Reset send state for the new session's UI
+        self._sending = False
+        try:
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.set_enabled(True)
+        except Exception:
+            pass
+
+        session = ClaudeSession(
+            cli_path=self.config.claude_binary,
+            session_id=resume_id,
+            fork_session=fork,
+            model=self._selected_model,
+            permission_mode=self.config.permission_mode,
+            allowed_tools=self.config.allowed_tools.split(","),
+        )
+        self._claude_sessions[session_key] = session
+        self._claude = session
+
+        status = self.query_one("#status-bar", StatusBar)
+        status.set_connection_status("Initializing Claude...")
+
+        async def _init():
+            await session.start()
+            try:
+                status.set_connection_status(None)
+            except Exception:
+                pass
+
+        asyncio.create_task(_init())
+
     async def on_mount(self) -> None:
         self._update_status()
         # Highlight the active session in the sidebar
@@ -118,6 +169,8 @@ class ChatScreen(Screen):
         # Load existing messages if resuming a session
         if self.session.message_count > 0:
             await self._load_session_messages()
+        # Start the Claude SDK session (resume if we have a prior session ID)
+        await self._start_claude_session(resume_id=self.session.claude_session_id)
         # Auto-reconnect group sessions on startup (non-blocking)
         if self.session.is_group and self.session.relay_url:
             asyncio.create_task(self._try_reconnect_group())
@@ -441,6 +494,9 @@ class ChatScreen(Screen):
         if result is None:
             return
 
+        # Capture prior Claude session ID for forking into the group
+        prior_claude_id = self.session.claude_session_id
+
         # Store handles for cleanup
         self._relay_server = result.get("relay_server")
         self._tunnel_proc = result.get("tunnel_proc")
@@ -456,7 +512,6 @@ class ChatScreen(Screen):
         )
         self.store.create_session(session)
         self.session = session
-        self._claude = ClaudeProcess(self.config.claude_binary)
         self._selected_model = None
 
         async def _setup():
@@ -464,6 +519,10 @@ class ChatScreen(Screen):
             await msg_list.clear_messages()
             self._update_status()
             self._refresh_sidebar()
+            # Fork the prior solo session so Claude carries full context
+            await self._start_claude_session(
+                resume_id=prior_claude_id, fork=bool(prior_claude_id),
+            )
             await self._start_relay_client(session)
 
         self.app.call_later(_setup)
@@ -472,6 +531,9 @@ class ChatScreen(Screen):
         """Called when JoinGroupScreen is dismissed."""
         if result is None:
             return
+
+        # Capture prior Claude session ID for forking into the group
+        prior_claude_id = self.session.claude_session_id
 
         session = Session(
             name="Group Chat",
@@ -484,7 +546,6 @@ class ChatScreen(Screen):
         )
         self.store.create_session(session)
         self.session = session
-        self._claude = ClaudeProcess(self.config.claude_binary)
         self._selected_model = None
 
         async def _setup():
@@ -492,6 +553,10 @@ class ChatScreen(Screen):
             await msg_list.clear_messages()
             self._update_status()
             self._refresh_sidebar()
+            # Fork the prior solo session so Claude carries full context
+            await self._start_claude_session(
+                resume_id=prior_claude_id, fork=bool(prior_claude_id),
+            )
             await self._start_relay_client(session)
 
         self.app.call_later(_setup)
@@ -535,49 +600,60 @@ class ChatScreen(Screen):
             truncated = truncated[:last_space]
         return truncated + "..."
 
-    @work(exclusive=True, thread=False)
+    @work(thread=False)
     async def _stream_response(
         self, prompt: str, assistant_msg: Message, reply_context: str | None
     ) -> None:
+        # Capture context at start so session switches don't confuse us
+        stream_session = self.session
+        stream_claude = self._claude
         msg_list = self.query_one("#message-list", MessageList)
         bubble = msg_list.get_bubble(assistant_msg.id)
         content_parts: list[str] = []
 
+        def _is_active() -> bool:
+            """Check if this stream's session is still the visible one."""
+            return self.session.id == stream_session.id
+
         status = self.query_one("#status-bar", StatusBar)
-        # Show "Claude is thinking..." while waiting for the first token.
-        status.set_streaming(active=True)
+        if _is_active():
+            status.set_streaming(active=True)
 
         token_count = 0
-        stream_start: float | None = None  # set on receipt of first StreamToken
-        last_render: float = 0.0  # monotonic time of last Markdown update
-        throttle_s = self.config.stream_throttle_ms / 1000.0  # convert ms → seconds
+        stream_start: float | None = None
+        last_render: float = 0.0
+        throttle_s = self.config.stream_throttle_ms / 1000.0
 
         try:
-            async for event in self._claude.send_message(
+            if stream_claude is None:
+                raise RuntimeError("Claude session not initialized")
+            async for event in stream_claude.send_message(
                 prompt,
-                session_id=self.session.claude_session_id,
+                session_id=stream_session.claude_session_id,
                 reply_context=reply_context,
                 model=self._selected_model,
             ):
                 if isinstance(event, StreamSessionId):
-                    self.session.claude_session_id = event.session_id
+                    stream_session.claude_session_id = event.session_id
                     assistant_msg.claude_session_id = event.session_id
-                    self.store.update_session(self.session)
+                    self.store.update_session(stream_session)
 
                 elif isinstance(event, StreamToken):
                     if stream_start is None:
                         stream_start = time.monotonic()
                     token_count += len(event.text.split())
-                    elapsed = time.monotonic() - stream_start
-                    status.set_streaming(tokens=token_count, elapsed=elapsed, active=True)
 
                     content_parts.append(event.text)
-                    # Throttle Markdown re-renders to avoid overwhelming the widget
                     now = time.monotonic()
-                    if bubble and (now - last_render) >= throttle_s:
-                        last_render = now
-                        bubble.update_content("".join(content_parts))
-                        msg_list.scroll_end(animate=False)
+
+                    # Only update UI if this session is still visible
+                    if _is_active():
+                        elapsed = now - stream_start
+                        status.set_streaming(tokens=token_count, elapsed=elapsed, active=True)
+                        if bubble and (now - last_render) >= throttle_s:
+                            last_render = now
+                            bubble.update_content("".join(content_parts))
+                            msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamResult):
                     assistant_msg.content = event.content or "".join(content_parts)
@@ -588,25 +664,23 @@ class ChatScreen(Screen):
                     assistant_msg.output_tokens = event.output_tokens
                     if event.session_id:
                         assistant_msg.claude_session_id = event.session_id
-                        self.session.claude_session_id = event.session_id
+                        stream_session.claude_session_id = event.session_id
 
                     self.store.update_message(assistant_msg)
 
                     if event.cost_usd:
-                        self.session.total_cost_usd += event.cost_usd
+                        stream_session.total_cost_usd += event.cost_usd
                     if event.model:
-                        self.session.model = event.model
-                    self.session.message_count = len(
-                        self.store.get_session_messages(self.session.id)
+                        stream_session.model = event.model
+                    stream_session.message_count = len(
+                        self.store.get_session_messages(stream_session.id)
                     )
-                    # Auto-name the session after the first assistant response.
-                    if self.session.name in ("New Chat", "Group Chat"):
-                        self.session.name = self._derive_session_name(prompt)
-                    self.store.update_session(self.session)
+                    if stream_session.name in ("New Chat", "Group Chat"):
+                        stream_session.name = self._derive_session_name(prompt)
+                    self.store.update_session(stream_session)
 
-                    # In a group session, broadcast Claude's response so
-                    # all participants can see it. Tag it with our name.
-                    if self.session.is_group and self._relay_client is not None:
+                    # Broadcast in group chat
+                    if stream_session.is_group and self._relay_client is not None:
                         try:
                             claude_label = f"{self.config.participant_name}'s Claude"
                             await self._relay_client.send_message(
@@ -615,50 +689,57 @@ class ChatScreen(Screen):
                                 sender_name_override=claude_label,
                             )
                         except Exception:
-                            pass  # Best-effort; don't break the local UI
+                            pass
 
-                    # Prefer the authoritative output_tokens from the result over
-                    # our word-count approximation for the final tok/s display.
-                    final_tokens = event.output_tokens or token_count
-                    final_elapsed = (
-                        (time.monotonic() - stream_start) if stream_start else None
-                    )
-                    status.set_streaming(
-                        tokens=final_tokens, elapsed=final_elapsed, active=True
-                    )
-
-                    # Final render: switch from Static to Markdown
-                    if bubble:
-                        await bubble.finalize_content(assistant_msg.content)
-                        msg_list.scroll_end(animate=False)
+                    # Update UI only if still the active session
+                    if _is_active():
+                        final_tokens = event.output_tokens or token_count
+                        final_elapsed = (
+                            (time.monotonic() - stream_start) if stream_start else None
+                        )
+                        status.set_streaming(
+                            tokens=final_tokens, elapsed=final_elapsed, active=True
+                        )
+                        if bubble:
+                            await bubble.finalize_content(assistant_msg.content)
+                            msg_list.scroll_end(animate=False)
+                    else:
+                        # Background session got a response — bump unread
+                        self.store.increment_unread(stream_session.id)
+                        self._refresh_sidebar()
 
                 elif isinstance(event, StreamError):
                     assistant_msg.content = f"Error: {event.message}"
                     self.store.update_message(assistant_msg)
-                    if bubble:
+                    if _is_active() and bubble:
                         await bubble.finalize_content(assistant_msg.content)
 
         except asyncio.CancelledError:
-            self._claude.cancel()
+            if stream_claude:
+                stream_claude.cancel()
             raise
 
         except Exception as e:
             assistant_msg.content = f"Error: {e}"
             self.store.update_message(assistant_msg)
-            if bubble:
+            if _is_active() and bubble:
                 bubble.update_content(assistant_msg.content)
 
         finally:
-            self._claude.cancel()  # Ensure subprocess is terminated
             self._sending = False
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.set_enabled(True)
-            compose.query_one("#compose-input").focus()
+            if _is_active():
+                try:
+                    compose = self.query_one("#compose-area", ComposeArea)
+                    compose.set_enabled(True)
+                    compose.query_one("#compose-input").focus()
+                except Exception:
+                    pass
 
-            # Keep the final tok/s visible for 3 seconds, then revert to normal.
+            # Keep the final tok/s visible for 3 seconds, then revert.
             def _clear_streaming_indicator() -> None:
-                status.set_streaming(active=False)
-                self._update_status()
+                if _is_active():
+                    status.set_streaming(active=False)
+                    self._update_status()
                 self._refresh_sidebar()
 
             self.set_timer(3.0, _clear_streaming_indicator)
@@ -1031,6 +1112,9 @@ class ChatScreen(Screen):
         # Persist on session so it survives reloads
         self.session.model = next_model
         self.store.update_session(self.session)
+        # Inform the SDK client of the model switch
+        if self._claude:
+            self._claude.set_model(next_model)
         self._update_status()
         self.notify(f"Model: {next_model}", timeout=2)
 
@@ -1064,15 +1148,20 @@ class ChatScreen(Screen):
         self.notify(f"Group respond mode: [{next_mode}] — {label}", timeout=3)
 
     def _switch_to_session(self, session_id: str) -> None:
-        """Switch the chat panel to a different session."""
+        """Switch the chat panel to a different session.
+
+        The old session's ClaudeSession stays alive in the pool so any
+        in-progress responses continue in the background.
+        """
         session = self.store.get_session(session_id)
         if not session:
             return
         # Mark the new session as read
         self.store.mark_session_read(session_id)
         self.session = session
-        self._claude = ClaudeProcess(self.config.claude_binary)
         self._selected_model = session.model
+        # Reset send state so compose is usable in the new session
+        self._sending = False
 
         async def _reload():
             # Disconnect from the previous relay (if any) before switching
@@ -1082,6 +1171,8 @@ class ChatScreen(Screen):
             await self._load_session_messages()
             self._update_status()
             self._refresh_sidebar()
+            # Resume the Claude session for this chat
+            await self._start_claude_session(resume_id=session.claude_session_id)
             # Reconnect if the new session is a group session
             if session.is_group:
                 await self._start_relay_client(session)
@@ -1167,7 +1258,6 @@ class ChatScreen(Screen):
 
     def action_new_chat(self) -> None:
         self.session = self._create_new_session()
-        self._claude = ClaudeProcess(self.config.claude_binary)
         self._selected_model = None
 
         async def _reset():
@@ -1175,11 +1265,15 @@ class ChatScreen(Screen):
             await msg_list.clear_messages()
             self._update_status()
             self._refresh_sidebar()
+            await self._start_claude_session()
 
         self.app.call_later(_reset)
 
     def action_quit(self) -> None:
-        self._claude.cancel()
+        # Stop all pooled Claude sessions
+        for session in self._claude_sessions.values():
+            session.cancel()
+            asyncio.create_task(session.stop())
         # Best-effort relay cleanup — fire-and-forget on exit
         if self._relay_client is not None:
             asyncio.create_task(self._stop_relay_client())

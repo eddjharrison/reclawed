@@ -47,6 +47,14 @@ class ChatListItem(Vertical):
     }
     ChatListItem.unread .chat-name {
         text-style: bold;
+        color: $text;
+    }
+    ChatListItem.unread .chat-preview {
+        color: $success;
+        text-style: bold;
+    }
+    ChatListItem.unread {
+        border-left: thick $success;
     }
     ChatListItem.muted .chat-name {
         color: $text-muted;

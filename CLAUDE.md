@@ -1,6 +1,6 @@
 # Re:Clawed
 
-WhatsApp-style TUI wrapping the `claude` CLI. Python 3.12 + Textual + websockets + cryptography + SQLite.
+WhatsApp-style TUI wrapping the `claude` CLI via the Agent SDK. Python 3.12 + Textual + claude-agent-sdk + websockets + cryptography + SQLite.
 
 ## Development Workflow
 
@@ -23,14 +23,20 @@ WhatsApp-style TUI wrapping the `claude` CLI. Python 3.12 + Textual + websockets
 - `MessageBubble` must have `height: auto` in CSS (it extends `Vertical` which defaults to `height: 1fr`, clipping content)
 - `MessageBubble.finalize_content()` is async — always `await` it (Markdown.update() returns AwaitComplete)
 - `priority=True` on all `Ctrl+` key bindings (so they work when TextArea has focus)
-- Async throughout — subprocess management, relay client/server, all use `asyncio`
-- 16MB buffer on `asyncio.create_subprocess_exec` stdout reads (default 64KB breaks on long responses)
+- Async throughout — SDK client, relay client/server, all use `asyncio`
 - Echo prevention in relay receive loop — skip messages where `sender_id == own participant_id`
 - Config loaded via `Config.load()`, never bare `Config()`
 
 ## Architecture Rules
 
 - `chat.py` is the main orchestrator — sidebar + chat panel horizontal layout
+- `ClaudeSession` (in `claude_session.py`) wraps `ClaudeSDKClient` — one persistent session per chat, pooled in `_claude_sessions` dict so switching chats doesn't kill background work
+- `_stream_response` captures its session context at start and only updates the UI if that session is still the active one; store writes always happen regardless
+- `@work(thread=False)` on `_stream_response` (NOT `exclusive=True`) so multiple sessions can stream concurrently
+- Session resume uses the SDK's `resume=session_id` — reliable context retention across app restarts
+- Group chat fork uses `fork_session=True` to carry full conversation context into the group room
+- SDK environment guard: `env={"CLAUDECODE": ""}` in options to allow running inside Claude Code
+- Model name comes from `AssistantMessage.model`, NOT from the `usage` dict keys
 - Relay protocol changes must consider cross-platform compatibility (tested on macOS + Windows)
 - Session token auth is required for relay connections — both creator and joiner must pass it
 - Cloudflare tunnel URL parsed from stderr via `readline`, not chunk reads
@@ -46,6 +52,9 @@ WhatsApp-style TUI wrapping the `claude` CLI. Python 3.12 + Textual + websockets
 - Don't use `Ctrl+M` for bindings (same byte as Enter in terminals)
 - Don't use `Static` with Rich markup in widgets (it doesn't render — this was already debugged)
 - Don't reuse the relay auth token as an encryption key (it appears in URLs, logs, query strings)
+- Don't use `exclusive=True` on `_stream_response` — it kills concurrent session streams
+- Don't destroy ClaudeSession on session switch — pool them so background work continues
+- Don't parse model name from `ResultMessage.usage` keys (they're token field names, not model names)
 - Don't auto-commit or push without being asked
 
 ## Testing
@@ -56,3 +65,4 @@ WhatsApp-style TUI wrapping the `claude` CLI. Python 3.12 + Textual + websockets
 - Relay integration tests are slow — run separately with `python -m pytest tests/ -v -k "relay"`
 - Always run tests from the repo root with the venv activated
 - When creating StatusBar instances via `object.__new__()` in tests, include all `_` attributes (including `_encrypted`)
+- When mocking ClaudeSession in tests, set `s._ready.set()` before calling `send_message`
