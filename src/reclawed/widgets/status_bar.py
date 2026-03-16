@@ -25,11 +25,9 @@ class StatusBar(Static):
     StatusBar {
         width: 100%;
         height: 1;
-        dock: bottom;
-        background: $primary;
+        background: $accent;
         color: $text;
         padding: 0 1;
-        text-style: bold;
     }
     """
 

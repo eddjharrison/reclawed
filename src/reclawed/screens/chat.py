@@ -161,8 +161,8 @@ class ChatScreen(Screen):
             with Vertical(id="chat-panel"):
                 yield MessageList(id="message-list")
                 yield QuotePreview(id="quote-preview")
+                yield StatusBar(id="status-bar")
                 yield ComposeArea(id="compose-area")
-        yield StatusBar(id="status-bar")
         yield Footer()
 
     async def _start_claude_session(
