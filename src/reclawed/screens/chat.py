@@ -877,7 +877,7 @@ class ChatScreen(Screen):
             context = f"Message: {first_message[:500]}"
             await self._run_name_generation(session_id, context, guard_name=fallback_name)
         except Exception:
-            pass  # Silent failure — fallback name already set
+            pass
 
     @work(thread=False)
     async def _generate_name_for_session(self, session_id: str) -> None:
@@ -896,15 +896,21 @@ class ChatScreen(Screen):
             if not context.strip():
                 self.notify("No messages to generate name from", severity="warning", timeout=3)
                 return
-            await self._run_name_generation(session_id, context, guard_name=None)
-            self.notify("Name generated!", timeout=2)
+            result = await self._run_name_generation(session_id, context, guard_name=None)
+            if result:
+                self.notify(f"Renamed to: {result}", timeout=3)
+            else:
+                self.notify("Could not generate name", severity="warning", timeout=3)
         except Exception as e:
             self.notify(f"Name generation failed: {e}", severity="error", timeout=5)
 
     async def _run_name_generation(
         self, session_id: str, context: str, guard_name: str | None
-    ) -> None:
-        """Shared logic for generating a session name via haiku."""
+    ) -> str | None:
+        """Shared logic for generating a session name via haiku.
+
+        Returns the generated name, or None if generation failed.
+        """
         from reclawed.claude import ClaudeProcess, StreamResult as SR
 
         naming_prompt = (
@@ -920,20 +926,20 @@ class ChatScreen(Screen):
                 break
 
         if not generated_name:
-            return
+            return None
 
         # Clean up the result
         cleaned = generated_name.strip().strip('"\'').strip()
         cleaned = cleaned.rstrip(".")
         if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
-            return
+            return None
 
         # Race-condition guard: for auto-naming, only update if name unchanged
         session = self.store.get_session(session_id)
         if not session:
-            return
+            return None
         if guard_name is not None and session.name != guard_name:
-            return
+            return None
 
         session.name = cleaned
         self.store.update_session(session)
@@ -945,6 +951,7 @@ class ChatScreen(Screen):
             self._refresh_sidebar()
 
         self.app.call_later(_apply_name)
+        return cleaned
 
     @work(thread=False)
     async def _stream_response(
