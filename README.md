@@ -81,8 +81,13 @@ path = "~/EIR/marketmakersmaker"
 - **Background receiving** — switch to another chat; group messages still arrive, store in DB, show unread badges
 - **Typing indicators** — "Alice is typing..." with debounce and auto-expire
 - **Read receipts** — sent/read delivery status on outgoing messages
+- **Invite to chat** (`Ctrl+I`) — upgrade any 1:1 session into a group mid-conversation. Claude keeps full context
 - **@mention routing** — `@Ed's Claude` or `@Ed` to direct messages
-- **Respond modes** (`F3`) — own / mentions / all / off
+- **Room modes** (`F3`) — per-room, synchronized across all participants:
+  - **Humans Only** — no Claude unless @mentioned
+  - **Claude Assists** — Claude responds to your messages only
+  - **Full Auto** — all Claudes respond to all human messages
+  - **C2C** — Claudes work autonomously, responding to each other
 - **Shared context** — optionally prepend recent group messages as Claude context
 - **Auto-reconnect** — exponential backoff with `sync_response` replay of missed messages
 
@@ -144,11 +149,12 @@ Then `Ctrl+G` → **Create** — the connection string uses the stable company U
 | `Ctrl+N` | New chat (in current workspace) |
 | `Ctrl+S` | Toggle sidebar |
 | `Ctrl+G` | Group chat (Create / Join) |
+| `Ctrl+I` | Invite to group chat |
 | `Ctrl+T` | Cycle theme |
 | `Ctrl+E` | Export to markdown |
 | `Ctrl+P` | Pinned messages |
 | `F2` | Cycle model |
-| `F3` | Cycle group respond mode |
+| `F3` | Cycle room mode (Humans Only / Claude Assists / Full Auto / C2C) |
 | `F4` | Settings / Import |
 | `Ctrl+D` | Quit |
 
@@ -191,7 +197,7 @@ relay_port = 8765                 # port for local daemon
 # relay_token = "team-secret"             # remote mode only
 
 # Group chat behavior
-group_auto_respond = "own"        # own | mentions | all | off
+group_auto_respond = "claude_assists"  # humans_only | claude_assists | full_auto | claude_to_claude
 group_context_mode = "isolated"   # isolated | shared_history
 group_context_window = 20
 
