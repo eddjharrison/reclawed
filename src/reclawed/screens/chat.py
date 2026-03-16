@@ -120,6 +120,8 @@ class ChatScreen(Screen):
         self._read_receipts: dict[str, int] = {}
         # Map local message IDs to relay seqs for read receipt/edit/delete
         self._msg_id_to_seq: dict[str, int] = {}
+        # Queue of outgoing local message IDs waiting for echo seq mapping
+        self._pending_echo_ids: list[str] = []
 
     def _create_new_session(self, cwd: str | None = None) -> Session:
         session = Session(cwd=cwd)
@@ -281,6 +283,7 @@ class ChatScreen(Screen):
         # In group sessions, broadcast the user's message to all participants.
         if self.session.is_group and self._relay_client is not None:
             try:
+                self._pending_echo_ids.append(user_msg.id)
                 await self._relay_client.send_message(event.text, sender_type="human")
             except Exception:
                 pass  # Best-effort; don't break the local send flow
@@ -409,8 +412,11 @@ class ChatScreen(Screen):
 
         try:
             async for relay_msg in client.receive_messages():
-                # Ignore messages sent by this participant (already shown locally)
+                # Echo from own messages — capture seq for read receipt mapping
                 if relay_msg.sender_id == client._participant_id:
+                    if relay_msg.type == "message" and relay_msg.seq and self._pending_echo_ids:
+                        local_id = self._pending_echo_ids.pop(0)
+                        self._msg_id_to_seq[local_id] = relay_msg.seq
                     continue
 
                 # Handle sync_response — replay missed messages
@@ -906,6 +912,7 @@ class ChatScreen(Screen):
                     # Broadcast in group chat
                     if stream_session.is_group and stream_relay is not None:
                         try:
+                            self._pending_echo_ids.append(assistant_msg.id)
                             claude_label = f"{self.config.participant_name}'s Claude"
                             await stream_relay.send_message(
                                 assistant_msg.content,
