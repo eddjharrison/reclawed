@@ -893,16 +893,24 @@ class ChatScreen(Screen):
 
         try:
             self.notify("Generating name...", timeout=2)
+            session = self.store.get_session(session_id)
             messages = self.store.get_session_messages(session_id)
-            _log.debug(f"Session {session_id}: {len(messages)} messages")
-            # Build context from first few messages
+            _log.debug(f"Session {session_id}: {len(messages)} messages, name={session.name[:60] if session else 'N/A'}")
+            # Build context from messages + session name
             context_parts: list[str] = []
+            # Use the session name as primary context (it's the first user message)
+            if session and session.name and session.name not in ("New Chat", "Group Chat"):
+                context_parts.append(f"Topic: {session.name}")
+                _log.debug(f"  Topic from name: {session.name[:80]}")
             for msg in messages[:6]:
                 role = "Human" if msg.role == "user" else "Claude"
                 text = msg.content[:200] if msg.content else ""
-                if text:
-                    context_parts.append(f"{role}: {text}")
-                    _log.debug(f"  {role}: {text[:80]}")
+                # Skip synthetic import messages and encrypted content
+                if not text or "Imported session" in text or text.startswith('{"v":'):
+                    _log.debug(f"  Skipping {role}: {text[:50]}")
+                    continue
+                context_parts.append(f"{role}: {text}")
+                _log.debug(f"  {role}: {text[:80]}")
             context = "\n".join(context_parts)
             if not context.strip():
                 self.notify("No messages to generate name from", severity="warning", timeout=3)
