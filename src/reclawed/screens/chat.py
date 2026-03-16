@@ -934,6 +934,9 @@ class ChatScreen(Screen):
 
         Returns the generated name, or None if generation failed.
         """
+        import logging
+        _log = logging.getLogger("reclawed.naming")
+
         from reclawed.claude import ClaudeProcess, StreamResult as SR
 
         naming_prompt = (
@@ -944,17 +947,22 @@ class ChatScreen(Screen):
         claude = ClaudeProcess(self.config.claude_binary)
         generated_name: str | None = None
         async for ev in claude.send_message(naming_prompt, model="haiku"):
+            _log.debug(f"  Event: {type(ev).__name__}")
             if isinstance(ev, SR):
                 generated_name = ev.content
+                _log.debug(f"  Raw result: {repr(generated_name[:200]) if generated_name else 'None'}")
                 break
 
         if not generated_name:
+            _log.debug("  No generated_name from haiku")
             return None
 
         # Clean up the result
         cleaned = generated_name.strip().strip('"\'').strip()
         cleaned = cleaned.rstrip(".")
+        _log.debug(f"  Cleaned: {repr(cleaned)}, len={len(cleaned)}")
         if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
+            _log.debug(f"  Rejected: empty or length out of range")
             return None
 
         # Race-condition guard: for auto-naming, only update if name unchanged
