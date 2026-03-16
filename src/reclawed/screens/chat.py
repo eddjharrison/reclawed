@@ -940,12 +940,14 @@ class ChatScreen(Screen):
         from reclawed.claude import ClaudeProcess, StreamResult as SR
 
         naming_prompt = (
-            "Generate a short, descriptive title (3-5 words) for a chat session. "
-            "Return ONLY the title — no quotes, no punctuation, no explanation.\n\n"
-            f"{context}"
+            "Your ONLY job: output a 3-5 word title for this chat. "
+            "Output NOTHING else. No quotes. No explanation. Just the title.\n\n"
+            f"{context}\n\n"
+            "Title:"
         )
         claude = ClaudeProcess(self.config.claude_binary)
         generated_name: str | None = None
+        # No session_id — fresh subprocess, no prior context
         async for ev in claude.send_message(naming_prompt, model="haiku"):
             _log.debug(f"  Event: {type(ev).__name__}")
             if isinstance(ev, SR):
@@ -960,9 +962,19 @@ class ChatScreen(Screen):
         # Clean up the result
         cleaned = generated_name.strip().strip('"\'').strip()
         cleaned = cleaned.rstrip(".")
+        # Take only the first line in case haiku added explanation
+        cleaned = cleaned.split("\n")[0].strip()
+        # Truncate to 50 chars at word boundary if too long
+        if len(cleaned) > 50:
+            truncated = cleaned[:50]
+            last_space = truncated.rfind(" ")
+            if last_space > 10:
+                cleaned = truncated[:last_space]
+            else:
+                cleaned = truncated
         _log.debug(f"  Cleaned: {repr(cleaned)}, len={len(cleaned)}")
-        if not cleaned or len(cleaned) < 3 or len(cleaned) > 60:
-            _log.debug(f"  Rejected: empty or length out of range")
+        if not cleaned or len(cleaned) < 3:
+            _log.debug(f"  Rejected: empty or too short")
             return None
 
         # Race-condition guard: for auto-naming, only update if name unchanged
