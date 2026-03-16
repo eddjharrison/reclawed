@@ -38,6 +38,8 @@ class StatusBar(Static):
         self._encrypted: bool = False
         # Workspace name
         self._workspace_name: str | None = None
+        # Permission mode
+        self._permission_mode: str | None = None
 
     def update_info(
         self,
@@ -48,6 +50,7 @@ class StatusBar(Static):
         group_mode: str | None = None,
         clear_group_mode: bool = False,
         workspace_name: str | None = ...,
+        permission_mode: str | None = ...,
     ) -> None:
         """Update one or more status bar fields.
 
@@ -79,6 +82,8 @@ class StatusBar(Static):
             self._group_mode = group_mode
         if workspace_name is not ...:
             self._workspace_name = workspace_name
+        if permission_mode is not ...:
+            self._permission_mode = permission_mode
         self._refresh_display()
 
     def set_streaming(
@@ -139,6 +144,13 @@ class StatusBar(Static):
                 "all": "Full Auto", "off": "Humans Only",
             }
             parts.append(_mode_labels.get(self._group_mode, self._group_mode))
+        if self._permission_mode:
+            _perm_labels = {
+                "default": "Perms: default",
+                "acceptEdits": "Perms: acceptEdits",
+                "bypassPermissions": "!! BYPASS PERMS !!",
+            }
+            parts.append(_perm_labels.get(self._permission_mode, self._permission_mode))
         if self._connection_status:
             parts.append(self._connection_status)
         if self._typing_indicator:

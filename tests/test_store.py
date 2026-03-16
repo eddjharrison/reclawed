@@ -484,6 +484,22 @@ def test_room_mode_default_none(store: Store):
     assert fetched.room_mode is None
 
 
+def test_permission_mode_persisted(store: Store):
+    """permission_mode is persisted and loaded correctly."""
+    s = Session(name="Test", permission_mode="bypassPermissions")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.permission_mode == "bypassPermissions"
+
+
+def test_permission_mode_default_none(store: Store):
+    """Sessions without permission_mode default to None."""
+    s = Session(name="Default")
+    store.create_session(s)
+    fetched = store.get_session(s.id)
+    assert fetched.permission_mode is None
+
+
 def test_session_encryption_passphrase():
     """Session encryption_passphrase is persisted and loaded."""
     s = Store(":memory:")

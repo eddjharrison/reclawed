@@ -89,6 +89,7 @@ path = "~/EIR/marketmakersmaker"
   - **Full Auto** — all Claudes respond to all human messages
   - **C2C** — Claudes work autonomously, responding to each other
 - **Shared context** — optionally prepend recent group messages as Claude context
+- **Mid-chat permission switching** (`F5`) — cycle default / acceptEdits / bypassPermissions without losing context. Status bar shows current mode. Combine C2C + bypass for autonomous overnight work
 - **Auto-reconnect** — exponential backoff with `sync_response` replay of missed messages
 
 ### Encryption
@@ -192,6 +193,7 @@ In "Full Auto" or "C2C" mode, every participant's Claude generates responses —
 | `F2` | Cycle model |
 | `F3` | Cycle room mode (Humans Only / Claude Assists / Full Auto / C2C) |
 | `F4` | Settings / Import |
+| `F5` | Cycle permissions (default / acceptEdits / bypassPermissions) |
 | `Ctrl+D` | Quit |
 
 **Navigate mode** (`Tab` to enter, `Esc` to return):

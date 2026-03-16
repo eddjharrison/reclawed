@@ -217,6 +217,7 @@ class TestStatusBarGroupMode:
         bar._connection_status = None
         bar._encrypted = False
         bar._workspace_name = None
+        bar._permission_mode = None
         # Patch update() so we can inspect the rendered string
         bar._last_render = ""
         bar.update = lambda text: setattr(bar, "_last_render", text)

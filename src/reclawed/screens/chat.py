@@ -49,6 +49,7 @@ class ChatScreen(Screen):
         Binding("f2", "cycle_model", "Model", show=True, key_display="F2", priority=True),
         Binding("f3", "cycle_respond_mode", "Respond mode", show=True, key_display="F3", priority=True),
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
+        Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -85,6 +86,19 @@ class ChatScreen(Screen):
     # Map old mode names to new for backward compatibility
     _MODE_COMPAT = {"own": "claude_assists", "mentions": "humans_only", "all": "full_auto", "off": "humans_only"}
 
+    # Permission modes — can be switched mid-chat via F5
+    PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions"]
+    PERMISSION_MODE_LABELS = {
+        "default": "Default",
+        "acceptEdits": "Accept Edits",
+        "bypassPermissions": "BYPASS PERMISSIONS",
+    }
+    PERMISSION_MODE_DESCRIPTIONS = {
+        "default": "Claude asks for approval on every action",
+        "acceptEdits": "Claude can read and edit files without asking",
+        "bypassPermissions": "Claude has unrestricted access — no approval needed",
+    }
+
     def __init__(self, store: Store, config: Config, session: Session | None = None) -> None:
         super().__init__()
         self.store = store
@@ -101,6 +115,10 @@ class ChatScreen(Screen):
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
         self._selected_model: str | None = self.session.model
+        # Permission mode — per-session, can be switched mid-chat via F5
+        self._selected_permission: str = (
+            self.session.permission_mode or config.permission_mode
+        )
         # Group chat relay state
         self._relay_client: RelayClient | None = None  # active session's relay
         self._tunnel_proc = None   # cloudflared subprocess
@@ -171,7 +189,7 @@ class ChatScreen(Screen):
             fork_session=fork,
             model=self._selected_model,
             cwd=self.session.cwd,
-            permission_mode=self.config.permission_mode,
+            permission_mode=self._selected_permission,
             allowed_tools=self.config.allowed_tools.split(","),
         )
         self._claude_sessions[session_key] = session
@@ -239,6 +257,7 @@ class ChatScreen(Screen):
             group_mode=group_mode,
             clear_group_mode=not self.session.is_group,
             workspace_name=workspace_name,
+            permission_mode=self._selected_permission,
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
 
@@ -1352,6 +1371,56 @@ class ChatScreen(Screen):
         self._update_status()
         self.notify(f"Model: {next_model}", timeout=2)
 
+    def action_cycle_permission(self) -> None:
+        """Cycle through permission modes (F5).
+
+        Stops the current Claude session and restarts it with
+        ``resume=session_id`` and the new permission mode, so Claude
+        keeps full context but operates under different permissions.
+        """
+        current = self._selected_permission
+        try:
+            idx = self.PERMISSION_MODES.index(current)
+        except ValueError:
+            idx = -1
+        next_mode = self.PERMISSION_MODES[(idx + 1) % len(self.PERMISSION_MODES)]
+
+        # Confirmation for dangerous mode
+        if next_mode == "bypassPermissions":
+            self.notify(
+                "BYPASS PERMISSIONS — Claude has unrestricted access. "
+                "Press F5 again to continue cycling.",
+                severity="warning",
+                timeout=5,
+            )
+
+        self._selected_permission = next_mode
+
+        # Persist on session
+        self.session.permission_mode = next_mode
+        self.store.update_session(self.session)
+
+        # Restart the Claude session with new permissions
+        session_key = self.session.id
+        old_claude = self._claude_sessions.pop(session_key, None)
+        if old_claude is not None:
+            old_claude.cancel()
+            asyncio.create_task(old_claude.stop())
+
+        self._claude = None
+
+        async def _restart():
+            await self._start_claude_session(
+                resume_id=self.session.claude_session_id,
+            )
+
+        self.app.call_later(_restart)
+
+        self._update_status()
+        label = self.PERMISSION_MODE_LABELS.get(next_mode, next_mode)
+        desc = self.PERMISSION_MODE_DESCRIPTIONS.get(next_mode, "")
+        self.notify(f"Permissions: {label} — {desc}", timeout=3)
+
     def action_cycle_respond_mode(self) -> None:
         """Cycle through room modes (F3). Broadcasts to all participants."""
         current = self._group_respond_mode
@@ -1393,6 +1462,10 @@ class ChatScreen(Screen):
         # Restore room mode from session (per-room persistence)
         if session.room_mode and session.room_mode in self.ROOM_MODES:
             self._group_respond_mode = session.room_mode
+        # Restore permission mode from session
+        self._selected_permission = (
+            session.permission_mode or self.config.permission_mode
+        )
 
         async def _reload():
             # Detach the active relay pointer (connection stays alive in pool)
@@ -1603,6 +1676,8 @@ class ChatScreen(Screen):
             "            (Humans Only/Claude Assists/\n"
             "             Full Auto/C2C)\n"
             "F4          Settings / Import\n"
+            "F5          Cycle permissions\n"
+            "            (default/acceptEdits/bypass)\n"
             "Ctrl+G      Group chat (Create/Join)\n"
             "Ctrl+I      Invite to group chat\n"
             "Ctrl+P      Pinned messages\n"
