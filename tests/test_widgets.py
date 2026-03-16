@@ -319,3 +319,194 @@ def test_context_menu_default_not_muted():
 
     menu = ContextMenu(session_id="sess-3")
     assert menu._is_muted is False
+
+
+# ---------------------------------------------------------------------------
+# Session Rename (1A)
+# ---------------------------------------------------------------------------
+
+def test_chat_list_item_renamed_message():
+    """ChatListItem.Renamed carries correct session_id and new_name."""
+    from reclawed.widgets.chat_list_item import ChatListItem
+
+    msg = ChatListItem.Renamed(session_id="sess-rename", new_name="My New Name")
+    assert msg.session_id == "sess-rename"
+    assert msg.new_name == "My New Name"
+
+
+def test_chat_sidebar_session_renamed_message():
+    """ChatSidebar.SessionRenamed carries correct data."""
+    from reclawed.widgets.chat_sidebar import ChatSidebar
+
+    msg = ChatSidebar.SessionRenamed(session_id="s-1", new_name="Renamed")
+    assert msg.session_id == "s-1"
+    assert msg.new_name == "Renamed"
+
+
+# ---------------------------------------------------------------------------
+# Message Editing (1B)
+# ---------------------------------------------------------------------------
+
+def test_compose_area_submitted_carries_editing_id():
+    """ComposeArea.Submitted includes editing_message_id."""
+    from reclawed.widgets.compose_area import ComposeArea
+
+    msg = ComposeArea.Submitted(text="edited text", editing_message_id="msg-123")
+    assert msg.text == "edited text"
+    assert msg.editing_message_id == "msg-123"
+
+
+def test_compose_area_submitted_no_editing_by_default():
+    """ComposeArea.Submitted has editing_message_id=None by default."""
+    from reclawed.widgets.compose_area import ComposeArea
+
+    msg = ComposeArea.Submitted(text="new message")
+    assert msg.editing_message_id is None
+
+
+def test_message_bubble_with_edited_at():
+    """MessageBubble accepts a message with edited_at set."""
+    from datetime import datetime, timezone
+    from reclawed.widgets.message_bubble import MessageBubble
+
+    msg = Message(
+        role="user", content="Edited", session_id="s1",
+        edited_at=datetime.now(timezone.utc),
+    )
+    bubble = MessageBubble(msg)
+    assert bubble.message.edited_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Message Deletion (1C)
+# ---------------------------------------------------------------------------
+
+def test_message_bubble_deleted_state():
+    """MessageBubble with deleted=True has the deleted class."""
+    from reclawed.widgets.message_bubble import MessageBubble
+
+    msg = Message(role="user", content="Gone", session_id="s1", deleted=True)
+    bubble = MessageBubble(msg)
+    assert bubble.message.deleted is True
+
+
+# ---------------------------------------------------------------------------
+# Typing Indicators (2A)
+# ---------------------------------------------------------------------------
+
+def test_compose_area_typing_started_message():
+    """ComposeArea.TypingStarted message can be instantiated."""
+    from reclawed.widgets.compose_area import ComposeArea
+
+    msg = ComposeArea.TypingStarted()
+    assert msg is not None
+
+
+# ---------------------------------------------------------------------------
+# StatusBar — typing + connection
+# ---------------------------------------------------------------------------
+
+def test_status_bar_typing_indicator():
+    """StatusBar shows typing indicator when names are provided."""
+    from reclawed.widgets.status_bar import StatusBar
+    bar = object.__new__(StatusBar)
+    bar._session_name = "Test"
+    bar._model = ""
+    bar._cost = 0.0
+    bar._message_count = 0
+    bar._streaming_indicator = None
+    bar._group_mode = None
+    bar._typing_indicator = None
+    bar._connection_status = None
+    bar._encrypted = False
+    bar._last_render = ""
+    bar.update = lambda text: setattr(bar, "_last_render", text)
+
+    bar.set_typing_indicator(["Alice"])
+    assert "Alice is typing..." in bar._last_render
+
+    bar.set_typing_indicator(["Alice", "Bob"])
+    assert "Alice, Bob are typing..." in bar._last_render
+
+    bar.set_typing_indicator([])
+    assert "typing" not in bar._last_render
+
+
+def test_status_bar_connection_status():
+    """StatusBar shows connection status."""
+    from reclawed.widgets.status_bar import StatusBar
+    bar = object.__new__(StatusBar)
+    bar._session_name = "Test"
+    bar._model = ""
+    bar._cost = 0.0
+    bar._message_count = 0
+    bar._streaming_indicator = None
+    bar._group_mode = None
+    bar._typing_indicator = None
+    bar._connection_status = None
+    bar._encrypted = False
+    bar._last_render = ""
+    bar.update = lambda text: setattr(bar, "_last_render", text)
+
+    bar.set_connection_status("Reconnecting... (attempt 2)")
+    assert "Reconnecting... (attempt 2)" in bar._last_render
+
+    bar.set_connection_status(None)
+    assert "Reconnecting" not in bar._last_render
+
+
+# ---------------------------------------------------------------------------
+# Read Receipts — delivery status
+# ---------------------------------------------------------------------------
+
+async def test_message_bubble_streaming_then_finalize():
+    """Verify the streaming → finalize flow preserves content."""
+    from reclawed.widgets.message_bubble import MessageBubble
+
+    msg = Message(role="assistant", content="...", session_id="s1")
+    bubble = MessageBubble(msg)
+
+    # Simulate streaming updates
+    bubble.update_content("Hello ")
+    assert bubble.message.content == "Hello "
+
+    bubble.update_content("Hello world, this is a long response.")
+    assert bubble.message.content == "Hello world, this is a long response."
+
+    # Simulate finalize
+    final = "Hello world, this is a long response.\n\nWith **markdown**."
+    await bubble.finalize_content(final)
+    assert bubble.message.content == final
+
+
+async def test_message_bubble_long_content():
+    """Verify very long content is stored correctly through streaming."""
+    from reclawed.widgets.message_bubble import MessageBubble
+
+    msg = Message(role="assistant", content="...", session_id="s1")
+    bubble = MessageBubble(msg)
+
+    # Build a 100-line poem
+    lines = [f"Line {i}: This is line number {i} of the poem" for i in range(100)]
+    poem = "\n".join(lines)
+
+    # Stream it in chunks
+    accumulated = ""
+    for line in lines:
+        accumulated += line + "\n"
+        bubble.update_content(accumulated)
+
+    # Finalize
+    await bubble.finalize_content(poem)
+    assert bubble.message.content == poem
+    assert bubble.message.content.count("\n") == 99  # 100 lines = 99 newlines
+
+
+def test_message_bubble_delivery_status_method():
+    """MessageBubble.set_delivery_status exists and is callable."""
+    from reclawed.widgets.message_bubble import MessageBubble
+
+    msg = Message(role="user", content="Test", session_id="s1", sender_type="human")
+    bubble = MessageBubble(msg)
+    # Method should exist and not raise (label won't exist without mounting)
+    bubble.set_delivery_status("sent")

@@ -1,6 +1,6 @@
 # Re:Clawed
 
-A WhatsApp-style TUI for the Claude CLI. Reply to messages, quote, bookmark, run group chats, and manage sessions — all on top of your existing Claude Code subscription. No API key needed.
+A WhatsApp-style TUI for the Claude CLI. Reply to messages, edit and delete them, run encrypted group chats with typing indicators and read receipts, and manage sessions — all on top of your existing Claude Code subscription. No API key needed.
 
 ![Re:Clawed Screenshot](screenshot.png)
 
@@ -34,44 +34,65 @@ reclawed --session <id>   # resume a specific session by ID
 
 ## Features
 
-- **Streaming chat** — responses stream token-by-token with live markdown rendering
+### Chat
+- **Streaming chat** — responses stream token-by-token with live markdown rendering and tok/s counter
+- **Message editing** — press `e` on a selected user message to edit; Claude re-generates its response. Edited messages show an `[edited]` indicator
+- **Message deletion** — press `d` to soft-delete a message and its paired Claude reply
 - **Reply to messages** — threaded replies with inline quote preview; click a reply indicator to jump to the original
 - **Quote into compose** — paste a message excerpt directly into your input with `q`
 - **Bookmark / pin** — toggle `b` to pin any message; `Ctrl+P` opens the pinned messages view
-- **Session sidebar** — searchable session list with unread badges; toggle with `Ctrl+S`
-- **Session management** — right-click any session for archive, mute/unmute, delete, mark-unread
-- **Auto-naming** — sessions are automatically named from the first message so the sidebar stays readable
-- **Relative timestamps** — message times shown as "just now", "5m ago", etc.
-- **Multi-model switching** — cycle sonnet / opus / haiku with `F2`; persisted per session
-- **Theme cycling** — dark / light / dracula / monokai with `Ctrl+T`
-- **Session export** — dumps the full conversation to `~/Desktop/<name>.md` with `Ctrl+E`
-- **Streaming speed indicator** — live tok/s counter in the status bar during generation
 - **Copy to clipboard** — `c` in navigate mode; uses `pbcopy` (macOS) or `xclip` (Linux)
 - **In-session search** — `/` searches all messages in the current session
 - **Cost tracking** — cumulative session cost shown in the status bar
-- **Group chat** — multi-participant rooms over WebSocket with automatic Cloudflare tunnel (see below)
+
+### Session Management
+- **Session sidebar** — searchable session list with unread badges; toggle with `Ctrl+S`
+- **Session rename** — press `m` in the sidebar context menu to rename inline
+- **Session management** — right-click any session for archive, mute/unmute, delete, mark-unread
+- **Auto-naming** — sessions are automatically named from the first message
+- **Session export** — dumps the full conversation to `~/Desktop/<name>.md` with `Ctrl+E`
+
+### Appearance
+- **Multi-model switching** — cycle sonnet / opus / haiku with `F2`; persisted per session
+- **Theme cycling** — dark / light / dracula / monokai with `Ctrl+T`
+- **Relative timestamps** — message times shown as "just now", "5m ago", etc.
+
+### Group Chat
+- **Multi-participant rooms** over WebSocket with automatic Cloudflare tunnel
+- **E2E encryption** — AES-256-GCM with room-level key derived from a shared passphrase (see below)
+- **Typing indicators** — "Alice is typing..." in the status bar with 3s debounce and 5s auto-expire
+- **Read receipts** — delivery status on outgoing messages (single check = sent, double check = read)
+- **@mention routing** — direct messages to a specific participant's Claude
+- **Respond modes** — cycle own / mentions / all / off with `F3`
+- **Shared context** — optionally prepend recent group messages as context to Claude prompts
+- **Auto-reconnect** — exponential backoff with status indicator in the status bar
+
+### Encryption
+- **E2E relay encryption** — group chat messages are encrypted with AES-256-GCM before leaving your machine. The relay server only sees ciphertext. Key is derived from a passphrase embedded in the connection string via PBKDF2-HMAC-SHA256
+- **Local database encryption** — all chat history is encrypted at rest using AES-256-GCM with an auto-generated 256-bit key stored in your data directory (`local.key`)
+- **Backward compatible** — existing plaintext messages remain readable after enabling encryption. Encrypted and unencrypted participants can coexist in the same room
 
 ## Group Chat
 
-Group chat lets multiple people (each running their own Re:Clawed) share a conversation where every participant's local Claude responds. Messages from all humans and all Claude instances are broadcast to the room in real time.
+Group chat lets multiple people (each running their own Re:Clawed) share a conversation where every participant's local Claude responds. All messages are end-to-end encrypted by default.
 
 **Create a group**
 
 1. Press `Ctrl+G` and choose **Create**.
 2. Re:Clawed starts an embedded WebSocket relay on `localhost:8765` (configurable).
 3. If `cloudflared` is installed, a public `wss://...trycloudflare.com` tunnel is opened automatically — no port forwarding needed. Otherwise a LAN `ws://` URL is shown.
-4. Copy the connection string and share it with participants.
+4. The connection string includes both the auth token and the encryption passphrase. Copy it and share it with participants.
 5. Press **Start Chat** to enter the room.
 
 **Join a group**
 
 1. Press `Ctrl+G` and choose **Join**.
-2. Paste the connection string you received.
+2. Paste the connection string you received (the encryption key is extracted automatically).
 3. Press **Join** or hit Enter.
 
 **How it works**
 
-Each participant connects to the same relay room. When you send a message it is broadcast to everyone and each participant's local `claude` CLI generates its own response, which is also broadcast. The relay server is a lightweight WebSocket hub with optional SQLite message log for store-and-forward (missed messages are replayed on reconnect). The client auto-reconnects with exponential backoff.
+Each participant connects to the same relay room. When you send a message it is encrypted locally, broadcast as ciphertext through the relay, and decrypted by each recipient. Each participant's local `claude` CLI generates its own response, which is also encrypted and broadcast. The relay server is a lightweight WebSocket hub with optional SQLite message log for store-and-forward (missed messages are replayed on reconnect). The server never sees plaintext.
 
 **@mention routing**
 
@@ -82,13 +103,13 @@ You can direct a message at a specific participant's Claude by @mentioning them:
 @Ed thoughts?
 ```
 
-Ed's Re:Clawed detects the mention and has his Claude respond automatically. Both the full form (`@Ed's Claude`) and the short form (`@Ed`) are recognised, case-insensitively.
+Both the full form (`@Ed's Claude`) and the short form (`@Ed`) are recognised, case-insensitively.
 
 **Group respond modes (F3)**
 
 Press `F3` at any time to cycle through four respond modes. The current mode is shown in the status bar as `[own]`, `[mentions]`, `[all]`, or `[off]`.
 
-| Mode | Your Claude responds to… |
+| Mode | Your Claude responds to... |
 |------|--------------------------|
 | `own` (default) | Your own messages only |
 | `mentions` | Remote messages that @mention you |
@@ -96,6 +117,10 @@ Press `F3` at any time to cycle through four respond modes. The current mode is 
 | `off` | Nothing — manual browsing only |
 
 The mode is a runtime toggle — it resets to the configured default on restart. You can change the default in `config.toml` with `group_auto_respond = "mentions"`.
+
+**Shared context mode**
+
+By default, each participant's Claude only sees its own conversation history (`isolated` mode). Set `group_context_mode = "shared_history"` in `config.toml` to prepend the last N group messages as context to each Claude prompt. Control the window size with `group_context_window` (default: 20).
 
 **Standalone relay server**
 
@@ -138,12 +163,20 @@ Options:
 |-----|--------|
 | `Up` / `Down` | Select messages |
 | `r` | Reply to selected message |
+| `e` | Edit selected user message |
+| `d` | Delete selected user message |
 | `q` | Quote selected into compose |
 | `b` | Bookmark / pin toggle |
 | `c` | Copy to clipboard |
 | `/` | Search messages |
 | `Esc` | Deselect / back to compose |
 | `?` | Help overlay |
+
+**Sidebar** (when sidebar has focus):
+
+| Key | Action |
+|-----|--------|
+| `m` | Rename session inline |
 
 ## Configuration
 
@@ -181,12 +214,27 @@ relay_port = 8765
 # Default group chat respond mode: own | mentions | all | off
 # Can be toggled at runtime with F3 (does not persist across restarts).
 group_auto_respond = "own"
+
+# Group chat context mode: isolated | shared_history
+# "shared_history" prepends recent group messages to each Claude prompt.
+group_context_mode = "isolated"
+
+# Number of recent messages included when group_context_mode = "shared_history".
+group_context_window = 20
 ```
+
+## Security
+
+**Local encryption** is automatic — a 256-bit AES key is generated on first launch and stored at `{data_dir}/local.key`. All message content is encrypted before writing to the SQLite database and decrypted transparently on read.
+
+**Group chat encryption** uses AES-256-GCM with a room-level symmetric key. The key is derived from a passphrase (generated per room) via PBKDF2-HMAC-SHA256 with 100,000 iterations and the room ID as salt. The passphrase is embedded in the connection string as a `&key=` parameter so participants only need to share one URL. The relay server never sees plaintext message content.
+
+If the `local.key` file is lost, locally encrypted messages become unreadable. Treat it like a credential and include it in backups.
 
 ## Stack
 
 - **textual** — TUI framework
-- **rich** — markdown rendering
+- **cryptography** — AES-256-GCM encryption, PBKDF2 key derivation
 - **websockets** — group chat relay (server + client)
 - **click** — CLI
 - **SQLite** — message and session persistence

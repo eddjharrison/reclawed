@@ -26,6 +26,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
+from reclawed.crypto import decrypt_content, encrypt_content, is_encrypted
 from reclawed.relay.protocol import RelayMessage
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class RelayClient:
         participant_name: str,
         participant_type: str = "human",
         token: str | None = None,
+        room_key: bytes | None = None,
     ) -> None:
         self._url = url
         self._room_id = room_id
@@ -61,6 +63,7 @@ class RelayClient:
         self._participant_name = participant_name
         self._participant_type = participant_type
         self._token = token
+        self._room_key = room_key
 
         self._ws: Any | None = None
         self._connected = asyncio.Event()
@@ -72,6 +75,10 @@ class RelayClient:
         self._last_seq: int = 0
         self._running = False
         self._bg_task: asyncio.Task[None] | None = None
+        self._last_typing_sent: float = 0.0  # debounce typing signals
+        self._last_read_sent: int = 0  # dedup read receipts
+        self._status_callback: Any | None = None  # Callable[[str, int], None]
+        self._reconnect_attempt: int = 0
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -115,6 +122,11 @@ class RelayClient:
                 pass
         self._bg_task = None
         logger.info("RelayClient disconnected from room %s", self._room_id)
+        if self._status_callback:
+            try:
+                self._status_callback("disconnected", 0)
+            except Exception:
+                pass
 
     async def send_message(
         self,
@@ -129,6 +141,7 @@ class RelayClient:
         """
         if not self.is_connected:
             raise RuntimeError("RelayClient is not connected")
+        wire_content = encrypt_content(content, self._room_key) if self._room_key else content
         msg = RelayMessage(
             type="message",
             room_id=self._room_id,
@@ -136,12 +149,102 @@ class RelayClient:
             sender_name=sender_name_override or self._participant_name,
             sender_type=sender_type or self._participant_type,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            content=content,
+            content=wire_content,
             reply_to_seq=reply_to_seq,
             message_id=str(uuid.uuid4()),
         )
         async with self._send_lock:
             assert self._ws is not None  # guarded by is_connected check above
+            await self._ws.send(msg.to_json())
+
+    def set_status_callback(self, callback: Any) -> None:
+        """Set a callback invoked on connection state changes.
+
+        The callback receives (status: str, attempt: int) where status is one of
+        "connected", "reconnecting", or "disconnected".
+        """
+        self._status_callback = callback
+
+    async def send_typing(self) -> None:
+        """Send a typing indicator, debounced to at most once every 3 seconds."""
+        import time as _time
+
+        now = _time.monotonic()
+        if now - self._last_typing_sent < 3.0:
+            return
+        if not self.is_connected:
+            return
+        self._last_typing_sent = now
+        msg = RelayMessage(
+            type="typing",
+            room_id=self._room_id,
+            sender_id=self._participant_id,
+            sender_name=self._participant_name,
+            sender_type=self._participant_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        async with self._send_lock:
+            assert self._ws is not None
+            await self._ws.send(msg.to_json())
+
+    async def send_read_receipt(self, seq: int) -> None:
+        """Send a read receipt for messages up to *seq*, with deduplication."""
+        if seq <= self._last_read_sent:
+            return
+        if not self.is_connected:
+            return
+        self._last_read_sent = seq
+        msg = RelayMessage(
+            type="read",
+            room_id=self._room_id,
+            sender_id=self._participant_id,
+            sender_name=self._participant_name,
+            sender_type=self._participant_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            read_up_to_seq=seq,
+        )
+        async with self._send_lock:
+            assert self._ws is not None
+            await self._ws.send(msg.to_json())
+
+    async def send_edit(
+        self, target_message_id: str, new_content: str
+    ) -> None:
+        """Send an edit message targeting a previously sent message."""
+        if not self.is_connected:
+            raise RuntimeError("RelayClient is not connected")
+        wire_content = encrypt_content(new_content, self._room_key) if self._room_key else new_content
+        msg = RelayMessage(
+            type="edit",
+            room_id=self._room_id,
+            sender_id=self._participant_id,
+            sender_name=self._participant_name,
+            sender_type=self._participant_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            content=wire_content,
+            target_message_id=target_message_id,
+            message_id=str(uuid.uuid4()),
+        )
+        async with self._send_lock:
+            assert self._ws is not None
+            await self._ws.send(msg.to_json())
+
+    async def send_delete(self, target_message_id: str) -> None:
+        """Send a delete message targeting a previously sent message."""
+        if not self.is_connected:
+            raise RuntimeError("RelayClient is not connected")
+        msg = RelayMessage(
+            type="delete",
+            room_id=self._room_id,
+            sender_id=self._participant_id,
+            sender_name=self._participant_name,
+            sender_type=self._participant_type,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            target_message_id=target_message_id,
+            message_id=str(uuid.uuid4()),
+        )
+        async with self._send_lock:
+            assert self._ws is not None
             await self._ws.send(msg.to_json())
 
     async def receive_messages(self) -> AsyncIterator[RelayMessage]:
@@ -194,7 +297,13 @@ class RelayClient:
                     self._connected.set()
                     self._disconnected.clear()
                     attempt = 0
+                    self._reconnect_attempt = 0
                     logger.info("RelayClient connected to %s room=%s", ws_url, self._room_id)
+                    if self._status_callback:
+                        try:
+                            self._status_callback("connected", 0)
+                        except Exception:
+                            pass
 
                     # Request missed messages since last known seq
                     await self._send_sync_request(ws)
@@ -220,7 +329,13 @@ class RelayClient:
 
             backoff = min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_MAX)
             attempt += 1
+            self._reconnect_attempt = attempt
             logger.info("RelayClient reconnecting in %.1fs (attempt %d)", backoff, attempt)
+            if self._status_callback:
+                try:
+                    self._status_callback("reconnecting", attempt)
+                except Exception:
+                    pass
             await asyncio.sleep(backoff)
 
     async def _send_sync_request(self, ws: Any) -> None:
@@ -250,6 +365,13 @@ class RelayClient:
             # Keep participant list up to date
             if msg.type in ("join", "leave", "presence") and msg.participants is not None:
                 self._participants = msg.participants
+
+            # Decrypt content if we have a room key
+            if self._room_key and msg.content and is_encrypted(msg.content):
+                try:
+                    msg.content = decrypt_content(msg.content, self._room_key)
+                except Exception:
+                    logger.warning("Failed to decrypt message %s", msg.message_id)
 
             # Track highest seq we've seen
             if msg.seq and msg.seq > self._last_seq:

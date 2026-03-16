@@ -17,6 +17,7 @@ from textual.widgets import Footer, Header
 
 from reclawed.claude import ClaudeProcess, StreamError, StreamResult, StreamSessionId, StreamToken
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
+from reclawed.crypto import derive_room_key
 from reclawed.models import Message, Session
 from reclawed.relay.client import RelayClient
 from reclawed.store import Store
@@ -51,6 +52,8 @@ class ChatScreen(Screen):
         Binding("q", "quote", "Quote", show=True, key_display="q"),
         Binding("b", "bookmark", "Bookmark", show=True, key_display="b"),
         Binding("c", "copy_message", "Copy", show=True, key_display="c"),
+        Binding("e", "edit_message", "Edit", show=True, key_display="e"),
+        Binding("d", "delete_message", "Delete", show=True, key_display="d"),
         Binding("slash", "search", "Search", show=True, key_display="/"),
         Binding("escape", "deselect", "Back to compose", show=False),
         Binding("question_mark", "help", "Help", show=True, key_display="?"),
@@ -83,6 +86,13 @@ class ChatScreen(Screen):
         # Runtime group respond mode — loaded from config but NOT persisted to DB.
         # Cycles via F3: "own" → "mentions" → "all" → "off" → "own"
         self._group_respond_mode: str = config.group_auto_respond
+        # Typing indicator tracking: {sender_name: monotonic_time}
+        self._typing_users: dict[str, float] = {}
+        self._typing_timer_running = False
+        # Read receipts tracking: {participant_id: highest_seq_read}
+        self._read_receipts: dict[str, int] = {}
+        # Map local message IDs to relay seqs for read receipt/edit/delete
+        self._msg_id_to_seq: dict[str, int] = {}
 
     def _create_new_session(self) -> Session:
         session = Session()
@@ -108,6 +118,9 @@ class ChatScreen(Screen):
         # Load existing messages if resuming a session
         if self.session.message_count > 0:
             await self._load_session_messages()
+        # Auto-reconnect group sessions on startup (non-blocking)
+        if self.session.is_group and self.session.relay_url:
+            asyncio.create_task(self._try_reconnect_group())
 
     async def _load_session_messages(self) -> None:
         msg_list = self.query_one("#message-list", MessageList)
@@ -126,10 +139,16 @@ class ChatScreen(Screen):
             group_mode=group_mode,
             clear_group_mode=not self.session.is_group,
         )
+        status.set_encrypted(bool(self.session.encryption_passphrase))
 
     # --- Message handling ---
 
     async def on_compose_area_submitted(self, event: ComposeArea.Submitted) -> None:
+        # Handle edit mode
+        if event.editing_message_id:
+            await self._handle_edit_submit(event.editing_message_id, event.text)
+            return
+
         if self._sending:
             return
         self._sending = True
@@ -175,6 +194,13 @@ class ChatScreen(Screen):
             compose.query_one("#compose-input").focus()
             return
 
+        # Build prompt with optional group context preamble
+        prompt = event.text
+        if self.session.is_group and self.config.group_context_mode == "shared_history":
+            preamble = self._build_group_context_preamble()
+            if preamble:
+                prompt = preamble + "\n\n" + prompt
+
         # Create placeholder assistant message
         claude_name = f"{self.config.participant_name}'s Claude" if self.session.is_group else None
         assistant_msg = Message(
@@ -188,15 +214,25 @@ class ChatScreen(Screen):
         await msg_list.add_message(assistant_msg)
 
         # Stream response
-        self._stream_response(event.text, assistant_msg, reply_context)
+        self._stream_response(prompt, assistant_msg, reply_context)
 
     # --- Group chat relay helpers ---
+
+    async def _try_reconnect_group(self) -> None:
+        """Attempt to reconnect a group session on startup, silently fail if unreachable."""
+        try:
+            await self._start_relay_client(self.session)
+        except Exception:
+            self.notify("Group relay unavailable — use Ctrl+G to rejoin", timeout=5)
 
     async def _start_relay_client(self, session: Session) -> None:
         """Create and connect a RelayClient for the given group session."""
         if session.relay_url is None or session.room_id is None:
             return
         participant_id = session.participant_id or str(uuid.uuid4())
+        room_key: bytes | None = None
+        if session.encryption_passphrase and session.room_id:
+            room_key = derive_room_key(session.encryption_passphrase, session.room_id)
         self._relay_client = RelayClient(
             url=session.relay_url,
             room_id=session.room_id,
@@ -204,7 +240,9 @@ class ChatScreen(Screen):
             participant_name=self.config.participant_name,
             participant_type="human",
             token=session.relay_token,
+            room_key=room_key,
         )
+        self._relay_client.set_status_callback(self._on_relay_status)
         try:
             self.notify("Connecting to relay...", timeout=3)
             await self._relay_client.connect(timeout=10.0)
@@ -226,11 +264,53 @@ class ChatScreen(Screen):
             return
         try:
             async for relay_msg in self._relay_client.receive_messages():
-                # Ignore presence/heartbeat/system messages
-                if relay_msg.type != "message":
-                    continue
                 # Ignore messages sent by this participant (already shown locally)
                 if relay_msg.sender_id == self._relay_client._participant_id:
+                    continue
+
+                # Handle typing indicators
+                if relay_msg.type == "typing":
+                    self._typing_users[relay_msg.sender_name] = time.monotonic()
+                    status = self.query_one("#status-bar", StatusBar)
+                    status.set_typing_indicator(list(self._typing_users.keys()))
+                    self._start_typing_timer()
+                    continue
+
+                # Handle read receipts
+                if relay_msg.type == "read" and relay_msg.read_up_to_seq is not None:
+                    self._read_receipts[relay_msg.sender_id] = relay_msg.read_up_to_seq
+                    self._update_delivery_status()
+                    continue
+
+                # Handle edits from remote participants
+                if relay_msg.type == "edit" and relay_msg.target_message_id:
+                    # Find the local message matching the target ID
+                    target_msg = self.store.get_message(relay_msg.target_message_id)
+                    if target_msg:
+                        from datetime import datetime, timezone as tz
+                        target_msg.content = relay_msg.content or ""
+                        target_msg.edited_at = datetime.now(tz.utc)
+                        self.store.update_message(target_msg)
+                        msg_list = self.query_one("#message-list", MessageList)
+                        bubble = msg_list.get_bubble(relay_msg.target_message_id)
+                        if bubble:
+                            bubble.update_content(target_msg.content)
+                            bubble._message.edited_at = target_msg.edited_at
+                    continue
+
+                # Handle deletes from remote participants
+                if relay_msg.type == "delete" and relay_msg.target_message_id:
+                    target_msg = self.store.get_message(relay_msg.target_message_id)
+                    if target_msg:
+                        self.store.soft_delete_message(relay_msg.target_message_id)
+                        msg_list = self.query_one("#message-list", MessageList)
+                        bubble = msg_list.get_bubble(relay_msg.target_message_id)
+                        if bubble:
+                            await bubble.mark_deleted()
+                    continue
+
+                # Ignore non-message types (presence/heartbeat/system)
+                if relay_msg.type != "message":
                     continue
 
                 msg = Message(
@@ -242,12 +322,24 @@ class ChatScreen(Screen):
                 )
                 self.store.add_message(msg)
 
+                # Track message ID to relay seq for read receipts
+                if relay_msg.seq:
+                    self._msg_id_to_seq[msg.id] = relay_msg.seq
+
                 msg_list = self.query_one("#message-list", MessageList)
                 await msg_list.add_message(msg)
+
+                # Send read receipt for this message
+                self._send_read_receipt_for_latest()
 
                 # Increment unread if this isn't the active session
                 # (always active here since we have only one chat panel for now)
                 self._refresh_sidebar()
+
+                # Clear typing indicator for this sender
+                self._typing_users.pop(relay_msg.sender_name, None)
+                status = self.query_one("#status-bar", StatusBar)
+                status.set_typing_indicator(list(self._typing_users.keys()))
 
                 # Decide whether to have our Claude respond to this remote message.
                 # Only act on human messages (not Claude messages from other participants).
@@ -262,7 +354,13 @@ class ChatScreen(Screen):
                         should_respond = True
 
                     if should_respond and not self._sending:
-                        await self._respond_to_group_message(content)
+                        # Build prompt with optional group context preamble
+                        prompt = content
+                        if self.config.group_context_mode == "shared_history":
+                            preamble = self._build_group_context_preamble()
+                            if preamble:
+                                prompt = preamble + "\n\n" + content
+                        await self._respond_to_group_message(prompt)
 
         except asyncio.CancelledError:
             pass
@@ -354,6 +452,7 @@ class ChatScreen(Screen):
             room_id=result["room_id"],
             participant_id=result["participant_id"],
             relay_token=result.get("token"),
+            encryption_passphrase=result.get("encryption_passphrase"),
         )
         self.store.create_session(session)
         self.session = session
@@ -381,6 +480,7 @@ class ChatScreen(Screen):
             room_id=result["room_id"],
             participant_id=result["participant_id"],
             relay_token=result.get("token"),
+            encryption_passphrase=result.get("encryption_passphrase"),
         )
         self.store.create_session(session)
         self.session = session
@@ -449,6 +549,8 @@ class ChatScreen(Screen):
 
         token_count = 0
         stream_start: float | None = None  # set on receipt of first StreamToken
+        last_render: float = 0.0  # monotonic time of last Markdown update
+        throttle_s = self.config.stream_throttle_ms / 1000.0  # convert ms → seconds
 
         try:
             async for event in self._claude.send_message(
@@ -470,8 +572,12 @@ class ChatScreen(Screen):
                     status.set_streaming(tokens=token_count, elapsed=elapsed, active=True)
 
                     content_parts.append(event.text)
-                    if bubble:
+                    # Throttle Markdown re-renders to avoid overwhelming the widget
+                    now = time.monotonic()
+                    if bubble and (now - last_render) >= throttle_s:
+                        last_render = now
                         bubble.update_content("".join(content_parts))
+                        msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamResult):
                     assistant_msg.content = event.content or "".join(content_parts)
@@ -521,15 +627,16 @@ class ChatScreen(Screen):
                         tokens=final_tokens, elapsed=final_elapsed, active=True
                     )
 
-                    # Re-render the final bubble with metadata
+                    # Final render: switch from Static to Markdown
                     if bubble:
-                        bubble.update_content(assistant_msg.content)
+                        await bubble.finalize_content(assistant_msg.content)
+                        msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamError):
                     assistant_msg.content = f"Error: {event.message}"
                     self.store.update_message(assistant_msg)
                     if bubble:
-                        bubble.update_content(assistant_msg.content)
+                        await bubble.finalize_content(assistant_msg.content)
 
         except asyncio.CancelledError:
             self._claude.cancel()
@@ -663,6 +770,233 @@ class ChatScreen(Screen):
             else:
                 self.notify("Copy failed — no clipboard tool available", severity="error")
 
+    def action_edit_message(self) -> None:
+        """Enter edit mode for the selected message (own messages only)."""
+        if self._compose_focused:
+            return
+        msg_list = self.query_one("#message-list", MessageList)
+        selected = msg_list.get_selected_message()
+        if not selected:
+            return
+        if selected.role != "user":
+            self.notify("Can only edit your own messages", severity="warning", timeout=3)
+            return
+        if selected.deleted:
+            self.notify("Cannot edit a deleted message", severity="warning", timeout=3)
+            return
+        compose = self.query_one("#compose-area", ComposeArea)
+        compose.start_edit(selected.id, selected.content)
+
+    async def _handle_edit_submit(self, message_id: str, new_content: str) -> None:
+        """Edit a user message and regenerate Claude's response."""
+        from datetime import datetime, timezone as tz
+
+        if self._sending:
+            return
+
+        msg = self.store.get_message(message_id)
+        if not msg:
+            return
+
+        # 1. Update user message content + edited_at
+        msg.content = new_content
+        msg.edited_at = datetime.now(tz.utc)
+        self.store.update_message(msg)
+
+        msg_list = self.query_one("#message-list", MessageList)
+
+        # 2. Update user bubble in-place
+        bubble = msg_list.get_bubble(message_id)
+        if bubble:
+            bubble.update_content(new_content)
+            bubble._message.edited_at = msg.edited_at
+
+        # 3. Find and soft-delete the next assistant message (old Claude reply)
+        next_id = msg_list.get_next_message_id(message_id)
+        if next_id:
+            next_bubble = msg_list.get_bubble(next_id)
+            if next_bubble and next_bubble.message.role == "assistant":
+                self.store.soft_delete_message(next_id)
+                await next_bubble.mark_deleted()
+
+        # 4. Broadcast edit in group chat
+        if self.session.is_group and self._relay_client is not None:
+            try:
+                await self._relay_client.send_edit(message_id, new_content)
+            except Exception:
+                pass
+
+        # 5. In group sessions with mode "off", skip Claude entirely
+        if self.session.is_group and self._group_respond_mode == "off":
+            self.notify("Message edited", timeout=2)
+            return
+
+        # 6. Create new assistant placeholder and stream fresh response
+        self._sending = True
+        compose = self.query_one("#compose-area", ComposeArea)
+        compose.set_enabled(False)
+
+        prompt = new_content
+        if self.session.is_group and self.config.group_context_mode == "shared_history":
+            preamble = self._build_group_context_preamble()
+            if preamble:
+                prompt = preamble + "\n\n" + prompt
+
+        claude_name = f"{self.config.participant_name}'s Claude" if self.session.is_group else None
+        assistant_msg = Message(
+            role="assistant",
+            content="...",
+            session_id=self.session.id,
+            sender_name=claude_name,
+            sender_type="claude" if self.session.is_group else None,
+        )
+        self.store.add_message(assistant_msg)
+        await msg_list.add_message(assistant_msg)
+
+        self._stream_response(prompt, assistant_msg, None)
+
+    def action_delete_message(self) -> None:
+        """Soft-delete the selected message and its Claude reply (own messages only)."""
+        if self._compose_focused:
+            return
+        msg_list = self.query_one("#message-list", MessageList)
+        selected = msg_list.get_selected_message()
+        if not selected:
+            return
+        if selected.role != "user":
+            self.notify("Can only delete your own messages", severity="warning", timeout=3)
+            return
+        if selected.deleted:
+            return
+
+        # 1. Soft-delete the user message
+        selected.deleted = True
+        self.store.soft_delete_message(selected.id)
+        bubble = msg_list.get_bubble(selected.id)
+        if bubble:
+            asyncio.create_task(bubble.mark_deleted())
+
+        # 2. Also soft-delete the next assistant message (Claude's reply)
+        next_id = msg_list.get_next_message_id(selected.id)
+        if next_id:
+            next_bubble = msg_list.get_bubble(next_id)
+            if next_bubble and next_bubble.message.role == "assistant":
+                self.store.soft_delete_message(next_id)
+                asyncio.create_task(next_bubble.mark_deleted())
+
+                # Broadcast delete for the reply too
+                if self.session.is_group and self._relay_client is not None:
+                    try:
+                        asyncio.create_task(self._relay_client.send_delete(next_id))
+                    except Exception:
+                        pass
+
+        # 3. Broadcast delete for the user message
+        if self.session.is_group and self._relay_client is not None:
+            try:
+                asyncio.create_task(self._relay_client.send_delete(selected.id))
+            except Exception:
+                pass
+
+        self.notify("Message deleted", timeout=2)
+
+    # --- Typing indicators ---
+
+    def on_compose_area_typing_started(self, event: ComposeArea.TypingStarted) -> None:
+        """Send typing indicator when user types in group chat."""
+        if self.session.is_group and self._relay_client is not None:
+            asyncio.create_task(self._relay_client.send_typing())
+
+    def _start_typing_timer(self) -> None:
+        """Start a 1-second timer to expire stale typing indicators."""
+        if self._typing_timer_running:
+            return
+        self._typing_timer_running = True
+
+        def _check_typing() -> None:
+            now = time.monotonic()
+            expired = [name for name, ts in self._typing_users.items() if now - ts > 5.0]
+            for name in expired:
+                del self._typing_users[name]
+
+            status = self.query_one("#status-bar", StatusBar)
+            status.set_typing_indicator(list(self._typing_users.keys()))
+
+            if self._typing_users:
+                self.set_timer(1.0, _check_typing)
+            else:
+                self._typing_timer_running = False
+
+        self.set_timer(1.0, _check_typing)
+
+    # --- Read receipts ---
+
+    def _send_read_receipt_for_latest(self) -> None:
+        """Send a read receipt for the highest seq we've seen."""
+        if self._relay_client and self._relay_client._last_seq > 0:
+            asyncio.create_task(
+                self._relay_client.send_read_receipt(self._relay_client._last_seq)
+            )
+
+    def _update_delivery_status(self) -> None:
+        """Recompute delivery status for all outgoing bubbles based on read receipts."""
+        if not self._read_receipts:
+            return
+        msg_list = self.query_one("#message-list", MessageList)
+        for msg_id, bubble in msg_list._bubbles.items():
+            if bubble.message.role != "user" or bubble.message.sender_type != "human":
+                continue
+            seq = self._msg_id_to_seq.get(msg_id)
+            if seq is None:
+                continue
+            # Check if all other participants have read up to this seq
+            all_read = all(v >= seq for v in self._read_receipts.values())
+            any_read = any(v >= seq for v in self._read_receipts.values())
+            if all_read:
+                bubble.set_delivery_status("read")
+            elif any_read:
+                bubble.set_delivery_status("delivered")
+            else:
+                bubble.set_delivery_status("sent")
+
+    # --- Connection status callback ---
+
+    def _on_relay_status(self, status: str, attempt: int) -> None:
+        """Called by RelayClient on connection state changes."""
+        try:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            if status == "connected":
+                status_bar.set_connection_status(None)
+                # Send read receipt on reconnect
+                self._send_read_receipt_for_latest()
+            elif status == "reconnecting":
+                status_bar.set_connection_status(f"Reconnecting... (attempt {attempt})")
+            elif status == "disconnected":
+                status_bar.set_connection_status("Disconnected")
+        except Exception:
+            pass
+
+    # --- Group context preamble ---
+
+    def _build_group_context_preamble(self) -> str:
+        """Build a context preamble from recent group messages."""
+        messages = self.store.get_session_messages(self.session.id)
+        # Take the last N messages (excluding deleted)
+        recent = [m for m in messages if not m.deleted]
+        window = self.config.group_context_window
+        recent = recent[-window:] if len(recent) > window else recent
+        if not recent:
+            return ""
+        lines = ["[Group chat context:]"]
+        for msg in recent:
+            name = msg.sender_name or ("You" if msg.role == "user" else "Claude")
+            # Truncate long messages in context
+            content = msg.content[:200]
+            if len(msg.content) > 200:
+                content += "..."
+            lines.append(f"{name}: {content}")
+        return "\n".join(lines)
+
     def action_search(self) -> None:
         if self._compose_focused:
             return
@@ -771,6 +1105,18 @@ class ChatScreen(Screen):
     def on_chat_sidebar_new_chat_requested(self, event: ChatSidebar.NewChatRequested) -> None:
         self.action_new_chat()
 
+    def on_chat_sidebar_session_renamed(self, event: ChatSidebar.SessionRenamed) -> None:
+        """Handle session rename from inline edit."""
+        session = self.store.get_session(event.session_id)
+        if session:
+            session.name = event.new_name
+            self.store.update_session(session)
+            if event.session_id == self.session.id:
+                self.session.name = event.new_name
+                self._update_status()
+            self._refresh_sidebar()
+            self.notify(f"Renamed to: {event.new_name}", timeout=2)
+
     def on_chat_sidebar_context_menu_requested(self, event: ChatSidebar.ContextMenuRequested) -> None:
         from reclawed.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
@@ -804,7 +1150,9 @@ class ChatScreen(Screen):
                 if session_id == self.session.id:
                     self.action_new_chat()
             elif action == ACTION_RENAME:
-                self.notify("Rename: type new name in sidebar search then press Enter", timeout=5)
+                sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+                sidebar.start_rename(session_id)
+                return  # Don't refresh — it would destroy the rename Input
 
             self._refresh_sidebar()
 
@@ -855,6 +1203,8 @@ class ChatScreen(Screen):
             "q           Quote selected\n"
             "b           Bookmark/pin toggle\n"
             "c           Copy to clipboard\n"
+            "e           Edit message\n"
+            "d           Delete message\n"
             "/           Search messages\n"
             "F2          Cycle model\n"
             "F3          Cycle group respond mode\n"

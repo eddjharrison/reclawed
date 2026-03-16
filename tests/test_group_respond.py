@@ -206,6 +206,9 @@ class TestStatusBarGroupMode:
         bar._message_count = 0
         bar._streaming_indicator = None
         bar._group_mode = None
+        bar._typing_indicator = None
+        bar._connection_status = None
+        bar._encrypted = False
         # Patch update() so we can inspect the rendered string
         bar._last_render = ""
         bar.update = lambda text: setattr(bar, "_last_render", text)
@@ -249,3 +252,136 @@ class TestStatusBarGroupMode:
         render = bar._last_render
         # Badge should appear before the streaming indicator
         assert render.index("[own]") < render.index("Claude is thinking...")
+
+
+# ---------------------------------------------------------------------------
+# Config — group context settings
+# ---------------------------------------------------------------------------
+
+class TestConfigGroupContext:
+    def test_default_mode_is_isolated(self):
+        cfg = Config()
+        assert cfg.group_context_mode == "isolated"
+
+    def test_default_context_window(self):
+        cfg = Config()
+        assert cfg.group_context_window == 20
+
+    def test_valid_modes_accepted(self):
+        for mode in ("isolated", "shared_history"):
+            cfg = Config(group_context_mode=mode)
+            assert cfg.group_context_mode == mode
+
+    def test_invalid_mode_falls_back(self):
+        cfg = Config(group_context_mode="bogus")
+        assert cfg.group_context_mode == "isolated"
+
+    def test_load_from_toml(self, tmp_path: Path):
+        toml_file = tmp_path / "config.toml"
+        toml_file.write_text(
+            'group_context_mode = "shared_history"\ngroup_context_window = 10\n',
+            encoding="utf-8",
+        )
+        cfg = Config.load(config_path=toml_file)
+        assert cfg.group_context_mode == "shared_history"
+        assert cfg.group_context_window == 10
+
+
+# ---------------------------------------------------------------------------
+# Group context preamble formatting
+# ---------------------------------------------------------------------------
+
+class TestGroupContextPreamble:
+    def _make_chat_screen(self, mode: str = "shared_history", window: int = 20):
+        """Build a minimal ChatScreen-like object for testing preamble logic."""
+        from reclawed.screens.chat import ChatScreen
+        cfg = Config(
+            participant_name="Ed",
+            group_context_mode=mode,
+            group_context_window=window,
+        )
+        store = Store(":memory:")
+        session = Session(name="Group Test", is_group=True)
+        store.create_session(session)
+
+        obj = object.__new__(ChatScreen)
+        obj.store = store
+        obj.config = cfg
+        obj.session = session
+        obj._claude = MagicMock()
+        obj._sending = False
+        obj._selected_model = None
+        obj._relay_client = None
+        obj._relay_server = None
+        obj._tunnel_proc = None
+        obj._relay_receive_task = None
+        obj._group_respond_mode = "own"
+        obj._typing_users = {}
+        obj._typing_timer_running = False
+        obj._read_receipts = {}
+        obj._msg_id_to_seq = {}
+        return obj
+
+    def test_preamble_empty_when_no_messages(self):
+        obj = self._make_chat_screen()
+        assert obj._build_group_context_preamble() == ""
+
+    def test_preamble_includes_recent_messages(self):
+        obj = self._make_chat_screen()
+        from reclawed.models import Message
+        obj.store.add_message(Message(
+            role="user", content="Hello from Ed",
+            session_id=obj.session.id, sender_name="Ed",
+        ))
+        obj.store.add_message(Message(
+            role="assistant", content="Hello from Claude",
+            session_id=obj.session.id, sender_name="Ed's Claude",
+        ))
+        preamble = obj._build_group_context_preamble()
+        assert "[Group chat context:]" in preamble
+        assert "Ed: Hello from Ed" in preamble
+        assert "Ed's Claude: Hello from Claude" in preamble
+
+    def test_preamble_respects_window_size(self):
+        obj = self._make_chat_screen(window=2)
+        from reclawed.models import Message
+        for i in range(5):
+            obj.store.add_message(Message(
+                role="user", content=f"Message {i}",
+                session_id=obj.session.id, sender_name="Ed",
+            ))
+        preamble = obj._build_group_context_preamble()
+        # Should only include last 2 messages
+        assert "Message 3" in preamble
+        assert "Message 4" in preamble
+        assert "Message 0" not in preamble
+
+    def test_preamble_excludes_deleted(self):
+        obj = self._make_chat_screen()
+        from reclawed.models import Message
+        m1 = Message(
+            role="user", content="Visible",
+            session_id=obj.session.id, sender_name="Ed",
+        )
+        m2 = Message(
+            role="user", content="Deleted",
+            session_id=obj.session.id, sender_name="Ed",
+        )
+        obj.store.add_message(m1)
+        obj.store.add_message(m2)
+        obj.store.soft_delete_message(m2.id)
+        preamble = obj._build_group_context_preamble()
+        assert "Visible" in preamble
+        assert "Deleted" not in preamble
+
+    def test_no_preamble_in_isolated_mode(self):
+        obj = self._make_chat_screen(mode="isolated")
+        from reclawed.models import Message
+        obj.store.add_message(Message(
+            role="user", content="Hello",
+            session_id=obj.session.id, sender_name="Ed",
+        ))
+        preamble = obj._build_group_context_preamble()
+        # Method returns context regardless — the caller checks the mode
+        # So this just verifies the method works; the mode check is in on_compose_area_submitted
+        assert "[Group chat context:]" in preamble

@@ -33,6 +33,8 @@ class Message:
     output_tokens: int | None = None
     sender_name: str | None = None  # display name, e.g. "Ed", "Brother"
     sender_type: str | None = None  # "human" | "claude"
+    edited_at: datetime | None = None
+    deleted: bool = False
 
 
 @dataclass
@@ -53,3 +55,4 @@ class Session:
     room_id: str | None = None
     participant_id: str | None = None
     relay_token: str | None = None
+    encryption_passphrase: str | None = None

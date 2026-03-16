@@ -66,6 +66,8 @@ class Config:
     # "all"      — Claude responds to every human message in the room
     # "off"      — Claude never responds automatically
     group_auto_respond: str = "own"
+    group_context_mode: str = "isolated"  # "isolated" | "shared_history"
+    group_context_window: int = 20  # number of recent messages to include as context
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -74,6 +76,8 @@ class Config:
         # Normalise group_auto_respond; fall back to "own" for unknown values.
         if self.group_auto_respond not in {"own", "mentions", "all", "off"}:
             self.group_auto_respond = "own"
+        if self.group_context_mode not in {"isolated", "shared_history"}:
+            self.group_context_mode = "isolated"
 
     @property
     def db_path(self) -> Path:
@@ -119,5 +123,9 @@ class Config:
             kwargs["relay_port"] = int(raw["relay_port"])  # type: ignore[arg-type]
         if "group_auto_respond" in raw:
             kwargs["group_auto_respond"] = str(raw["group_auto_respond"])
+        if "group_context_mode" in raw:
+            kwargs["group_context_mode"] = str(raw["group_context_mode"])
+        if "group_context_window" in raw:
+            kwargs["group_context_window"] = int(raw["group_context_window"])  # type: ignore[arg-type]
 
         return cls(**kwargs)  # type: ignore[arg-type]

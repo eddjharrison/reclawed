@@ -5,6 +5,7 @@ from __future__ import annotations
 from textual.app import App
 
 from reclawed.config import Config
+from reclawed.crypto import load_or_create_local_key
 from reclawed.screens.chat import ChatScreen
 from reclawed.store import Store
 
@@ -19,7 +20,8 @@ class ReclawedApp(App):
     def __init__(self, config: Config | None = None, resume_session_id: str | None = None) -> None:
         super().__init__()
         self.config = config or Config()
-        self.store = Store(self.config.db_path)
+        local_key = load_or_create_local_key(self.config.data_dir)
+        self.store = Store(self.config.db_path, local_key=local_key)
         self._resume_session_id = resume_session_id
 
     def on_mount(self) -> None:

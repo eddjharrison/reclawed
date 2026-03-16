@@ -253,6 +253,21 @@ async def _handle_message(client: _ClientState, raw: str | bytes) -> None:
         await _broadcast(client.room_id, payload)
         return
 
+    if msg_type in ("edit", "delete"):
+        msg.seq = _next_seq(client.room_id)
+        msg.room_id = client.room_id
+        payload = msg.to_json()
+        _persist(msg)
+        await _broadcast(client.room_id, payload)
+        return
+
+    if msg_type in ("typing", "read"):
+        # Ephemeral: broadcast without seq or persistence
+        msg.room_id = client.room_id
+        payload = msg.to_json()
+        await _broadcast(client.room_id, payload, exclude=client.participant_id)
+        return
+
     err = RelayMessage(
         type="error",
         room_id=client.room_id,

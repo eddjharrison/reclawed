@@ -7,6 +7,7 @@ import socket
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from reclawed.crypto import generate_passphrase
 from reclawed.utils import copy_to_clipboard
 
 from textual.app import ComposeResult
@@ -87,6 +88,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         self._room_id: str = str(uuid.uuid4())
         self._token: str = str(uuid.uuid4()).replace("-", "")[:16]
         self._participant_id: str = str(uuid.uuid4())
+        self._passphrase: str = generate_passphrase()
         self._relay_server = None  # asyncio.Server handle
         self._tunnel_proc: asyncio.subprocess.Process | None = None
         self._tunnel_url: str | None = None
@@ -131,6 +133,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             self._tunnel_url = tunnel_url
             self._conn_string = (
                 f"{tunnel_url}/room/{self._room_id}?token={self._token}"
+                f"&key={self._passphrase}"
             )
             status.update("Relay server running with public tunnel.")
             hint.update("Public URL — anyone with this link can join, no port forwarding needed.")
@@ -139,6 +142,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             hostname = self._get_hostname()
             self._conn_string = (
                 f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
+                f"&key={self._passphrase}"
             )
             status.update("Relay server running (LAN only).")
             hint.update(
@@ -218,6 +222,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
                 "relay_server": self._relay_server,
                 "tunnel_proc": self._tunnel_proc,
                 "conn_string": self._conn_string,
+                "encryption_passphrase": self._passphrase,
             })
         elif event.button.id == "btn-cancel":
             self.action_cancel()
@@ -349,6 +354,7 @@ class JoinGroupScreen(ModalScreen[dict | None]):
 
             params = parse_qs(parsed.query)
             token = (params.get("token") or [""])[0] or None
+            encryption_passphrase = (params.get("key") or [""])[0] or None
 
             # Build relay URL — port is optional for wss:// tunnel URLs
             if parsed.port:
@@ -361,6 +367,7 @@ class JoinGroupScreen(ModalScreen[dict | None]):
                 "relay_url": relay_url,
                 "token": token,
                 "participant_id": str(uuid.uuid4()),
+                "encryption_passphrase": encryption_passphrase,
             }
         except Exception:
             return None

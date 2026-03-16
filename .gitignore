@@ -7,3 +7,7 @@ build/
 *.db
 .pytest_cache/
 .DS_Store
+*.key
+.env
+.env.*
+config.toml

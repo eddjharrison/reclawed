@@ -119,6 +119,33 @@ class TestRelayMessageSerialization:
         restored = RelayMessage.from_json(msg.to_json().encode())
         assert restored.sender_name == msg.sender_name
 
+    def test_target_message_id_round_trip(self):
+        """target_message_id field survives serialization."""
+        msg = _make_msg(type="edit", target_message_id="msg-target-123", content="new content")
+        restored = RelayMessage.from_json(msg.to_json())
+        assert restored.target_message_id == "msg-target-123"
+        assert restored.type == "edit"
+
+    def test_read_up_to_seq_round_trip(self):
+        """read_up_to_seq field survives serialization."""
+        msg = _make_msg(type="read", read_up_to_seq=42)
+        restored = RelayMessage.from_json(msg.to_json())
+        assert restored.read_up_to_seq == 42
+
+    def test_typing_message(self):
+        """Typing messages serialize without content."""
+        msg = _make_msg(type="typing", content=None)
+        restored = RelayMessage.from_json(msg.to_json())
+        assert restored.type == "typing"
+        assert restored.content is None
+
+    def test_delete_message_with_target(self):
+        """Delete messages carry target_message_id."""
+        msg = _make_msg(type="delete", target_message_id="msg-to-delete", content=None)
+        restored = RelayMessage.from_json(msg.to_json())
+        assert restored.type == "delete"
+        assert restored.target_message_id == "msg-to-delete"
+
 
 # ---------------------------------------------------------------------------
 # Integration tests — real server/client over loopback
@@ -230,6 +257,92 @@ async def test_presence_on_join(relay_server):
     assert "alice-id" in ids
 
     await alice.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_encrypted_message_exchange(relay_server):
+    """Two clients with the same room key can exchange encrypted messages."""
+    from reclawed.crypto import derive_room_key
+    from reclawed.relay.client import RelayClient
+
+    host, port = relay_server
+    url = f"ws://{host}:{port}"
+    room = "encrypted-room"
+    passphrase = "test-passphrase-abc123"
+    room_key = derive_room_key(passphrase, room)
+
+    alice = RelayClient(url, room, "alice-id", "Alice", room_key=room_key)
+    bob = RelayClient(url, room, "bob-id", "Bob", room_key=room_key)
+
+    await alice.connect()
+    await bob.connect()
+    await asyncio.sleep(0.1)
+
+    await alice.send_message("Secret message!")
+
+    received = await _next_msg(bob, type_filter="message")
+    # Bob should see the decrypted plaintext
+    assert received.content == "Secret message!"
+
+    await alice.disconnect()
+    await bob.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_encrypted_edit_exchange(relay_server):
+    """Edit messages are encrypted and decrypted correctly."""
+    from reclawed.crypto import derive_room_key
+    from reclawed.relay.client import RelayClient
+
+    host, port = relay_server
+    url = f"ws://{host}:{port}"
+    room = "encrypted-edit-room"
+    room_key = derive_room_key("passphrase", room)
+
+    alice = RelayClient(url, room, "alice-id", "Alice", room_key=room_key)
+    bob = RelayClient(url, room, "bob-id", "Bob", room_key=room_key)
+
+    await alice.connect()
+    await bob.connect()
+    await asyncio.sleep(0.1)
+
+    await alice.send_edit("msg-123", "Updated content")
+
+    received = await _next_msg(bob, type_filter="edit")
+    assert received.content == "Updated content"
+    assert received.target_message_id == "msg-123"
+
+    await alice.disconnect()
+    await bob.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_no_key_receives_ciphertext(relay_server):
+    """A client without a room key sees the raw encrypted envelope."""
+    from reclawed.crypto import derive_room_key, is_encrypted
+    from reclawed.relay.client import RelayClient
+
+    host, port = relay_server
+    url = f"ws://{host}:{port}"
+    room = "mixed-encryption-room"
+    room_key = derive_room_key("secret", room)
+
+    alice = RelayClient(url, room, "alice-id", "Alice", room_key=room_key)
+    bob = RelayClient(url, room, "bob-id", "Bob")  # no key
+
+    await alice.connect()
+    await bob.connect()
+    await asyncio.sleep(0.1)
+
+    await alice.send_message("Encrypted hello")
+
+    received = await _next_msg(bob, type_filter="message")
+    # Bob has no key — should see the encrypted envelope
+    assert is_encrypted(received.content)
+    assert received.content != "Encrypted hello"
+
+    await alice.disconnect()
+    await bob.disconnect()
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,8 @@ class RelayMessage:
     message_id: str = ""
     participants: list[dict] | None = None  # populated in presence updates
     error: str | None = None
+    target_message_id: str | None = None  # for edit/delete targeting
+    read_up_to_seq: int | None = None  # for read receipts
 
     # ------------------------------------------------------------------ #
     # Serialisation                                                        #

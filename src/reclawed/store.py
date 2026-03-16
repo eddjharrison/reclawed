@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from reclawed.crypto import decrypt_content, encrypt_content, is_encrypted
 from reclawed.models import Message, Session
 
 SCHEMA = """
@@ -52,13 +53,14 @@ def _fmt_dt(dt: datetime) -> str:
 
 
 class Store:
-    def __init__(self, db_path: Path | str = ":memory:"):
+    def __init__(self, db_path: Path | str = ":memory:", local_key: bytes | None = None):
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._local_key = local_key
         self._migrate()
 
     def _migrate(self) -> None:
@@ -76,6 +78,12 @@ class Store:
             # Per-message sender identity (group chat)
             "ALTER TABLE messages ADD COLUMN sender_name TEXT",
             "ALTER TABLE messages ADD COLUMN sender_type TEXT",
+            # Message editing and soft deletion
+            "ALTER TABLE messages ADD COLUMN edited_at TEXT",
+            "ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0",
+            # Encryption
+            "ALTER TABLE sessions ADD COLUMN encryption_passphrase TEXT",
+            "ALTER TABLE messages ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in migrations:
             try:
@@ -94,14 +102,14 @@ class Store:
         self._conn.execute(
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
-            "is_group, relay_url, room_id, participant_id, relay_token) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
-             session.relay_token),
+             session.relay_token, session.encryption_passphrase),
         )
         self._conn.commit()
         return session
@@ -128,12 +136,13 @@ class Store:
         self._conn.execute(
             "UPDATE sessions SET claude_session_id=?, name=?, updated_at=?, model=?, "
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
-            "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=? WHERE id=?",
+            "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
+            "encryption_passphrase=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
-             session.relay_token, session.id),
+             session.relay_token, session.encryption_passphrase, session.id),
         )
         self._conn.commit()
 
@@ -165,16 +174,21 @@ class Store:
                 (msg.session_id,),
             ).fetchone()
             msg.seq = row[0]
+        stored_content = msg.content
+        encrypted = 0
+        if self._local_key:
+            stored_content = encrypt_content(msg.content, self._local_key)
+            encrypted = 1
         self._conn.execute(
             "INSERT INTO messages (id, seq, role, content, timestamp, session_id, claude_session_id, "
             "reply_to_id, bookmarked, cost_usd, duration_ms, model, input_tokens, output_tokens, "
-            "sender_name, sender_type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (msg.id, msg.seq, msg.role, msg.content, _fmt_dt(msg.timestamp),
+            "sender_name, sender_type, encrypted) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg.id, msg.seq, msg.role, stored_content, _fmt_dt(msg.timestamp),
              msg.session_id, msg.claude_session_id, msg.reply_to_id,
              int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
              msg.model, msg.input_tokens, msg.output_tokens,
-             msg.sender_name, msg.sender_type),
+             msg.sender_name, msg.sender_type, encrypted),
         )
         self._conn.commit()
         # Update session message count
@@ -186,12 +200,27 @@ class Store:
         return msg
 
     def update_message(self, msg: Message) -> None:
+        stored_content = msg.content
+        encrypted = 0
+        if self._local_key:
+            stored_content = encrypt_content(msg.content, self._local_key)
+            encrypted = 1
         self._conn.execute(
             "UPDATE messages SET content=?, bookmarked=?, cost_usd=?, duration_ms=?, model=?, "
-            "input_tokens=?, output_tokens=?, claude_session_id=?, sender_name=?, sender_type=? WHERE id=?",
-            (msg.content, int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
+            "input_tokens=?, output_tokens=?, claude_session_id=?, sender_name=?, sender_type=?, "
+            "edited_at=?, deleted=?, encrypted=? WHERE id=?",
+            (stored_content, int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
              msg.model, msg.input_tokens, msg.output_tokens, msg.claude_session_id,
-             msg.sender_name, msg.sender_type, msg.id),
+             msg.sender_name, msg.sender_type,
+             _fmt_dt(msg.edited_at) if msg.edited_at else None,
+             int(msg.deleted), encrypted, msg.id),
+        )
+        self._conn.commit()
+
+    def soft_delete_message(self, message_id: str) -> None:
+        """Mark a message as deleted (soft delete)."""
+        self._conn.execute(
+            "UPDATE messages SET deleted = 1 WHERE id = ?", (message_id,)
         )
         self._conn.commit()
 
@@ -230,15 +259,35 @@ class Store:
         return [self._row_to_message(r) for r in rows]
 
     def search_messages(self, query: str, session_id: str | None = None) -> list[Message]:
+        if self._local_key:
+            # With local encryption, SQL LIKE can't search ciphertext.
+            # Fetch all non-deleted messages, decrypt, and filter in Python.
+            if session_id:
+                rows = self._conn.execute(
+                    "SELECT * FROM messages WHERE session_id = ? "
+                    "AND deleted = 0 ORDER BY seq",
+                    (session_id,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM messages WHERE deleted = 0 "
+                    "ORDER BY timestamp DESC",
+                ).fetchall()
+            messages = [self._row_to_message(r) for r in rows]
+            lower_query = query.lower()
+            return [m for m in messages if lower_query in m.content.lower()]
+
         like = f"%{query}%"
         if session_id:
             rows = self._conn.execute(
-                "SELECT * FROM messages WHERE content LIKE ? AND session_id = ? ORDER BY seq",
+                "SELECT * FROM messages WHERE content LIKE ? AND session_id = ? "
+                "AND deleted = 0 ORDER BY seq",
                 (like, session_id),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM messages WHERE content LIKE ? ORDER BY timestamp DESC",
+                "SELECT * FROM messages WHERE content LIKE ? AND deleted = 0 "
+                "ORDER BY timestamp DESC",
                 (like,),
             ).fetchall()
         return [self._row_to_message(r) for r in rows]
@@ -267,6 +316,9 @@ class Store:
         ]
 
         for msg in messages:
+            if msg.deleted:
+                continue
+
             lines.append("")
             lines.append("---")
             lines.append("")
@@ -304,11 +356,16 @@ class Store:
 
     def _row_to_message(self, row: sqlite3.Row) -> Message:
         keys = row.keys()
+        edited_at_raw = row["edited_at"] if "edited_at" in keys else None
+        content = row["content"]
+        row_encrypted = bool(row["encrypted"]) if "encrypted" in keys else False
+        if row_encrypted and self._local_key and is_encrypted(content):
+            content = decrypt_content(content, self._local_key)
         return Message(
             id=row["id"],
             seq=row["seq"],
             role=row["role"],
-            content=row["content"],
+            content=content,
             timestamp=_parse_dt(row["timestamp"]),
             session_id=row["session_id"],
             claude_session_id=row["claude_session_id"],
@@ -321,6 +378,8 @@ class Store:
             output_tokens=row["output_tokens"],
             sender_name=row["sender_name"] if "sender_name" in keys else None,
             sender_type=row["sender_type"] if "sender_type" in keys else None,
+            edited_at=_parse_dt(edited_at_raw) if edited_at_raw else None,
+            deleted=bool(row["deleted"]) if "deleted" in keys else False,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:
@@ -342,4 +401,5 @@ class Store:
             room_id=row["room_id"] if "room_id" in keys else None,
             participant_id=row["participant_id"] if "participant_id" in keys else None,
             relay_token=row["relay_token"] if "relay_token" in keys else None,
+            encryption_passphrase=row["encryption_passphrase"] if "encryption_passphrase" in keys else None,
         )

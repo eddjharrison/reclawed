@@ -30,6 +30,12 @@ class StatusBar(Static):
         self._streaming_indicator: str | None = None
         # Group respond mode badge ("own" | "mentions" | "all" | "off" | None)
         self._group_mode: str | None = None
+        # Typing indicator
+        self._typing_indicator: str | None = None
+        # Connection status
+        self._connection_status: str | None = None
+        # Encryption indicator
+        self._encrypted: bool = False
 
     def update_info(
         self,
@@ -87,10 +93,36 @@ class StatusBar(Static):
             self._streaming_indicator = "Claude is thinking..."
         self._refresh_display()
 
+    def set_typing_indicator(self, names: list[str]) -> None:
+        """Show typing indicator for the given user names."""
+        if not names:
+            self._typing_indicator = None
+        elif len(names) == 1:
+            self._typing_indicator = f"{names[0]} is typing..."
+        else:
+            self._typing_indicator = f"{', '.join(names)} are typing..."
+        self._refresh_display()
+
+    def set_connection_status(self, status: str | None) -> None:
+        """Set connection status text (e.g. 'Reconnecting... (attempt 2)')."""
+        self._connection_status = status
+        self._refresh_display()
+
+    def set_encrypted(self, encrypted: bool) -> None:
+        """Show or hide the encryption lock indicator."""
+        self._encrypted = encrypted
+        self._refresh_display()
+
     def _refresh_display(self) -> None:
         parts = [f"Re:Clawed | {self._session_name}"]
+        if self._encrypted:
+            parts.append("Encrypted")
         if self._group_mode is not None:
             parts.append(f"[{self._group_mode}]")
+        if self._connection_status:
+            parts.append(self._connection_status)
+        if self._typing_indicator:
+            parts.append(self._typing_indicator)
         if self._streaming_indicator:
             parts.append(self._streaming_indicator)
         else:

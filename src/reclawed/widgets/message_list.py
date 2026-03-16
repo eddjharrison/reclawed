@@ -92,6 +92,16 @@ class MessageList(VerticalScroll):
             pass
         return self.selected_id
 
+    def get_next_message_id(self, message_id: str) -> str | None:
+        """Return the ID of the message after *message_id* in display order, or None."""
+        try:
+            idx = self._order.index(message_id)
+            if idx < len(self._order) - 1:
+                return self._order[idx + 1]
+        except ValueError:
+            pass
+        return None
+
     def get_selected_message(self) -> Message | None:
         if self.selected_id and self.selected_id in self._bubbles:
             return self._bubbles[self.selected_id].message

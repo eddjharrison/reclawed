@@ -32,6 +32,7 @@ class MessageBubble(Vertical):
     DEFAULT_CSS = """
     MessageBubble {
         width: 100%;
+        height: auto;
         padding: 0 1;
         margin: 0 0 1 0;
     }
@@ -78,6 +79,24 @@ class MessageBubble(Vertical):
         color: $text-disabled;
         text-style: dim;
     }
+    MessageBubble .edited-indicator {
+        color: $text-disabled;
+        text-style: italic dim;
+    }
+    MessageBubble .delivery-status {
+        color: $text-disabled;
+        text-style: dim;
+    }
+    MessageBubble .delivery-status.read {
+        color: $accent;
+    }
+    MessageBubble.deleted .bubble-header {
+        color: $text-disabled;
+    }
+    MessageBubble .deleted-placeholder {
+        color: $text-disabled;
+        text-style: italic dim;
+    }
     """
 
     selected: reactive[bool] = reactive(False)
@@ -103,6 +122,8 @@ class MessageBubble(Vertical):
         self._message = message
         self._reply_preview = reply_preview
         self._content_widget: Markdown | None = None
+        self._stream_widget: Static | None = None  # fast text display during streaming
+        self._delivery_label: Label | None = None
         self.add_class(message.role)
 
     @property
@@ -122,6 +143,13 @@ class MessageBubble(Vertical):
             role_label = "You" if self._message.role == "user" else "Claude"
 
         ts = format_relative_time(self._message.timestamp)
+
+        # Deleted messages show only a placeholder
+        if self._message.deleted:
+            self.add_class("deleted")
+            yield Label(f"{role_label}  {ts}", classes="bubble-header")
+            yield Label("[This message was deleted]", classes="deleted-placeholder")
+            return
 
         if self._message.bookmarked:
             yield Label("# Pinned", classes="pin-indicator")
@@ -144,8 +172,17 @@ class MessageBubble(Vertical):
 
         yield Label(f"{role_label}  {ts}", classes=header_classes)
 
+        # Static widget for fast streaming display (hidden until streaming starts)
+        self._stream_widget = Static("", id="bubble-stream", classes="bubble-stream")
+        self._stream_widget.display = False
+        yield self._stream_widget
+
+        # Markdown widget for final rendered display
         self._content_widget = Markdown(self._message.content, id="bubble-content")
         yield self._content_widget
+
+        if self._message.edited_at:
+            yield Label("[edited]", classes="edited-indicator")
 
         if self._message.role == "assistant" and self._message.model:
             tokens = ""
@@ -156,11 +193,60 @@ class MessageBubble(Vertical):
                 cost = f" | ${self._message.cost_usd:.4f}"
             yield Label(f"{self._message.model}{tokens}{cost}", classes="bubble-meta")
 
+        # Delivery status for outgoing messages in group chat
+        if self._message.role == "user" and self._message.sender_type == "human":
+            self._delivery_label = Label("", classes="delivery-status", id="delivery-status")
+            yield self._delivery_label
+
     def update_content(self, content: str) -> None:
-        """Update the message content (used during streaming)."""
+        """Update the message content during streaming.
+
+        Shows a fast Static widget and hides Markdown during streaming.
+        No widget mounting/removal — just show/hide + text update.
+        Call ``finalize_content()`` when streaming ends to render as Markdown.
+        """
         self._message.content = content
-        if self._content_widget:
-            self._content_widget.update(content)
+        # Show the fast Static, hide the slow Markdown
+        if self._stream_widget is not None:
+            self._stream_widget.display = True
+            self._stream_widget.update(content)
+        if self._content_widget is not None:
+            self._content_widget.display = False
+
+    async def finalize_content(self, content: str) -> None:
+        """Switch from streaming Static back to Markdown for final render."""
+        self._message.content = content
+        # Hide streaming widget, show Markdown with final content
+        if self._stream_widget is not None:
+            self._stream_widget.display = False
+        if self._content_widget is not None:
+            self._content_widget.display = True
+            await self._content_widget.update(content)
+
+    async def mark_deleted(self) -> None:
+        """Transition this bubble to the deleted state in-place."""
+        self._message.deleted = True
+        self.add_class("deleted")
+        # Replace content with placeholder
+        await self.remove_children()
+        role_label = self._message.sender_name or ("You" if self._message.role == "user" else "Claude")
+        ts = format_relative_time(self._message.timestamp)
+        await self.mount(Label(f"{role_label}  {ts}", classes="bubble-header"))
+        await self.mount(Label("[This message was deleted]", classes="deleted-placeholder"))
+
+    def set_delivery_status(self, status: str) -> None:
+        """Update delivery status indicator. status: 'sent', 'delivered', or 'read'."""
+        if self._delivery_label is None:
+            try:
+                self._delivery_label = self.query_one("#delivery-status", Label)
+            except Exception:
+                return
+        symbols = {"sent": "\u2713", "delivered": "\u2713\u2713", "read": "\u2713\u2713"}
+        self._delivery_label.update(symbols.get(status, ""))
+        if status == "read":
+            self._delivery_label.add_class("read")
+        else:
+            self._delivery_label.remove_class("read")
 
     def watch_selected(self, value: bool) -> None:
         if value:

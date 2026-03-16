@@ -184,3 +184,205 @@ def test_update_session_persists_sidebar_fields(store: Store, session: Session):
     assert fetched.muted is True
     assert fetched.archived is True
     assert fetched.unread_count == 7
+
+
+# --- Message editing tests ---
+
+def test_update_message_with_edited_at(store: Store, session: Session):
+    """edited_at is persisted and returned correctly."""
+    from datetime import datetime, timezone
+    msg = Message(role="user", content="Original", session_id=session.id)
+    store.add_message(msg)
+
+    now = datetime.now(timezone.utc)
+    msg.content = "Edited content"
+    msg.edited_at = now
+    store.update_message(msg)
+
+    fetched = store.get_message(msg.id)
+    assert fetched.content == "Edited content"
+    assert fetched.edited_at is not None
+    assert fetched.edited_at.year == now.year
+
+
+def test_edited_at_none_by_default(store: Store, session: Session):
+    """New messages have edited_at=None."""
+    msg = Message(role="user", content="Fresh", session_id=session.id)
+    store.add_message(msg)
+    fetched = store.get_message(msg.id)
+    assert fetched.edited_at is None
+
+
+# --- Soft delete tests ---
+
+def test_soft_delete_message(store: Store, session: Session):
+    """soft_delete_message sets the deleted flag."""
+    msg = Message(role="user", content="Delete me", session_id=session.id)
+    store.add_message(msg)
+    store.soft_delete_message(msg.id)
+    fetched = store.get_message(msg.id)
+    assert fetched.deleted is True
+
+
+def test_soft_delete_still_in_session_messages(store: Store, session: Session):
+    """Soft-deleted messages remain in get_session_messages (timeline)."""
+    msg = Message(role="user", content="Will delete", session_id=session.id)
+    store.add_message(msg)
+    store.soft_delete_message(msg.id)
+    msgs = store.get_session_messages(session.id)
+    assert len(msgs) == 1
+    assert msgs[0].deleted is True
+
+
+def test_search_excludes_deleted(store: Store, session: Session):
+    """search_messages skips deleted messages."""
+    m1 = Message(role="user", content="Keep me visible", session_id=session.id)
+    m2 = Message(role="user", content="Keep this hidden", session_id=session.id)
+    store.add_message(m1)
+    store.add_message(m2)
+    store.soft_delete_message(m2.id)
+    results = store.search_messages("Keep", session.id)
+    assert len(results) == 1
+    assert results[0].content == "Keep me visible"
+
+
+def test_export_excludes_deleted(store: Store, session: Session):
+    """export_session_markdown skips deleted messages."""
+    m1 = Message(role="user", content="Visible message", session_id=session.id)
+    m2 = Message(role="user", content="Deleted message", session_id=session.id)
+    store.add_message(m1)
+    store.add_message(m2)
+    store.soft_delete_message(m2.id)
+    md = store.export_session_markdown(session.id)
+    assert "Visible message" in md
+    assert "Deleted message" not in md
+
+
+def test_deleted_false_by_default(store: Store, session: Session):
+    """New messages have deleted=False."""
+    msg = Message(role="user", content="Normal", session_id=session.id)
+    store.add_message(msg)
+    fetched = store.get_message(msg.id)
+    assert fetched.deleted is False
+
+
+# --- Local encryption tests ---
+
+
+def test_encrypted_store_round_trip():
+    """Messages are encrypted at rest and decrypted on read."""
+    import os
+    key = os.urandom(32)
+    s = Store(":memory:", local_key=key)
+    session = Session(name="Encrypted Session")
+    s.create_session(session)
+
+    msg = Message(role="user", content="Secret message", session_id=session.id)
+    s.add_message(msg)
+
+    fetched = s.get_message(msg.id)
+    assert fetched.content == "Secret message"
+    s.close()
+
+
+def test_encrypted_content_stored_as_ciphertext():
+    """Raw DB content is ciphertext, not plaintext."""
+    import os
+    from reclawed.crypto import is_encrypted
+    key = os.urandom(32)
+    s = Store(":memory:", local_key=key)
+    session = Session(name="Test")
+    s.create_session(session)
+
+    msg = Message(role="user", content="Plaintext here", session_id=session.id)
+    s.add_message(msg)
+
+    # Read raw from DB bypassing decryption
+    row = s._conn.execute("SELECT content, encrypted FROM messages WHERE id = ?", (msg.id,)).fetchone()
+    assert row["encrypted"] == 1
+    assert is_encrypted(row["content"])
+    assert row["content"] != "Plaintext here"
+    s.close()
+
+
+def test_encrypted_update_message():
+    """update_message re-encrypts content."""
+    import os
+    from reclawed.crypto import is_encrypted
+    key = os.urandom(32)
+    s = Store(":memory:", local_key=key)
+    session = Session(name="Test")
+    s.create_session(session)
+
+    msg = Message(role="user", content="Original", session_id=session.id)
+    s.add_message(msg)
+
+    msg.content = "Updated"
+    s.update_message(msg)
+
+    fetched = s.get_message(msg.id)
+    assert fetched.content == "Updated"
+
+    # Raw DB is encrypted
+    row = s._conn.execute("SELECT content FROM messages WHERE id = ?", (msg.id,)).fetchone()
+    assert is_encrypted(row["content"])
+    s.close()
+
+
+def test_encrypted_search():
+    """search_messages works with encrypted content via Python filtering."""
+    import os
+    key = os.urandom(32)
+    s = Store(":memory:", local_key=key)
+    session = Session(name="Test")
+    s.create_session(session)
+
+    s.add_message(Message(role="user", content="The quick brown fox", session_id=session.id))
+    s.add_message(Message(role="user", content="Lazy dog", session_id=session.id))
+
+    results = s.search_messages("quick")
+    assert len(results) == 1
+    assert "quick" in results[0].content
+
+    results = s.search_messages("dog")
+    assert len(results) == 1
+    assert "dog" in results[0].content
+    s.close()
+
+
+def test_unencrypted_messages_still_readable():
+    """Old plaintext messages (encrypted=0) are readable even with a local key."""
+    import os
+    key = os.urandom(32)
+    s = Store(":memory:", local_key=key)
+    session = Session(name="Test")
+    s.create_session(session)
+
+    # Simulate a pre-encryption message by inserting directly
+    s._conn.execute(
+        "INSERT INTO messages (id, seq, role, content, timestamp, session_id, encrypted) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("old-msg", 1, "user", "Legacy plaintext", "2024-01-01T00:00:00+00:00",
+         session.id, 0),
+    )
+    s._conn.commit()
+
+    fetched = s.get_message("old-msg")
+    assert fetched.content == "Legacy plaintext"
+    s.close()
+
+
+def test_session_encryption_passphrase():
+    """Session encryption_passphrase is persisted and loaded."""
+    s = Store(":memory:")
+    session = Session(name="Group", is_group=True, encryption_passphrase="abc123")
+    s.create_session(session)
+
+    fetched = s.get_session(session.id)
+    assert fetched.encryption_passphrase == "abc123"
+
+    session.encryption_passphrase = "updated"
+    s.update_session(session)
+    fetched = s.get_session(session.id)
+    assert fetched.encryption_passphrase == "updated"
+    s.close()

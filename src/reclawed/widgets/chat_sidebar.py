@@ -75,6 +75,14 @@ class ChatSidebar(Vertical):
             self.session_id = session_id
             self.is_muted = is_muted
 
+    class SessionRenamed(TMessage):
+        """Posted when a session is renamed via inline edit."""
+
+        def __init__(self, session_id: str, new_name: str) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.new_name = new_name
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -179,6 +187,18 @@ class ChatSidebar(Vertical):
     def on_chat_list_item_context_menu_requested(self, event: ChatListItem.ContextMenuRequested) -> None:
         event.stop()
         self.post_message(self.ContextMenuRequested(event.session_id, event.is_muted))
+
+    def on_chat_list_item_renamed(self, event: ChatListItem.Renamed) -> None:
+        event.stop()
+        self.post_message(self.SessionRenamed(event.session_id, event.new_name))
+
+    def start_rename(self, session_id: str) -> None:
+        """Trigger inline rename on the ChatListItem for the given session."""
+        chat_list = self.query_one("#chat-list", VerticalScroll)
+        for item in chat_list.query(ChatListItem):
+            if item.session_id == session_id:
+                self.app.call_later(item.start_rename)
+                break
 
     def action_new_chat(self) -> None:
         self.post_message(self.NewChatRequested())

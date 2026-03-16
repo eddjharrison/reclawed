@@ -71,3 +71,29 @@ def test_derive_session_name_no_space_fallback():
     result = ChatScreen._derive_session_name(prompt, max_len=40)
     # rfind returns -1 when there's no space, so we fall back to the raw slice + "..."
     assert result == "a" * 40 + "..."
+
+
+# ---------------------------------------------------------------------------
+# New model fields (editing + deletion)
+# ---------------------------------------------------------------------------
+
+def test_message_edited_at_default():
+    msg = Message(role="user", content="Hello", session_id="s1")
+    assert msg.edited_at is None
+
+
+def test_message_deleted_default():
+    msg = Message(role="user", content="Hello", session_id="s1")
+    assert msg.deleted is False
+
+
+def test_message_with_edited_at():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    msg = Message(role="user", content="Edited", session_id="s1", edited_at=now)
+    assert msg.edited_at == now
+
+
+def test_message_with_deleted():
+    msg = Message(role="user", content="Deleted", session_id="s1", deleted=True)
+    assert msg.deleted is True

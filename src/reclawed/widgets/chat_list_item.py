@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.events import Click
+from textual.events import Click, Key
 from textual.message import Message as TMessage
-from textual.widgets import Label
+from textual.widgets import Input, Label
 
 from reclawed.models import Session
 from reclawed.utils import format_relative_time
@@ -70,6 +70,14 @@ class ChatListItem(Vertical):
             super().__init__()
             self.session_id = session_id
             self.is_muted = is_muted
+
+    class Renamed(TMessage):
+        """Posted when the user completes an inline rename."""
+
+        def __init__(self, session_id: str, new_name: str) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.new_name = new_name
 
     def __init__(
         self,
@@ -174,6 +182,55 @@ class ChatListItem(Vertical):
                 label_list[1].update(f"{preview}{badge}")
         except Exception:
             pass
+
+    async def start_rename(self) -> None:
+        """Replace the name label with an Input for inline editing."""
+        try:
+            labels = list(self.query(Label))
+            if not labels:
+                return
+            name_label = labels[0]
+            name_label.display = False
+            rename_input = Input(
+                value=self._session.name,
+                id="rename-input",
+                classes="chat-name",
+            )
+            await self.mount(rename_input, before=name_label)
+            rename_input.focus()
+        except Exception:
+            pass
+
+    def _finish_rename(self, new_name: str) -> None:
+        """Complete the rename and restore the label."""
+        try:
+            rename_input = self.query_one("#rename-input", Input)
+            rename_input.remove()
+        except Exception:
+            pass
+        try:
+            labels = list(self.query(Label))
+            if labels:
+                labels[0].display = True
+        except Exception:
+            pass
+        name = new_name.strip()
+        if name and name != self._session.name:
+            self.post_message(self.Renamed(self._session.id, name))
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "rename-input":
+            event.stop()
+            self._finish_rename(event.value)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            try:
+                self.query_one("#rename-input", Input)
+                event.stop()
+                self._finish_rename(self._session.name)  # cancel = restore original
+            except Exception:
+                pass
 
     def on_click(self, event: Click) -> None:
         event.stop()
