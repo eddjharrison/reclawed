@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 from datetime import datetime
 
@@ -68,3 +69,41 @@ def copy_to_clipboard(text: str) -> bool:
             continue
 
     return False
+
+
+def detect_question(text: str) -> bool:
+    """Detect if the assistant's response ends with a question.
+
+    Checks the last paragraph — if it ends with ``?`` and is not inside
+    a code block, it's treated as a question.
+    """
+    clean = text.rstrip()
+    if not clean:
+        return False
+    # Ignore trailing code blocks
+    if clean.endswith("```"):
+        return False
+    last_para = clean.split("\n\n")[-1].strip()
+    return last_para.endswith("?")
+
+
+_CHOICE_PATTERN = re.compile(r"^(?:(\d+)\.|([a-zA-Z])[\.\)])[\s]+(.+)$")
+
+
+def detect_choices(text: str) -> list[tuple[str, str]]:
+    """Detect numbered or lettered choices in text.
+
+    Returns a list of ``(label, description)`` tuples, e.g.::
+
+        [("1", "Use React"), ("2", "Use Vue"), ("3", "Use Svelte")]
+
+    Only returns results when 2+ sequential choices are found.
+    """
+    choices: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        m = _CHOICE_PATTERN.match(line.strip())
+        if m:
+            label = m.group(1) or m.group(2)
+            description = m.group(3).strip()
+            choices.append((label, description))
+    return choices if len(choices) >= 2 else []

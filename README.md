@@ -45,6 +45,12 @@ reclawed --session <id>   # resume a specific session by ID
 - **Copy / Search** — `c` copies to clipboard; `/` searches the session
 - **Cost tracking** — cumulative session cost in the status bar
 
+### Interactivity
+- **Tool activity display** — see what Claude is doing in real-time: "Reading src/foo.py...", "Running: pytest -v", "Editing config.py". Click to expand tool input/output details
+- **Tool approval UI** — when Claude needs permission (in `default` or `acceptEdits` mode), approve/deny buttons appear inline in the chat. No more blind auto-approve
+- **Question detection** — when Claude asks a clarifying question, the message bubble is highlighted with a visual indicator
+- **Choice selection** — when Claude presents numbered options (1., 2., 3.), clickable buttons appear below the message. Click to auto-fill your response
+
 ### Workspaces
 - **Multi-project management** — group sessions by project directory. Each workspace points Claude at the right codebase
 - **Sidebar sections** — collapsible workspace groups with `+ New Chat` per workspace

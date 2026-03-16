@@ -10,7 +10,9 @@ from textual.reactive import reactive
 from textual.widgets import Label, Markdown, Static
 
 from reclawed.models import Message
-from reclawed.utils import format_relative_time
+from reclawed.utils import detect_choices, detect_question, format_relative_time
+from reclawed.widgets.choice_buttons import ChoiceButtons
+from reclawed.widgets.tool_activity import ToolActivityWidget
 
 
 class ReplyIndicator(Label):
@@ -92,6 +94,9 @@ class MessageBubble(Vertical):
     }
     MessageBubble.deleted .bubble-header {
         color: $text-disabled;
+    }
+    MessageBubble.has-question {
+        border-left: thick $warning;
     }
     MessageBubble .deleted-placeholder {
         color: $text-disabled;
@@ -222,6 +227,37 @@ class MessageBubble(Vertical):
         if self._content_widget is not None:
             self._content_widget.display = True
             await self._content_widget.update(content)
+
+        # Detect and display interactive elements
+        if self._message.role == "assistant":
+            if detect_question(content):
+                self.add_class("has-question")
+
+            choices = detect_choices(content)
+            if choices:
+                try:
+                    self.mount(ChoiceButtons(choices))
+                except Exception:
+                    pass
+
+    def add_tool_use(self, tool_use_id: str, tool_name: str, tool_input: dict) -> None:
+        """Mount a tool activity widget showing an in-progress tool call."""
+        widget = ToolActivityWidget(tool_use_id, tool_name, tool_input)
+        # Mount before the content widget so tools appear above the text
+        try:
+            if self._content_widget is not None:
+                self.mount(widget, before=self._content_widget)
+            else:
+                self.mount(widget)
+        except Exception:
+            pass
+
+    def complete_tool(self, tool_use_id: str, content: str | None, is_error: bool) -> None:
+        """Mark a tool as completed with its result."""
+        for widget in self.query(ToolActivityWidget):
+            if widget.tool_use_id == tool_use_id:
+                widget.complete(content, is_error)
+                break
 
     async def mark_deleted(self) -> None:
         """Transition this bubble to the deleted state in-place."""

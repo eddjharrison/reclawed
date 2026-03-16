@@ -16,7 +16,10 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header
 
-from reclawed.claude import StreamError, StreamResult, StreamSessionId, StreamToken
+from reclawed.claude import (
+    StreamError, StreamResult, StreamSessionId, StreamToken,
+    StreamToolResult, StreamToolUse,
+)
 from reclawed.claude_session import ClaudeSession
 from reclawed.config import Config, THEME_CYCLE, THEME_MAP
 from reclawed.crypto import decrypt_content, derive_room_key, is_encrypted
@@ -140,6 +143,8 @@ class ChatScreen(Screen):
         self._msg_id_to_seq: dict[str, int] = {}
         # Queue of outgoing local message IDs waiting for echo seq mapping
         self._pending_echo_ids: list[str] = []
+        # Pending tool approval futures: {tool_use_id: asyncio.Future}
+        self._pending_approvals: dict[str, asyncio.Future] = {}
 
     def _create_new_session(self, cwd: str | None = None) -> Session:
         session = Session(cwd=cwd)
@@ -191,6 +196,7 @@ class ChatScreen(Screen):
             cwd=self.session.cwd,
             permission_mode=self._selected_permission,
             allowed_tools=self.config.allowed_tools.split(","),
+            approval_callback=self._on_tool_approval_needed,
         )
         self._claude_sessions[session_key] = session
         self._claude = session
@@ -904,6 +910,19 @@ class ChatScreen(Screen):
                             bubble.update_content("".join(content_parts))
                             msg_list.scroll_end(animate=False)
 
+                elif isinstance(event, StreamToolUse):
+                    if _is_active() and bubble:
+                        bubble.add_tool_use(
+                            event.tool_use_id, event.tool_name, event.tool_input,
+                        )
+                        msg_list.scroll_end(animate=False)
+
+                elif isinstance(event, StreamToolResult):
+                    if _is_active() and bubble:
+                        bubble.complete_tool(
+                            event.tool_use_id, event.content, event.is_error,
+                        )
+
                 elif isinstance(event, StreamResult):
                     assistant_msg.content = event.content or "".join(content_parts)
                     assistant_msg.cost_usd = event.cost_usd
@@ -1232,6 +1251,49 @@ class ChatScreen(Screen):
         self.notify("Message deleted", timeout=2)
 
     # --- Typing indicators ---
+
+    async def _on_tool_approval_needed(self, tool_name: str, tool_input: dict, future: asyncio.Future) -> None:
+        """Called from ClaudeSession's can_use_tool — show approval UI."""
+        from reclawed.widgets.tool_approval import ToolApprovalWidget
+        tool_use_id = f"approval-{id(future)}"
+        self._pending_approvals[tool_use_id] = future
+        try:
+            msg_list = self.query_one("#message-list", MessageList)
+            # Find the most recent assistant bubble
+            bubbles = list(msg_list.query(MessageBubble))
+            if bubbles:
+                bubble = bubbles[-1]
+                widget = ToolApprovalWidget(tool_use_id, tool_name, tool_input)
+                bubble.mount(widget)
+                msg_list.scroll_end(animate=False)
+        except Exception:
+            # If UI fails, auto-approve to avoid deadlock
+            if not future.done():
+                from claude_agent_sdk import PermissionResultAllow
+                future.set_result(PermissionResultAllow())
+
+    def on_tool_approval_widget_decided(self, event) -> None:
+        """Handle approve/deny from the ToolApprovalWidget."""
+        event.stop()
+        future = self._pending_approvals.pop(event.tool_use_id, None)
+        if future is not None and not future.done():
+            if event.approved:
+                from claude_agent_sdk import PermissionResultAllow
+                future.set_result(PermissionResultAllow())
+            else:
+                from claude_agent_sdk import PermissionResultDeny
+                future.set_result(PermissionResultDeny(message="User denied"))
+
+    def on_choice_buttons_selected(self, event) -> None:
+        """Handle choice button click — fill compose area with the selection."""
+        event.stop()
+        try:
+            compose = self.query_one("#compose-area", ComposeArea)
+            text_area = compose.query_one("#compose-input")
+            text_area.load_text(f"{event.label}")
+            text_area.focus()
+        except Exception:
+            pass
 
     def on_compose_area_typing_started(self, event: ComposeArea.TypingStarted) -> None:
         """Send typing indicator when user types in group chat."""

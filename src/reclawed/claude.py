@@ -43,7 +43,26 @@ class StreamSessionId:
     session_id: str
 
 
-StreamEvent = StreamToken | StreamResult | StreamError | StreamSessionId
+@dataclass
+class StreamToolUse:
+    """Claude is invoking a tool."""
+    tool_use_id: str
+    tool_name: str
+    tool_input: dict
+
+
+@dataclass
+class StreamToolResult:
+    """Tool execution completed."""
+    tool_use_id: str
+    content: str | None
+    is_error: bool
+
+
+StreamEvent = (
+    StreamToken | StreamResult | StreamError | StreamSessionId
+    | StreamToolUse | StreamToolResult
+)
 
 
 class ClaudeProcess:

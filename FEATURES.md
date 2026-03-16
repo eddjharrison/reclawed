@@ -35,9 +35,10 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 ## Interactivity
 
-- [ ] **Tool approval UI** — when Claude asks for permission, show an interactive prompt in the TUI
-- [ ] **Question handling** — detect clarifying questions and make it easy to respond
-- [ ] **Choice selection** — when Claude presents numbered options, allow clicking or pressing 1/2/3
+- [x] **Tool activity display** — real-time tool activity shown inline in message bubbles (Reading, Editing, Running, Searching...) with collapsible details
+- [x] **Tool approval UI** — when Claude needs permission, approve/deny buttons appear inline. SDK `can_use_tool` callback bridges to TUI via asyncio.Future
+- [x] **Question handling** — detects when Claude asks a question, highlights the bubble with accent border
+- [x] **Choice selection** — numbered options rendered as clickable buttons, auto-fills compose area on click
 
 ## Visuals
 

@@ -16,11 +16,18 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ResultMessage,
     TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 
-from reclawed.claude import StreamError, StreamEvent, StreamResult, StreamSessionId, StreamToken
+from reclawed.claude import (
+    StreamError, StreamEvent, StreamResult, StreamSessionId,
+    StreamToken, StreamToolResult, StreamToolUse,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +62,7 @@ class ClaudeSession:
         cwd: str | None = None,
         permission_mode: str = "acceptEdits",
         allowed_tools: list[str] | None = None,
+        approval_callback=None,
     ) -> None:
         self._cli_path = cli_path
         self._session_id = session_id
@@ -63,6 +71,8 @@ class ClaudeSession:
         self._cwd = cwd or os.getcwd()
         self._permission_mode = permission_mode
         self._allowed_tools = allowed_tools or list(DEFAULT_TOOLS)
+        # Callback for tool approval: async (tool_name, tool_input, future) -> None
+        self._approval_callback = approval_callback
 
         self._client: ClaudeSDKClient | None = None
         self._captured_session_id: str | None = None
@@ -76,17 +86,20 @@ class ClaudeSession:
         initialization without blocking the Textual event loop.
         """
         try:
-            opts = ClaudeAgentOptions(
-                cli_path=self._cli_path,
-                cwd=self._cwd,
-                allowed_tools=self._allowed_tools,
-                permission_mode=self._permission_mode,
-                model=self._model,
-                resume=self._session_id,
-                fork_session=self._fork_session,
-                # Prevent "cannot launch inside another Claude Code session" error
-                env={"CLAUDECODE": ""},
-            )
+            kwargs: dict = {
+                "cli_path": self._cli_path,
+                "cwd": self._cwd,
+                "allowed_tools": self._allowed_tools,
+                "permission_mode": self._permission_mode,
+                "model": self._model,
+                "resume": self._session_id,
+                "fork_session": self._fork_session,
+                "env": {"CLAUDECODE": ""},
+            }
+            # Wire tool approval callback if we have one and aren't bypassing
+            if self._approval_callback and self._permission_mode != "bypassPermissions":
+                kwargs["can_use_tool"] = self._handle_tool_permission
+            opts = ClaudeAgentOptions(**kwargs)
             self._client = ClaudeSDKClient(options=opts)
             await self._client.connect()
             log.info(
@@ -167,6 +180,21 @@ class ClaudeSession:
                             if text:
                                 full_content_parts.append(text)
                                 yield StreamToken(text=text)
+                        elif isinstance(block, ToolUseBlock):
+                            yield StreamToolUse(
+                                tool_use_id=block.id,
+                                tool_name=block.name,
+                                tool_input=block.input,
+                            )
+                        elif isinstance(block, ToolResultBlock):
+                            content = block.content
+                            if isinstance(content, list):
+                                content = str(content)
+                            yield StreamToolResult(
+                                tool_use_id=block.tool_use_id,
+                                content=content,
+                                is_error=bool(block.is_error),
+                            )
 
                 elif isinstance(msg, ResultMessage):
                     # Capture the session ID from the SDK
@@ -222,6 +250,23 @@ class ClaudeSession:
                 self._client.set_model(model)
             except Exception:
                 pass
+
+    async def _handle_tool_permission(self, tool_name, tool_input, context):
+        """SDK callback — pauses execution until the TUI approves or denies."""
+        if self._approval_callback is None:
+            return PermissionResultAllow()
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        try:
+            await self._approval_callback(tool_name, tool_input, future)
+            result = await asyncio.wait_for(future, timeout=300)
+            return result
+        except asyncio.TimeoutError:
+            log.warning("Tool approval timed out for %s, auto-allowing", tool_name)
+            return PermissionResultAllow()
+        except Exception as exc:
+            log.error("Tool approval error: %s", exc)
+            return PermissionResultAllow()
 
     @property
     def session_id(self) -> str | None:
