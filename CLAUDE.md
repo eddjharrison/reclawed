@@ -62,6 +62,17 @@ WhatsApp-style TUI wrapping the `claude` CLI via the Agent SDK. Python 3.12 + Te
 - Room encryption keys are derived from a passphrase via PBKDF2 (not from the relay auth token)
 - Local encryption key is a random 32-byte file at `{data_dir}/local.key` — loaded once at app startup
 
+### Room Modes & Permissions
+
+- Room modes are **per-room and synchronized** via `room_mode` relay message type — all participants see the same mode
+- Four modes: `humans_only`, `claude_assists`, `full_auto`, `claude_to_claude`
+- Mode persisted on `Session.room_mode` — survives app restart and session switch
+- Server stores mode in `_room_modes` dict and includes it in presence updates for new joiners
+- Permission mode (`F5`) is **per-session** — each participant controls their own Claude's permissions independently
+- Permission switch works by stopping the `ClaudeSession`, removing it from pool, and creating a new one with `resume=session_id` + new `permission_mode`. Full context preserved.
+- `Session.permission_mode` persisted in DB — restored on switch and restart
+- Read receipts use `_pending_echo_ids` queue to map outgoing local message IDs to relay seq numbers via echo capture
+
 ### Workspaces
 
 - `Session.cwd` links sessions to project directories
@@ -93,5 +104,5 @@ WhatsApp-style TUI wrapping the `claude` CLI via the Agent SDK. Python 3.12 + Te
 - Relay integration tests are slow — run separately with `python -m pytest tests/ -v -k "relay"`
 - Daemon integration tests use `@pytest.mark.slow` — run with `-m slow`
 - Always run tests from the repo root with the venv activated
-- When creating StatusBar instances via `object.__new__()` in tests, include all `_` attributes (including `_encrypted`, `_workspace_name`)
+- When creating StatusBar instances via `object.__new__()` in tests, include all `_` attributes (including `_encrypted`, `_workspace_name`, `_permission_mode`)
 - When mocking ClaudeSession in tests, set `s._ready.set()` before calling `send_message`
