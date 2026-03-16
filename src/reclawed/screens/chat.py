@@ -1317,6 +1317,66 @@ class ChatScreen(Screen):
         except Exception:
             pass
 
+    def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
+        """Show @mention participant picker."""
+        event.stop()
+        if not self.session.is_group or self._relay_client is None:
+            return
+        participants = self._relay_client.participants
+        if not participants:
+            return
+        # Build name list (exclude self)
+        names = [
+            p.get("participant_name", "Unknown")
+            for p in participants
+            if p.get("participant_id") != self._relay_client._participant_id
+        ]
+        if not names:
+            return
+        # Use a simple selection via notification + compose for now
+        # If only one other participant, auto-insert
+        compose = self.query_one("#compose-area", ComposeArea)
+        if len(names) == 1:
+            compose.insert_mention(names[0])
+        else:
+            # Show a quick picker
+            from reclawed.screens.search import SessionPickerScreen
+            # Reuse a simple approach: push a quick selection
+            def _on_pick(name: str | None) -> None:
+                if name:
+                    compose.insert_mention(name)
+
+            from textual.screen import ModalScreen
+            from textual.widgets import Label, ListView, ListItem
+            from textual.app import ComposeResult as CR
+            from textual.binding import Binding as B
+
+            class _MentionPicker(ModalScreen[str | None]):
+                DEFAULT_CSS = """
+                _MentionPicker { align: center middle; }
+                _MentionPicker > #picker { width: 40; height: auto; max-height: 12;
+                    border: thick $primary; background: $surface; padding: 1; }
+                """
+                BINDINGS = [B("escape", "cancel", priority=True)]
+
+                def compose(self) -> CR:
+                    from textual.containers import Vertical
+                    with Vertical(id="picker"):
+                        yield Label("@mention who?")
+                        yield ListView(
+                            *[ListItem(Label(n), id=f"m-{i}") for i, n in enumerate(names)]
+                        )
+
+                def on_list_view_selected(self, event) -> None:
+                    idx = event.list_view.index
+                    if idx is not None and 0 <= idx < len(names):
+                        self.dismiss(names[idx])
+
+                def action_cancel(self) -> None:
+                    self.dismiss(None)
+
+            self.app.push_screen(_MentionPicker(), _on_pick)
+
     def on_compose_area_typing_started(self, event: ComposeArea.TypingStarted) -> None:
         """Send typing indicator when user types in group chat."""
         if self.session.is_group and self._relay_client is not None:

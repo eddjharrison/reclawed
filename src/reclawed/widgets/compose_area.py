@@ -16,6 +16,9 @@ class ComposeInput(TextArea):
     class SendRequested(TMessage):
         """Posted when user presses Enter (without modifiers)."""
 
+    class MentionRequested(TMessage):
+        """Posted when user types @ to trigger mention autocomplete."""
+
     def _on_key(self, event: Key) -> None:
         if event.key == "enter":
             event.prevent_default()
@@ -25,6 +28,9 @@ class ComposeInput(TextArea):
             event.prevent_default()
             event.stop()
             self.insert("\n")
+        elif event.key == "at":
+            # Let the @ character be inserted, then request mention autocomplete
+            self.call_later(lambda: self.post_message(self.MentionRequested()))
 
 
 class ComposeArea(Horizontal):
@@ -65,9 +71,13 @@ class ComposeArea(Horizontal):
     class TypingStarted(TMessage):
         """Posted when the user types in the compose area."""
 
+    class MentionTriggered(TMessage):
+        """Posted when @mention autocomplete is needed."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._editing_message_id: str | None = None
+        self._participants: list[str] = []  # participant names for @mention
 
     def compose(self) -> ComposeResult:
         yield ComposeInput(id="compose-input")
@@ -86,6 +96,22 @@ class ComposeArea(Horizontal):
     def on_text_area_changed(self, event) -> None:
         """Post TypingStarted on any text change."""
         self.post_message(self.TypingStarted())
+
+    def on_compose_input_mention_requested(self, event: ComposeInput.MentionRequested) -> None:
+        """Forward mention request to ChatScreen."""
+        event.stop()
+        if self._participants:
+            self.post_message(self.MentionTriggered())
+
+    def set_participants(self, names: list[str]) -> None:
+        """Set the list of participant names for @mention autocomplete."""
+        self._participants = names
+
+    def insert_mention(self, name: str) -> None:
+        """Insert a @mention at the current cursor position."""
+        ta = self.query_one("#compose-input", ComposeInput)
+        ta.insert(f"{name} ")
+        ta.focus()
 
     def _submit(self) -> None:
         ta = self.query_one("#compose-input", ComposeInput)
