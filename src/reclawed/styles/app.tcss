@@ -43,7 +43,6 @@ Footer {
     width: 100%;
     height: auto;
     max-height: 3;
-    dock: bottom;
 }
 
 #compose-area {
@@ -51,14 +50,14 @@ Footer {
     height: auto;
     min-height: 3;
     max-height: 10;
-    dock: bottom;
     padding: 0 1;
     background: $panel;
 }
 
 #status-bar {
-    dock: bottom;
+    width: 100%;
     height: 1;
+    min-height: 1;
 }
 
 /* Message bubbles */
