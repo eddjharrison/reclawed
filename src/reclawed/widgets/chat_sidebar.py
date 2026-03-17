@@ -233,6 +233,7 @@ class ChatSidebar(Vertical):
                 workspace_name="Default",
                 cwd=None,
                 collapsed=not has_active,
+                color="white",
             )
             chat_list.mount(section)
             container = section.items_container

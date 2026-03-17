@@ -63,7 +63,8 @@ class WorkspaceSection(Vertical):
         color: $accent;
     }
     WorkspaceSection .ws-add {
-        width: 3;
+        width: 4;
+        min-width: 4;
         height: 1;
         color: $text-muted;
     }
@@ -72,7 +73,8 @@ class WorkspaceSection(Vertical):
         text-style: bold;
     }
     WorkspaceSection .ws-refresh {
-        width: 3;
+        width: 4;
+        min-width: 4;
         height: 1;
         color: $text-muted;
     }
