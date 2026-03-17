@@ -103,7 +103,7 @@ class StatusBar(Static):
     StatusBar {
         width: 100%;
         height: 1;
-        background: $surface-darken-1;
+        background: $panel;
         color: $text;
         padding: 0 1;
     }
