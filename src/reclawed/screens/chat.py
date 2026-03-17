@@ -929,22 +929,26 @@ class ChatScreen(Screen):
         """Shared logic for generating a session name via haiku.
 
         Returns the generated name, or None if generation failed.
+        Uses --output-format text and suppresses stderr to prevent
+        ANSI escape code leakage into the terminal/compose area.
         """
-        from reclawed.claude import ClaudeProcess, StreamResult as SR
-
         naming_prompt = (
             "Your ONLY job: output a 3-5 word title for this chat. "
             "Output NOTHING else. No quotes. No explanation. Just the title.\n\n"
             f"{context}\n\n"
             "Title:"
         )
-        claude = ClaudeProcess(self.config.claude_binary)
-        generated_name: str | None = None
-        # No session_id — fresh subprocess, no prior context
-        async for ev in claude.send_message(naming_prompt, model="haiku"):
-            if isinstance(ev, SR):
-                generated_name = ev.content
-                break
+        # Use a direct subprocess with text output and stderr suppressed
+        # to avoid ANSI escape codes leaking into the terminal
+        proc = await asyncio.create_subprocess_exec(
+            self.config.claude_binary, "-p", naming_prompt,
+            "--output-format", "text",
+            "--model", "haiku",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        generated_name = stdout.decode("utf-8", errors="replace").strip() if stdout else None
 
         if not generated_name:
             return None
