@@ -1058,29 +1058,11 @@ class ChatScreen(Screen):
                         if event.tool_name == "AskUserQuestion":
                             questions = event.tool_input.get("questions", [])
                             if questions:
-                                from reclawed.widgets.choice_buttons import ChoiceButtons
-                                from textual.widgets import Label
-                                for q in questions:
-                                    q_text = q.get("question", "")
-                                    header = q.get("header", "")
-                                    options = q.get("options", [])
-                                    # Show question text above choices
-                                    if q_text:
-                                        display = f"[bold]{header}:[/bold] {q_text}" if header else q_text
-                                        try:
-                                            await bubble.mount(Label(display, markup=True))
-                                        except Exception:
-                                            pass
-                                    if options:
-                                        choices = []
-                                        for i, opt in enumerate(options):
-                                            label = opt.get("label", str(i + 1)) if isinstance(opt, dict) else str(opt)
-                                            desc = opt.get("description", "") if isinstance(opt, dict) else ""
-                                            choices.append((label, desc))
-                                        try:
-                                            await bubble.mount(ChoiceButtons(choices))
-                                        except Exception:
-                                            pass
+                                from reclawed.widgets.ask_user_question import AskUserQuestionWidget
+                                try:
+                                    await bubble.mount(AskUserQuestionWidget(questions))
+                                except Exception:
+                                    pass
                         msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamToolResult):
@@ -1480,8 +1462,12 @@ class ChatScreen(Screen):
     def on_choice_buttons_selected(self, event) -> None:
         """Handle choice button click — auto-submit the selection."""
         event.stop()
-        # Simulate sending the choice as a message
         self.post_message(ComposeArea.Submitted(f"Option {event.label}: {event.description}"))
+
+    def on_ask_user_question_widget_submitted(self, event) -> None:
+        """Handle AskUserQuestion form submission — send all answers."""
+        event.stop()
+        self.post_message(ComposeArea.Submitted(event.answers))
 
     def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
         """Show @mention participant picker."""
