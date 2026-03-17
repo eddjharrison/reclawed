@@ -233,13 +233,16 @@ class MessageBubble(Vertical):
             if detect_question(content):
                 self.add_class("has-question")
 
-            choices = detect_choices(content)
-            if choices:
-                try:
-                    await self.mount(ChoiceButtons(choices))
-                except Exception as e:
-                    import logging
-                    logging.getLogger("reclawed").warning(f"ChoiceButtons mount failed: {e}")
+            # Skip ChoiceButtons if AskUserQuestionWidget is already mounted
+            from reclawed.widgets.ask_user_question import AskUserQuestionWidget
+            has_auq = bool(self.query(AskUserQuestionWidget))
+            if not has_auq:
+                choices = detect_choices(content)
+                if choices:
+                    try:
+                        await self.mount(ChoiceButtons(choices))
+                    except Exception:
+                        pass
 
     def add_tool_use(self, tool_use_id: str, tool_name: str, tool_input: dict) -> None:
         """Mount a tool activity widget showing an in-progress tool call."""
