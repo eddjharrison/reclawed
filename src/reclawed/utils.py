@@ -141,6 +141,35 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
     return choices if len(choices) >= 2 else []
 
 
+_WORKER_PROPOSAL_PATTERN = re.compile(
+    r'^\{\{WORKER\s+task="([^"]+)"(?:\s+model="([^"]*)")?(?:\s+permissions="([^"]*)")?\s*\}\}$',
+    re.MULTILINE,
+)
+
+
+def detect_worker_proposals(text: str) -> list[dict]:
+    """Detect ``{{WORKER ...}}`` spawn proposals in orchestrator response text.
+
+    Uses double curly braces to avoid conflicts with Rich markup (which uses
+    square brackets).
+
+    Returns a list of dicts, e.g.::
+
+        [{"task": "Implement auth", "model": "sonnet", "permission_mode": "bypassPermissions"}]
+
+    Model defaults to ``"sonnet"`` and permission_mode defaults to
+    ``"bypassPermissions"`` when omitted.
+    """
+    proposals: list[dict] = []
+    for m in _WORKER_PROPOSAL_PATTERN.finditer(text):
+        proposals.append({
+            "task": m.group(1).strip(),
+            "model": m.group(2) or "sonnet",
+            "permission_mode": m.group(3) or "bypassPermissions",
+        })
+    return proposals
+
+
 # ---------------------------------------------------------------------------
 # Image / attachment helpers
 # ---------------------------------------------------------------------------

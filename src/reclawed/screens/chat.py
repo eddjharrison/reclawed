@@ -54,6 +54,7 @@ class ChatScreen(Screen):
         Binding("f3", "cycle_respond_mode", "Respond mode", show=True, key_display="F3", priority=True),
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
+        Binding("f7", "toggle_orchestrator", "Orchestrator", show=True, key_display="F7", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -280,6 +281,7 @@ class ChatScreen(Screen):
             workspace_color=workspace_color,
             permission_mode=self._selected_permission,
             cwd=self.session.cwd,
+            orchestrator_mode=self.session.session_type == "orchestrator",
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
         # Restore context gauge from persisted value
@@ -347,10 +349,14 @@ class ChatScreen(Screen):
                 compose.query_one("#compose-input").focus()
                 return
 
-        # Build prompt with optional group context preamble
+        # Build prompt with optional context preamble
         prompt = event.text
         if self.session.is_group:
             preamble = self._build_group_context_preamble()
+            if preamble:
+                prompt = preamble + "\n\n" + prompt
+        elif self.session.session_type == "orchestrator":
+            preamble = self._build_orchestrator_preamble()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
 
@@ -1199,7 +1205,10 @@ class ChatScreen(Screen):
                             tokens=final_tokens, elapsed=final_elapsed, active=True
                         )
                         if bubble:
-                            await bubble.finalize_content(assistant_msg.content)
+                            await bubble.finalize_content(
+                                assistant_msg.content,
+                                session_type=stream_session.session_type,
+                            )
                             msg_list.scroll_end(animate=False)
                     else:
                         # Background session got a response — bump unread
@@ -1420,6 +1429,10 @@ class ChatScreen(Screen):
             preamble = self._build_group_context_preamble()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
+        elif self.session.session_type == "orchestrator":
+            preamble = self._build_orchestrator_preamble()
+            if preamble:
+                prompt = preamble + "\n\n" + prompt
 
         claude_name = f"{self.config.participant_name}'s Claude" if self.session.is_group else None
         assistant_msg = Message(
@@ -1534,6 +1547,14 @@ class ChatScreen(Screen):
         """Handle AskUserQuestion form submission — send all answers."""
         event.stop()
         self.post_message(ComposeArea.Submitted(event.answers))
+
+    def on_spawn_proposals_widget_spawn_requested(self, event) -> None:
+        """Handle spawn proposal approval — create workers for each proposal."""
+        event.stop()
+        for params in event.proposals:
+            asyncio.create_task(
+                self._create_and_start_worker(event.orchestrator_session_id, params)
+            )
 
     def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
         """Show @mention participant picker."""
@@ -1693,6 +1714,496 @@ class ChatScreen(Screen):
             lines.append(f"{name}: {content}")
         return "\n".join(lines)
 
+    # --- Orchestrator / worker sessions ---
+
+    def _spawn_worker(self, orchestrator_session_id: str) -> None:
+        """Open the spawn worker modal for the given session."""
+        from reclawed.screens.spawn_worker import SpawnWorkerScreen
+
+        def on_result(result: dict | None) -> None:
+            if result is None:
+                return
+            asyncio.create_task(
+                self._create_and_start_worker(orchestrator_session_id, result)
+            )
+
+        self.app.push_screen(SpawnWorkerScreen(), on_result)
+
+    async def _create_and_start_worker(
+        self, orchestrator_session_id: str, params: dict
+    ) -> None:
+        """Create a worker session and start it streaming."""
+        orchestrator = self.store.get_session(orchestrator_session_id)
+        if not orchestrator:
+            return
+
+        # Auto-promote parent to orchestrator on first worker spawn
+        if orchestrator.session_type != "orchestrator":
+            orchestrator.session_type = "orchestrator"
+            self.store.update_session(orchestrator)
+            if self.session.id == orchestrator.id:
+                self.session.session_type = "orchestrator"
+
+        # Create child session
+        worker = Session(
+            name=f"Worker: {params['task'][:30]}",
+            parent_session_id=orchestrator.id,
+            session_type="worker",
+            worker_status="running",
+            cwd=orchestrator.cwd,
+            model=params["model"],
+            permission_mode=params["permission_mode"],
+        )
+        self.store.create_session(worker)
+
+        # Create a ClaudeSession for the worker — fork from orchestrator's context
+        worker_claude = ClaudeSession(
+            cli_path=self.config.claude_binary,
+            session_id=orchestrator.claude_session_id,
+            fork_session=bool(orchestrator.claude_session_id),
+            model=params["model"],
+            cwd=orchestrator.cwd,
+            permission_mode=params["permission_mode"],
+            allowed_tools=self._effective_allowed_tools(orchestrator.cwd),
+        )
+        self._claude_sessions[worker.id] = worker_claude
+        asyncio.create_task(worker_claude.start())
+
+        # Inject task prompt (send_message waits for session to be ready)
+        task_prompt = (
+            "You are a worker session spawned by an orchestrator. "
+            f"Your task: {params['task']}\n\n"
+            "Work autonomously to complete this task. When done, write a clear "
+            "summary of what you accomplished, files changed, and any issues found."
+        )
+
+        # Create user message for the task prompt
+        user_msg = Message(
+            role="user",
+            content=task_prompt,
+            session_id=worker.id,
+        )
+        self.store.add_message(user_msg)
+
+        # Create placeholder assistant message
+        assistant_msg = Message(
+            role="assistant",
+            content="...",
+            session_id=worker.id,
+        )
+        self.store.add_message(assistant_msg)
+
+        # Context swap: temporarily set self.session and self._claude to worker
+        # so _stream_response captures the right context, then restore.
+        prev_session = self.session
+        prev_claude = self._claude
+        self.session = worker
+        self._claude = worker_claude
+
+        # If the active view is the worker, show messages
+        msg_list = self.query_one("#message-list", MessageList)
+        if prev_session.id == orchestrator.id:
+            # Stay on orchestrator view — worker streams in background
+            self.session = prev_session
+            self._claude = prev_claude
+            # Stream in background (worker context captured in closure)
+            self._stream_worker_response(
+                worker, worker_claude, task_prompt, assistant_msg,
+            )
+        else:
+            self.session = prev_session
+            self._claude = prev_claude
+            self._stream_worker_response(
+                worker, worker_claude, task_prompt, assistant_msg,
+            )
+
+        self.notify(f"Worker spawned: {worker.name}", timeout=3)
+        self._refresh_sidebar()
+
+    @work(thread=False)
+    async def _stream_worker_response(
+        self,
+        worker_session: Session,
+        worker_claude: ClaudeSession,
+        prompt: str,
+        assistant_msg: Message,
+    ) -> None:
+        """Stream a worker's response in the background."""
+        content_parts: list[str] = []
+
+        def _is_active() -> bool:
+            return self.session.id == worker_session.id
+
+        msg_list = self.query_one("#message-list", MessageList)
+        bubble = msg_list.get_bubble(assistant_msg.id) if _is_active() else None
+
+        try:
+            async for event in worker_claude.send_message(
+                prompt,
+                session_id=worker_session.claude_session_id,
+                model=worker_session.model,
+            ):
+                if isinstance(event, StreamSessionId):
+                    worker_session.claude_session_id = event.session_id
+                    assistant_msg.claude_session_id = event.session_id
+                    self.store.update_session(worker_session)
+
+                elif isinstance(event, StreamToken):
+                    content_parts.append(event.text)
+                    if _is_active() and bubble:
+                        bubble.update_content("".join(content_parts))
+                        msg_list.scroll_end(animate=False)
+
+                elif isinstance(event, StreamResult):
+                    assistant_msg.content = event.content or "".join(content_parts)
+                    assistant_msg.cost_usd = event.cost_usd
+                    assistant_msg.duration_ms = event.duration_ms
+                    assistant_msg.model = event.model
+                    assistant_msg.input_tokens = event.input_tokens
+                    assistant_msg.output_tokens = event.output_tokens
+                    if event.session_id:
+                        assistant_msg.claude_session_id = event.session_id
+                        worker_session.claude_session_id = event.session_id
+
+                    self.store.update_message(assistant_msg)
+
+                    if event.cost_usd:
+                        worker_session.total_cost_usd += event.cost_usd
+                    if event.model:
+                        worker_session.model = event.model
+                    worker_session.message_count = len(
+                        self.store.get_session_messages(worker_session.id)
+                    )
+                    self.store.update_session(worker_session)
+
+                    if _is_active() and bubble:
+                        await bubble.finalize_content(assistant_msg.content)
+                        msg_list.scroll_end(animate=False)
+                    else:
+                        self.store.increment_unread(worker_session.id)
+
+                    self._refresh_sidebar()
+
+                elif isinstance(event, StreamError):
+                    assistant_msg.content = f"Error: {event.message}"
+                    self.store.update_message(assistant_msg)
+                    if _is_active() and bubble:
+                        await bubble.finalize_content(assistant_msg.content)
+
+        except Exception as e:
+            assistant_msg.content = f"Error: {e}"
+            self.store.update_message(assistant_msg)
+
+        # Auto-mark worker complete and notify orchestrator
+        if worker_session.worker_status == "running":
+            worker_session.worker_status = "complete"
+            self.store.update_session(worker_session)
+            self._refresh_sidebar()
+            # Generate summary and notify orchestrator
+            self._auto_complete_worker(worker_session.id)
+        else:
+            self._refresh_sidebar()
+
+    def _mark_worker_complete(self, session_id: str) -> None:
+        """Mark a worker session as complete and generate a summary."""
+        session = self.store.get_session(session_id)
+        if not session or session.worker_status == "complete":
+            return
+
+        session.worker_status = "complete"
+        self.store.update_session(session)
+        if self.session.id == session_id:
+            self.session.worker_status = "complete"
+
+        self._refresh_sidebar()
+        self.notify(f"Worker marked complete: {session.name}", timeout=3)
+
+        # Generate summary in background
+        self._generate_worker_summary(session_id)
+
+    @work(thread=False)
+    async def _generate_worker_summary(self, worker_session_id: str) -> None:
+        """Generate a haiku summary for a completed worker session."""
+        messages = self.store.get_session_messages(worker_session_id)
+        if not messages:
+            return
+
+        # Collect last 10 messages for context
+        recent = [m for m in messages if not m.deleted][-10:]
+        context_parts: list[str] = []
+        for msg in recent:
+            role = "Human" if msg.role == "user" else "Claude"
+            text = msg.content[:300] if msg.content else ""
+            context_parts.append(f"{role}: {text}")
+        context = "\n".join(context_parts)
+
+        summary_prompt = (
+            "Summarize this worker session's output in 2-3 sentences. "
+            "Include what was done, files changed, and any issues found. "
+            "Output NOTHING else — just the summary.\n\n"
+            f"{context}\n\n"
+            "Summary:"
+        )
+
+        import os, sys, subprocess as _sp
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        _flags = {"creationflags": _sp.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+        proc = await asyncio.create_subprocess_exec(
+            self.config.claude_binary, "-p", summary_prompt,
+            "--output-format", "text",
+            "--model", "haiku",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+            **_flags,
+        )
+        stdout, _ = await proc.communicate()
+        summary = stdout.decode("utf-8", errors="replace").strip() if stdout else None
+
+        if not summary:
+            return
+
+        # Clean up the summary
+        summary = summary.strip().strip('"\'').strip()
+        summary = summary.split("\n")[0].strip()  # First paragraph only
+        if len(summary) > 200:
+            summary = summary[:200] + "..."
+
+        worker = self.store.get_session(worker_session_id)
+        if not worker:
+            return
+
+        worker.worker_summary = summary
+        self.store.update_session(worker)
+
+        if self.session.id == worker_session_id:
+            self.session.worker_summary = summary
+
+        self._refresh_sidebar()
+
+        # Notify the orchestrator that this worker completed
+        if worker and worker.parent_session_id:
+            self._notify_orchestrator(worker)
+
+    # Maximum workers per orchestrator to prevent runaway spawning
+    MAX_WORKERS_PER_ORCHESTRATOR = 10
+
+    def _notify_orchestrator(self, worker: Session) -> None:
+        """Inject a completion notification and auto-trigger orchestrator response."""
+        if not worker.parent_session_id:
+            return
+
+        summary_text = worker.worker_summary or "No summary available"
+        cost = f"${worker.total_cost_usd:.2f}" if worker.total_cost_usd else "$0.00"
+        notification = (
+            f"\u2713 Worker \"{worker.name}\" completed ({cost}): {summary_text}"
+        )
+
+        # Add as a system-style user message to the orchestrator
+        notify_msg = Message(
+            role="user",
+            content=notification,
+            session_id=worker.parent_session_id,
+            sender_name="System",
+            sender_type="system",
+        )
+        self.store.add_message(notify_msg)
+
+        # If the orchestrator is currently active, show the message in the UI
+        if self.session.id == worker.parent_session_id:
+            msg_list = self.query_one("#message-list", MessageList)
+
+            async def _show():
+                await msg_list.add_message(notify_msg)
+                msg_list.scroll_end(animate=False)
+
+            self.app.call_later(_show)
+        else:
+            # Bump unread on the orchestrator so the user knows
+            self.store.increment_unread(worker.parent_session_id)
+
+        self._refresh_sidebar()
+
+        # Auto-trigger orchestrator to respond to the completion
+        asyncio.create_task(
+            self._orchestrator_auto_respond(worker.parent_session_id, notification)
+        )
+
+    async def _orchestrator_auto_respond(
+        self, orchestrator_session_id: str, notification: str,
+    ) -> None:
+        """Auto-trigger the orchestrator Claude to respond to a worker completion."""
+        orchestrator = self.store.get_session(orchestrator_session_id)
+        if not orchestrator or orchestrator.session_type != "orchestrator":
+            return
+
+        # Look up the pooled ClaudeSession for this orchestrator
+        orch_claude = self._claude_sessions.get(orchestrator_session_id)
+        if orch_claude is None:
+            return
+
+        # Build prompt with orchestrator preamble + notification
+        # Temporarily swap session context to build the preamble
+        prev_session = self.session
+        self.session = orchestrator
+        preamble = self._build_orchestrator_preamble()
+        self.session = prev_session
+
+        prompt = notification
+        if preamble:
+            prompt = preamble + "\n\n" + notification
+
+        # Create assistant placeholder
+        assistant_msg = Message(
+            role="assistant",
+            content="...",
+            session_id=orchestrator_session_id,
+        )
+        self.store.add_message(assistant_msg)
+
+        # If orchestrator is the active session, show in UI
+        is_active = self.session.id == orchestrator_session_id
+        if is_active:
+            try:
+                msg_list = self.query_one("#message-list", MessageList)
+                await msg_list.add_message(assistant_msg)
+            except Exception:
+                pass
+
+        # Stream the response
+        content_parts: list[str] = []
+        msg_list = self.query_one("#message-list", MessageList)
+        bubble = msg_list.get_bubble(assistant_msg.id) if is_active else None
+
+        try:
+            async for event in orch_claude.send_message(
+                prompt,
+                session_id=orchestrator.claude_session_id,
+                model=orchestrator.model,
+            ):
+                if isinstance(event, StreamSessionId):
+                    orchestrator.claude_session_id = event.session_id
+                    assistant_msg.claude_session_id = event.session_id
+                    self.store.update_session(orchestrator)
+
+                elif isinstance(event, StreamToken):
+                    content_parts.append(event.text)
+                    if is_active and bubble:
+                        bubble.update_content("".join(content_parts))
+                        msg_list.scroll_end(animate=False)
+
+                elif isinstance(event, StreamResult):
+                    assistant_msg.content = event.content or "".join(content_parts)
+                    assistant_msg.cost_usd = event.cost_usd
+                    assistant_msg.duration_ms = event.duration_ms
+                    assistant_msg.model = event.model
+                    assistant_msg.input_tokens = event.input_tokens
+                    assistant_msg.output_tokens = event.output_tokens
+                    if event.session_id:
+                        assistant_msg.claude_session_id = event.session_id
+                        orchestrator.claude_session_id = event.session_id
+
+                    self.store.update_message(assistant_msg)
+
+                    if event.cost_usd:
+                        orchestrator.total_cost_usd += event.cost_usd
+                    if event.model:
+                        orchestrator.model = event.model
+                    orchestrator.message_count = len(
+                        self.store.get_session_messages(orchestrator.id)
+                    )
+                    self.store.update_session(orchestrator)
+
+                    if is_active and bubble:
+                        await bubble.finalize_content(
+                            assistant_msg.content,
+                            session_type="orchestrator",
+                        )
+                        msg_list.scroll_end(animate=False)
+                    else:
+                        self.store.increment_unread(orchestrator.id)
+
+                    # Auto-spawn workers if bypass mode
+                    self._auto_spawn_if_bypass(
+                        orchestrator, assistant_msg.content,
+                    )
+
+                    self._refresh_sidebar()
+
+                elif isinstance(event, StreamError):
+                    assistant_msg.content = f"Error: {event.message}"
+                    self.store.update_message(assistant_msg)
+                    if is_active and bubble:
+                        await bubble.finalize_content(assistant_msg.content)
+
+        except Exception as e:
+            assistant_msg.content = f"Error: {e}"
+            self.store.update_message(assistant_msg)
+
+        self._refresh_sidebar()
+
+    def _auto_spawn_if_bypass(
+        self, orchestrator: Session, response_content: str,
+    ) -> None:
+        """If orchestrator is in bypassPermissions, auto-spawn proposed workers."""
+        if orchestrator.permission_mode != "bypassPermissions":
+            return
+
+        from reclawed.utils import detect_worker_proposals
+        proposals = detect_worker_proposals(response_content)
+        if not proposals:
+            return
+
+        # Safety cap: check how many workers already exist
+        existing = self.store.get_worker_sessions(orchestrator.id)
+        remaining = self.MAX_WORKERS_PER_ORCHESTRATOR - len(existing)
+        if remaining <= 0:
+            self.notify(
+                f"Worker cap reached ({self.MAX_WORKERS_PER_ORCHESTRATOR}) — "
+                "skipping auto-spawn. Mark workers complete or archive old ones.",
+                severity="warning", timeout=5,
+            )
+            return
+
+        # Only spawn up to the remaining capacity
+        to_spawn = proposals[:remaining]
+        for params in to_spawn:
+            asyncio.create_task(
+                self._create_and_start_worker(orchestrator.id, params)
+            )
+
+    def _build_orchestrator_preamble(self) -> str:
+        """Build a context preamble showing worker status and delegation instructions."""
+        lines: list[str] = []
+
+        workers = self.store.get_worker_sessions(self.session.id)
+        if workers:
+            lines.append("[Orchestrator context — you are managing workers:]")
+            for w in workers:
+                status_icon = "\u2713" if w.worker_status == "complete" else "\u27f3"
+                if w.worker_summary:
+                    lines.append(f'{status_icon} Worker "{w.name}": {w.worker_summary}')
+                else:
+                    msg_count = w.message_count
+                    cost = f"${w.total_cost_usd:.2f}" if w.total_cost_usd else "$0.00"
+                    status_text = "Complete" if w.worker_status == "complete" else "In progress"
+                    lines.append(
+                        f'{status_icon} Worker "{w.name}": {status_text} '
+                        f'({msg_count} messages, {cost})'
+                    )
+            lines.append("")
+
+        # Delegation instructions — always present for orchestrator sessions
+        lines.append("[Delegation — you can propose spawning workers:]")
+        lines.append("To delegate parallel tasks, include lines in this exact format:")
+        lines.append('{{WORKER task="description of the task" model="sonnet" permissions="bypassPermissions"}}')
+        lines.append("The user will see buttons to approve spawning. "
+                      "Models: sonnet, opus, haiku. Permissions: default, acceptEdits, bypassPermissions.")
+
+        return "\n".join(lines)
+
     def action_search(self) -> None:
         if self._compose_focused:
             return
@@ -1795,6 +2306,24 @@ class ChatScreen(Screen):
 
         self.app.call_later(_restart)
 
+    def action_toggle_orchestrator(self) -> None:
+        """Toggle orchestrator mode for the current session (F7)."""
+        if self.session.session_type == "worker":
+            self.notify("Cannot toggle orchestrator mode on a worker session", severity="warning", timeout=3)
+            return
+
+        if self.session.session_type == "orchestrator":
+            self.session.session_type = None
+            self.store.update_session(self.session)
+            self._update_status()
+            self.notify("Orchestrator mode disabled", timeout=2)
+        else:
+            self.session.session_type = "orchestrator"
+            self.store.update_session(self.session)
+            self._update_status()
+            self.notify("Orchestrator mode enabled — Claude can now propose workers", timeout=3)
+        self._refresh_sidebar()
+
     def action_cycle_respond_mode(self) -> None:
         """Cycle through room modes (F3). Broadcasts to all participants."""
         current = self._group_respond_mode
@@ -1893,7 +2422,8 @@ class ChatScreen(Screen):
         from reclawed.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
             ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
-            ACTION_PIN, ACTION_UNPIN,
+            ACTION_PIN, ACTION_UNPIN, ACTION_SPAWN_WORKER, ACTION_MARK_WORKER_COMPLETE,
+            ACTION_ENABLE_ORCHESTRATOR,
         )
 
         def on_result(result: tuple[str, str] | None) -> None:
@@ -1936,11 +2466,31 @@ class ChatScreen(Screen):
             elif action == ACTION_UNPIN:
                 session.pinned = False
                 self.store.update_session(session)
+            elif action == ACTION_ENABLE_ORCHESTRATOR:
+                session.session_type = "orchestrator"
+                self.store.update_session(session)
+                if session.id == self.session.id:
+                    self.session.session_type = "orchestrator"
+                self.notify("Orchestrator mode enabled — Claude can now propose workers", timeout=3)
+            elif action == ACTION_SPAWN_WORKER:
+                self._spawn_worker(session_id)
+                return  # Modal handles refresh
+            elif action == ACTION_MARK_WORKER_COMPLETE:
+                self._mark_worker_complete(session_id)
+                return  # Worker handles refresh
 
             self._refresh_sidebar()
 
+        # Look up session to pass type info to context menu
+        ctx_session = self.store.get_session(event.session_id)
         self.app.push_screen(
-            ContextMenu(event.session_id, is_muted=event.is_muted, is_pinned=event.is_pinned),
+            ContextMenu(
+                event.session_id,
+                is_muted=event.is_muted,
+                is_pinned=event.is_pinned,
+                session_type=ctx_session.session_type if ctx_session else None,
+                worker_status=ctx_session.worker_status if ctx_session else None,
+            ),
             on_result,
         )
 

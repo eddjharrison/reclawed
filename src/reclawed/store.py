@@ -96,6 +96,11 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             # Message attachments (JSON)
             "ALTER TABLE messages ADD COLUMN attachments TEXT",
+            # Orchestrator / worker sessions
+            "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT",
+            "ALTER TABLE sessions ADD COLUMN session_type TEXT",
+            "ALTER TABLE sessions ADD COLUMN worker_status TEXT",
+            "ALTER TABLE sessions ADD COLUMN worker_summary TEXT",
         ]
         for sql in migrations:
             try:
@@ -115,8 +120,9 @@ class Store:
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
             "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, "
-            "cwd, room_mode, permission_mode, last_input_tokens, pinned) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cwd, room_mode, permission_mode, last_input_tokens, pinned, "
+            "parent_session_id, session_type, worker_status, worker_summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
@@ -124,7 +130,8 @@ class Store:
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
              session.room_mode, session.permission_mode, session.last_input_tokens,
-             int(session.pinned)),
+             int(session.pinned), session.parent_session_id, session.session_type,
+             session.worker_status, session.worker_summary),
         )
         self._conn.commit()
         return session
@@ -153,14 +160,17 @@ class Store:
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
             "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=?, "
-            "last_input_tokens=?, pinned=? WHERE id=?",
+            "last_input_tokens=?, pinned=?, parent_session_id=?, session_type=?, "
+            "worker_status=?, worker_summary=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
              session.room_mode, session.permission_mode,
-             session.last_input_tokens, int(session.pinned), session.id),
+             session.last_input_tokens, int(session.pinned),
+             session.parent_session_id, session.session_type,
+             session.worker_status, session.worker_summary, session.id),
         )
         self._conn.commit()
 
@@ -193,6 +203,15 @@ class Store:
             (claude_session_id,),
         ).fetchone()
         return row is not None
+
+    def get_worker_sessions(self, parent_id: str) -> list[Session]:
+        """Return non-archived worker sessions for the given orchestrator, ordered by created_at ASC."""
+        rows = self._conn.execute(
+            "SELECT * FROM sessions WHERE parent_session_id = ? AND archived = 0 "
+            "ORDER BY created_at ASC",
+            (parent_id,),
+        ).fetchall()
+        return [self._row_to_session(r) for r in rows]
 
     def delete_session(self, session_id: str) -> None:
         self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -442,4 +461,8 @@ class Store:
             permission_mode=row["permission_mode"] if "permission_mode" in keys else None,
             last_input_tokens=row["last_input_tokens"] if "last_input_tokens" in keys else 0,
             pinned=bool(row["pinned"]) if "pinned" in keys else False,
+            parent_session_id=row["parent_session_id"] if "parent_session_id" in keys else None,
+            session_type=row["session_type"] if "session_type" in keys else None,
+            worker_status=row["worker_status"] if "worker_status" in keys else None,
+            worker_summary=row["worker_summary"] if "worker_summary" in keys else None,
         )

@@ -263,7 +263,9 @@ class MessageBubble(Vertical):
         if self._content_widget is not None:
             self._content_widget.display = False
 
-    async def finalize_content(self, content: str) -> None:
+    async def finalize_content(
+        self, content: str, session_type: str | None = None,
+    ) -> None:
         """Switch from streaming Static back to Markdown for final render."""
         self._message.content = content
         # Hide streaming widget, show Markdown with final content
@@ -286,6 +288,19 @@ class MessageBubble(Vertical):
                 if choices:
                     try:
                         await self.mount(ChoiceButtons(choices))
+                    except Exception:
+                        pass
+
+            # Detect worker spawn proposals (orchestrator sessions only)
+            if session_type == "orchestrator":
+                from reclawed.utils import detect_worker_proposals
+                from reclawed.widgets.spawn_proposals import SpawnProposalsWidget
+                proposals = detect_worker_proposals(content)
+                if proposals:
+                    try:
+                        await self.mount(SpawnProposalsWidget(
+                            proposals, self._message.session_id,
+                        ))
                     except Exception:
                         pass
 

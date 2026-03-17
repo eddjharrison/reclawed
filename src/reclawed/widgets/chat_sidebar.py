@@ -148,10 +148,11 @@ class ChatSidebar(Vertical):
             self._active_id = active_session_id
 
         all_sessions = self._store.list_sessions()
-        # Hide empty sessions (no messages) unless they're the active one
+        # Hide empty sessions (no messages) unless they're the active one or a worker
         self._sessions = [
             s for s in all_sessions
             if s.message_count > 0 or s.id == self._active_id
+            or s.session_type == "worker"
         ]
 
         # Build preview text for each session from its last message.
@@ -247,10 +248,43 @@ class ChatSidebar(Vertical):
 
     def _filtered_sessions(self) -> list[Session]:
         """Return sessions matching the current search query (case-insensitive)."""
+        sessions = self._order_with_workers(self._sessions)
         if not self._search_query:
-            return list(self._sessions)
+            return sessions
         q = self._search_query
-        return [s for s in self._sessions if q in s.name.lower()]
+        return [s for s in sessions if q in s.name.lower()]
+
+    @staticmethod
+    def _order_with_workers(sessions: list[Session]) -> list[Session]:
+        """Reorder sessions so workers appear directly after their orchestrator.
+
+        Non-worker sessions keep their original order (pinned DESC, updated_at DESC).
+        Workers are inserted after their parent, ordered by created_at ASC.
+        """
+        # Separate workers from non-workers
+        workers_by_parent: dict[str, list[Session]] = {}
+        non_workers: list[Session] = []
+        for s in sessions:
+            if s.session_type == "worker" and s.parent_session_id:
+                workers_by_parent.setdefault(s.parent_session_id, []).append(s)
+            else:
+                non_workers.append(s)
+
+        if not workers_by_parent:
+            return non_workers
+
+        # Sort each group of workers by created_at ASC
+        for parent_id in workers_by_parent:
+            workers_by_parent[parent_id].sort(key=lambda w: w.created_at)
+
+        # Insert workers after their parent
+        result: list[Session] = []
+        for s in non_workers:
+            result.append(s)
+            if s.id in workers_by_parent:
+                result.extend(workers_by_parent[s.id])
+
+        return result
 
     # ------------------------------------------------------------------
     # Event handlers

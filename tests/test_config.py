@@ -218,3 +218,82 @@ def test_config_save_local_mode_no_url(tmp_path):
     loaded = Config.load(config_path=config_file)
     assert loaded.relay_mode == "local"
     assert loaded.relay_url is None
+
+
+# --- Roundtrip tests for newly-exposed General tab fields ---
+
+
+def test_config_save_roundtrip_auto_name_sessions_true(tmp_path):
+    """auto_name_sessions=True round-trips through save/load."""
+    cfg = Config(auto_name_sessions=True)
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.auto_name_sessions is True
+
+
+def test_config_save_roundtrip_auto_name_sessions_false(tmp_path):
+    """auto_name_sessions=False round-trips through save/load."""
+    cfg = Config(auto_name_sessions=False)
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.auto_name_sessions is False
+
+
+def test_config_save_roundtrip_max_quote_length(tmp_path):
+    """max_quote_length round-trips through save/load."""
+    cfg = Config(max_quote_length=500)
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.max_quote_length == 500
+
+
+def test_config_save_roundtrip_max_quote_length_default(tmp_path):
+    """Default max_quote_length (200) round-trips through save/load."""
+    cfg = Config()
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.max_quote_length == 200
+
+
+def test_config_save_roundtrip_data_dir(tmp_path):
+    """data_dir round-trips through save/load."""
+    custom_dir = tmp_path / "custom" / "data"
+    cfg = Config(data_dir=custom_dir)
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.data_dir == custom_dir
+
+
+def test_config_save_roundtrip_workspace_overrides(tmp_path):
+    """Workspace per-workspace overrides (model, permission_mode, allowed_tools) round-trip."""
+    cfg = Config(workspaces=[
+        Workspace(
+            name="Backend",
+            path="/projects/backend",
+            model="opus",
+            permission_mode="bypassPermissions",
+            allowed_tools="Read,Edit,Bash",
+        ),
+        Workspace(
+            name="Frontend",
+            path="/projects/frontend",
+            # No overrides — should remain None after round-trip.
+        ),
+    ])
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert len(loaded.workspaces) == 2
+    backend = loaded.workspaces[0]
+    assert backend.model == "opus"
+    assert backend.permission_mode == "bypassPermissions"
+    assert backend.allowed_tools == "Read,Edit,Bash"
+    frontend = loaded.workspaces[1]
+    assert frontend.model is None
+    assert frontend.permission_mode is None
+    assert frontend.allowed_tools is None

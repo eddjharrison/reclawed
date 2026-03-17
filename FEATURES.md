@@ -21,7 +21,7 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Change display name** — via command palette
 - [x] **Config persistence** — Config.save() writes TOML back to disk
 - [ ] **Status message** — like WhatsApp "Hey there! I am using Re:Clawed"
-- [ ] **Full settings editor** — edit all config fields from the TUI (theme, model, relay, etc.)
+- [x] **Full settings editor** — edit all config fields from the TUI (theme, model, relay, etc.)
 
 ## Group Chat Infrastructure
 
@@ -119,12 +119,12 @@ Git for conversations — save checkpoints, branch from any point, explore diffe
 
 Hierarchical multi-session workflow — one Claude plans and delegates, child Claude instances execute specific tasks, results flow back up. Automates the common pattern of "architect Claude + implementation Claudes" across a sprint.
 
-- [ ] **Spawn worker from orchestrator** — orchestrator Claude (or user) triggers a new child session for a specific task. Child is forked from orchestrator with the task prompt injected. Appears nested under the parent in the sidebar
-- [ ] **Nested session tree** — worker sessions display as collapsible children under their orchestrator in the sidebar. Visual hierarchy: orchestrator → worker 1, worker 2, worker 3. Click to switch between them while others continue in background
-- [ ] **Worker autonomy** — workers can run in `bypassPermissions` mode independently. Orchestrator stays in `plan` or `acceptEdits` mode for oversight. Each worker has its own permission level
-- [ ] **Auto-summary on completion** — when a worker finishes (detects completion or user marks done), a summary (commit hashes, changes made, edge cases found) is auto-injected into the orchestrator's context. Keeps orchestrator clean and focused
+- [x] **Spawn worker from orchestrator** — orchestrator Claude (or user) triggers a new child session for a specific task. Child is forked from orchestrator with the task prompt injected. Appears nested under the parent in the sidebar
+- [x] **Nested session tree** — worker sessions display as collapsible children under their orchestrator in the sidebar. Visual hierarchy: orchestrator → worker 1, worker 2, worker 3. Click to switch between them while others continue in background
+- [x] **Worker autonomy** — workers can run in `bypassPermissions` mode independently. Orchestrator stays in `plan` or `acceptEdits` mode for oversight. Each worker has its own permission level
+- [x] **Auto-summary on completion** — when a worker finishes (detects completion or user marks done), a summary (commit hashes, changes made, edge cases found) is auto-injected into the orchestrator's context. Keeps orchestrator clean and focused
 - [ ] **Sprint tracking** — orchestrator maintains a live sprint doc. As workers complete tasks, the doc updates with status, commit refs, and any issues found. Visible as a pinned message or dedicated panel
-- [ ] **Orchestrator-initiated delegation** — orchestrator Claude can suggest spawning workers: "This has 3 independent tasks — want me to spin up workers for each?" User approves, workers launch in parallel
+- [x] **Orchestrator-initiated delegation** — orchestrator Claude can suggest spawning workers: "This has 3 independent tasks — want me to spin up workers for each?" User approves, workers launch in parallel
 - [ ] **Worker templates** — preconfigured worker types: "implementation sprint", "test writer", "code reviewer", "documentation". Each gets a tailored system prompt and permission level
 
 ### How it differs from existing features
