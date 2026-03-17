@@ -1807,6 +1807,7 @@ class ChatScreen(Screen):
         from reclawed.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
             ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
+            ACTION_PIN, ACTION_UNPIN,
         )
 
         def on_result(result: tuple[str, str] | None) -> None:
@@ -1843,11 +1844,17 @@ class ChatScreen(Screen):
             elif action == ACTION_GENERATE_NAME:
                 self._generate_name_for_session(session_id)
                 return  # Worker handles refresh
+            elif action == ACTION_PIN:
+                session.pinned = True
+                self.store.update_session(session)
+            elif action == ACTION_UNPIN:
+                session.pinned = False
+                self.store.update_session(session)
 
             self._refresh_sidebar()
 
         self.app.push_screen(
-            ContextMenu(event.session_id, is_muted=event.is_muted),
+            ContextMenu(event.session_id, is_muted=event.is_muted, is_pinned=event.is_pinned),
             on_result,
         )
 

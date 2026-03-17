@@ -16,6 +16,8 @@ ACTION_ARCHIVE = "archive"
 ACTION_DELETE = "delete"
 ACTION_RENAME = "rename"
 ACTION_GENERATE_NAME = "generate_name"
+ACTION_PIN = "pin"
+ACTION_UNPIN = "unpin"
 
 
 class ContextMenu(ModalScreen[tuple[str, str] | None]):
@@ -73,16 +75,20 @@ class ContextMenu(ModalScreen[tuple[str, str] | None]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, session_id: str, is_muted: bool = False, **kwargs) -> None:
+    def __init__(self, session_id: str, is_muted: bool = False, is_pinned: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
         self._is_muted = is_muted
+        self._is_pinned = is_pinned
 
     def compose(self) -> ComposeResult:
         mute_label = "Unmute" if self._is_muted else "Mute"
         mute_action = ACTION_UNMUTE if self._is_muted else ACTION_MUTE
+        pin_label = "Unpin" if self._is_pinned else "Pin to top"
+        pin_action = ACTION_UNPIN if self._is_pinned else ACTION_PIN
 
         actions: list[tuple[str, str, str]] = [
+            (pin_action,         pin_label,         "action-pin"),
             (ACTION_MARK_UNREAD, "Mark as Unread", "action-mark-unread"),
             (mute_action,        mute_label,       "action-mute"),
             (ACTION_ARCHIVE,     "Archive",         "action-archive"),

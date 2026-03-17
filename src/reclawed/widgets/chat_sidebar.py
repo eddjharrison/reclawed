@@ -72,10 +72,11 @@ class ChatSidebar(Vertical):
     class ContextMenuRequested(TMessage):
         """Posted when a context menu is requested on a session."""
 
-        def __init__(self, session_id: str, is_muted: bool) -> None:
+        def __init__(self, session_id: str, is_muted: bool, is_pinned: bool = False) -> None:
             super().__init__()
             self.session_id = session_id
             self.is_muted = is_muted
+            self.is_pinned = is_pinned
 
     class SessionRenamed(TMessage):
         """Posted when a session is renamed via inline edit."""
@@ -300,4 +301,4 @@ class ChatSidebar(Vertical):
         if self._active_id:
             session = next((s for s in self._sessions if s.id == self._active_id), None)
             if session:
-                self.post_message(self.ContextMenuRequested(session.id, session.muted))
+                self.post_message(self.ContextMenuRequested(session.id, session.muted, session.pinned))

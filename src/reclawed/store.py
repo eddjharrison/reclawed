@@ -92,6 +92,8 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN permission_mode TEXT",
             # Context tracking
             "ALTER TABLE sessions ADD COLUMN last_input_tokens INTEGER NOT NULL DEFAULT 0",
+            # Session pinning
+            "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in migrations:
             try:
@@ -111,15 +113,16 @@ class Store:
             "INSERT INTO sessions (id, claude_session_id, name, created_at, updated_at, model, "
             "total_cost_usd, message_count, muted, archived, unread_count, "
             "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, "
-            "cwd, room_mode, permission_mode, last_input_tokens) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cwd, room_mode, permission_mode, last_input_tokens, pinned) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
-             session.room_mode, session.permission_mode, session.last_input_tokens),
+             session.room_mode, session.permission_mode, session.last_input_tokens,
+             int(session.pinned)),
         )
         self._conn.commit()
         return session
@@ -133,11 +136,11 @@ class Store:
     def list_sessions(self, include_archived: bool = False) -> list[Session]:
         if include_archived:
             rows = self._conn.execute(
-                "SELECT * FROM sessions ORDER BY updated_at DESC"
+                "SELECT * FROM sessions ORDER BY pinned DESC, updated_at DESC"
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM sessions WHERE archived = 0 ORDER BY updated_at DESC"
+                "SELECT * FROM sessions WHERE archived = 0 ORDER BY pinned DESC, updated_at DESC"
             ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
@@ -148,14 +151,14 @@ class Store:
             "total_cost_usd=?, message_count=?, muted=?, archived=?, unread_count=?, "
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
             "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=?, "
-            "last_input_tokens=? WHERE id=?",
+            "last_input_tokens=?, pinned=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
              int(session.is_group), session.relay_url, session.room_id, session.participant_id,
              session.relay_token, session.encryption_passphrase, session.cwd,
              session.room_mode, session.permission_mode,
-             session.last_input_tokens, session.id),
+             session.last_input_tokens, int(session.pinned), session.id),
         )
         self._conn.commit()
 
@@ -435,4 +438,5 @@ class Store:
             room_mode=row["room_mode"] if "room_mode" in keys else None,
             permission_mode=row["permission_mode"] if "permission_mode" in keys else None,
             last_input_tokens=row["last_input_tokens"] if "last_input_tokens" in keys else 0,
+            pinned=bool(row["pinned"]) if "pinned" in keys else False,
         )
