@@ -254,8 +254,13 @@ class StatusBar(Static):
         if self._group_mode is not None:
             parts.append(f"[magenta]{_mode_labels.get(self._group_mode, self._group_mode)}[/magenta]")
 
-        if self._permission_mode == "bypassPermissions":
-            parts.append("[bold red]>> bypass permissions on[/bold red]")
+        if self._permission_mode and self._permission_mode != "default":
+            _perm_labels = {
+                "plan": "[bold green]>> plan mode on[/bold green]",
+                "acceptEdits": "[bold magenta]>> accept edits on[/bold magenta]",
+                "bypassPermissions": "[bold red]>> bypass permissions on[/bold red]",
+            }
+            parts.append(_perm_labels.get(self._permission_mode, f"[bold]>> {self._permission_mode} on[/bold]"))
 
         # Cost
         if self._cost > 0:
