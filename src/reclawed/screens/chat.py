@@ -696,6 +696,13 @@ class ChatScreen(Screen):
         except (json.JSONDecodeError, TypeError):
             return
 
+        # Build a set of existing message fingerprints for dedup against store
+        # (handles restart case where _seen_message_ids is empty)
+        existing_msgs = self.store.get_session_messages(session_id)
+        existing_fingerprints = {
+            (m.content, m.sender_name) for m in existing_msgs[-50:]
+        }
+
         for raw_payload in payloads:
             try:
                 relay_msg = RelayMessage.from_json(raw_payload)
@@ -724,9 +731,16 @@ class ChatScreen(Screen):
                 client._last_seq = relay_msg.seq
 
             if relay_msg.type == "message":
+                # Dedup against store: skip messages we already have
+                content = relay_msg.content or ""
+                fingerprint = (content, relay_msg.sender_name)
+                if fingerprint in existing_fingerprints:
+                    continue
+                existing_fingerprints.add(fingerprint)
+
                 msg = Message(
                     role="user" if relay_msg.sender_type == "human" else "assistant",
-                    content=relay_msg.content or "",
+                    content=content,
                     session_id=session_id,
                     sender_name=relay_msg.sender_name,
                     sender_type=relay_msg.sender_type,
