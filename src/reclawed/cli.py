@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
 import click
+
+# Suppress asyncio ResourceWarnings on Windows (unclosed subprocess transports
+# during garbage collection at exit — harmless but noisy).
+warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")
 
 from reclawed.app import ReclawedApp
 from reclawed.config import Config
