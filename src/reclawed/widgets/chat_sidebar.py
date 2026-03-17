@@ -72,10 +72,11 @@ class ChatSidebar(Vertical):
     class ContextMenuRequested(TMessage):
         """Posted when a context menu is requested on a session."""
 
-        def __init__(self, session_id: str, is_muted: bool) -> None:
+        def __init__(self, session_id: str, is_muted: bool, is_pinned: bool = False) -> None:
             super().__init__()
             self.session_id = session_id
             self.is_muted = is_muted
+            self.is_pinned = is_pinned
 
     class SessionRenamed(TMessage):
         """Posted when a session is renamed via inline edit."""
@@ -91,6 +92,22 @@ class ChatSidebar(Vertical):
         def __init__(self, cwd: str | None) -> None:
             super().__init__()
             self.cwd = cwd
+
+    class RemoveWorkspaceRequested(TMessage):
+        """Posted when the user wants to remove a workspace from the sidebar."""
+
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
+
+    class RefreshWorkspaceRequested(TMessage):
+        """Posted when the user wants to re-import sessions for a workspace."""
+
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -199,6 +216,7 @@ class ChatSidebar(Vertical):
                 workspace_name=ws.name,
                 cwd=ws.expanded_path,
                 collapsed=not has_active,
+                color=ws.color or "cyan",
             )
             chat_list.mount(section)
             container = section.items_container
@@ -216,6 +234,7 @@ class ChatSidebar(Vertical):
                 workspace_name="Default",
                 cwd=None,
                 collapsed=not has_active,
+                color="white",
             )
             chat_list.mount(section)
             container = section.items_container
@@ -258,6 +277,14 @@ class ChatSidebar(Vertical):
         event.stop()
         self.post_message(self.NewChatInWorkspace(event.cwd))
 
+    def on_workspace_section_remove_workspace_requested(self, event: WorkspaceSection.RemoveWorkspaceRequested) -> None:
+        event.stop()
+        self.post_message(self.RemoveWorkspaceRequested(event.cwd, event.name))
+
+    def on_workspace_section_refresh_workspace_requested(self, event: WorkspaceSection.RefreshWorkspaceRequested) -> None:
+        event.stop()
+        self.post_message(self.RefreshWorkspaceRequested(event.cwd, event.name))
+
     def start_rename(self, session_id: str) -> None:
         """Trigger inline rename on the ChatListItem for the given session."""
         chat_list = self.query_one("#chat-list", VerticalScroll)
@@ -274,4 +301,4 @@ class ChatSidebar(Vertical):
         if self._active_id:
             session = next((s for s in self._sessions if s.id == self._active_id), None)
             if session:
-                self.post_message(self.ContextMenuRequested(session.id, session.muted))
+                self.post_message(self.ContextMenuRequested(session.id, session.muted, session.pinned))

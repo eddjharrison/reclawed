@@ -134,7 +134,7 @@ def start_daemon(
         kwargs["start_new_session"] = True
     else:
         kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
         )
 
     proc = subprocess.Popen(cmd, **kwargs)

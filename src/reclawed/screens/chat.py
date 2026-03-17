@@ -43,6 +43,7 @@ class ChatScreen(Screen):
         # priority=True ensures these work even when TextArea has focus
         Binding("ctrl+d", "quit", "Quit", show=True, key_display="^D", priority=True),
         Binding("ctrl+n", "new_chat", "New Chat", show=True, priority=True),
+        Binding("f6", "workspace_new_chat", "New Chat in...", show=False, priority=True),
         Binding("ctrl+g", "group_menu", "Group", show=True, key_display="^G", priority=True),
         Binding("ctrl+i", "invite_to_chat", "Invite", show=True, key_display="^I", priority=True),
         Binding("ctrl+s", "toggle_sidebar", "Sidebar", show=True, priority=True),
@@ -93,14 +94,16 @@ class ChatScreen(Screen):
     _MODE_COMPAT = {"own": "claude_assists", "mentions": "humans_only", "all": "full_auto", "off": "humans_only"}
 
     # Permission modes — can be switched mid-chat via F5
-    PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions"]
+    PERMISSION_MODES = ["default", "plan", "acceptEdits", "bypassPermissions"]
     PERMISSION_MODE_LABELS = {
         "default": "Default",
+        "plan": "Plan Mode",
         "acceptEdits": "Accept Edits",
         "bypassPermissions": "BYPASS PERMISSIONS",
     }
     PERMISSION_MODE_DESCRIPTIONS = {
         "default": "Claude asks for approval on every action",
+        "plan": "Claude creates a plan for approval before acting",
         "acceptEdits": "Claude can read and edit files without asking",
         "bypassPermissions": "Claude has unrestricted access — no approval needed",
     }
@@ -148,6 +151,13 @@ class ChatScreen(Screen):
         self._pending_echo_ids: list[str] = []
         # Pending tool approval futures: {tool_use_id: asyncio.Future}
         self._pending_approvals: dict[str, asyncio.Future] = {}
+
+    def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
+        """Return allowed tools for the given cwd, checking workspace overrides."""
+        ws = self.config.workspace_for_cwd(cwd)
+        tools_str = (ws.allowed_tools if ws and ws.allowed_tools is not None
+                     else self.config.allowed_tools)
+        return tools_str.split(",")
 
     def _create_new_session(self, cwd: str | None = None) -> Session:
         session = Session(cwd=cwd)
@@ -198,7 +208,7 @@ class ChatScreen(Screen):
             model=self._selected_model,
             cwd=self.session.cwd,
             permission_mode=self._selected_permission,
-            allowed_tools=self.config.allowed_tools.split(","),
+            allowed_tools=self._effective_allowed_tools(self.session.cwd),
             approval_callback=self._on_tool_approval_needed,
         )
         self._claude_sessions[session_key] = session
@@ -258,6 +268,7 @@ class ChatScreen(Screen):
         group_mode = self._group_respond_mode if self.session.is_group else None
         ws = self.config.workspace_for_cwd(self.session.cwd)
         workspace_name = ws.name if ws else None
+        workspace_color = ws.color if ws else "yellow"
         status.update_info(
             session_name=self.session.name,
             model=self.session.model,
@@ -266,7 +277,9 @@ class ChatScreen(Screen):
             group_mode=group_mode,
             clear_group_mode=not self.session.is_group,
             workspace_name=workspace_name,
+            workspace_color=workspace_color,
             permission_mode=self._selected_permission,
+            cwd=self.session.cwd,
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
         # Restore context gauge from persisted value
@@ -869,6 +882,120 @@ class ChatScreen(Screen):
         return truncated + "..."
 
     @work(thread=False)
+    async def _auto_name_session(
+        self, session_id: str, first_message: str, fallback_name: str
+    ) -> None:
+        """Ask Claude (haiku) to generate a short session name in the background."""
+        try:
+            context = f"Message: {first_message[:500]}"
+            await self._run_name_generation(session_id, context, guard_name=fallback_name)
+        except Exception:
+            pass
+
+    @work(thread=False)
+    async def _generate_name_for_session(self, session_id: str) -> None:
+        """Generate a name from session messages (triggered via context menu)."""
+        try:
+            self.notify("Generating name...", timeout=2)
+            session = self.store.get_session(session_id)
+            messages = self.store.get_session_messages(session_id)
+            # Build context from messages + session name
+            context_parts: list[str] = []
+            # Use the session name as primary context (it's the first user message)
+            if session and session.name and session.name not in ("New Chat", "Group Chat"):
+                context_parts.append(f"Topic: {session.name}")
+            for msg in messages[:6]:
+                role = "Human" if msg.role == "user" else "Claude"
+                text = msg.content[:200] if msg.content else ""
+                # Skip synthetic import messages and encrypted content
+                if not text or "Imported session" in text or text.startswith('{"v":'):
+                    continue
+                context_parts.append(f"{role}: {text}")
+            context = "\n".join(context_parts)
+            if not context.strip():
+                self.notify("No messages to generate name from", severity="warning", timeout=3)
+                return
+            result = await self._run_name_generation(session_id, context, guard_name=None)
+            if result:
+                self.notify(f"Renamed to: {result}", timeout=3)
+            else:
+                self.notify("Could not generate name", severity="warning", timeout=3)
+        except Exception as e:
+            self.notify(f"Name generation failed: {e}", severity="error", timeout=5)
+
+    async def _run_name_generation(
+        self, session_id: str, context: str, guard_name: str | None
+    ) -> str | None:
+        """Shared logic for generating a session name via haiku.
+
+        Returns the generated name, or None if generation failed.
+        Uses --output-format text and suppresses stderr to prevent
+        ANSI escape code leakage into the terminal/compose area.
+        """
+        naming_prompt = (
+            "Your ONLY job: output a 3-5 word title for this chat. "
+            "Output NOTHING else. No quotes. No explanation. Just the title.\n\n"
+            f"{context}\n\n"
+            "Title:"
+        )
+        # Use a direct subprocess with text output and stderr suppressed
+        # to avoid ANSI escape codes leaking into the terminal
+        import os, sys, subprocess as _sp
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        _flags = {"creationflags": _sp.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+        proc = await asyncio.create_subprocess_exec(
+            self.config.claude_binary, "-p", naming_prompt,
+            "--output-format", "text",
+            "--model", "haiku",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+            **_flags,
+        )
+        stdout, _ = await proc.communicate()
+        generated_name = stdout.decode("utf-8", errors="replace").strip() if stdout else None
+
+        if not generated_name:
+            return None
+
+        # Clean up the result
+        cleaned = generated_name.strip().strip('"\'').strip()
+        cleaned = cleaned.rstrip(".")
+        # Take only the first line in case haiku added explanation
+        cleaned = cleaned.split("\n")[0].strip()
+        # Truncate to 50 chars at word boundary if too long
+        if len(cleaned) > 50:
+            truncated = cleaned[:50]
+            last_space = truncated.rfind(" ")
+            if last_space > 10:
+                cleaned = truncated[:last_space]
+            else:
+                cleaned = truncated
+        if not cleaned or len(cleaned) < 3:
+            return None
+
+        # Race-condition guard: for auto-naming, only update if name unchanged
+        session = self.store.get_session(session_id)
+        if not session:
+            return None
+        if guard_name is not None and session.name != guard_name:
+            return None
+
+        session.name = cleaned
+        self.store.update_session(session)
+
+        def _apply_name() -> None:
+            if self.session.id == session_id:
+                self.session.name = cleaned
+                self._update_status()
+            self._refresh_sidebar()
+
+        self.app.call_later(_apply_name)
+        return cleaned
+
+    @work(thread=False)
     async def _stream_response(
         self, prompt: str, assistant_msg: Message, reply_context: str | None
     ) -> None:
@@ -929,6 +1056,15 @@ class ChatScreen(Screen):
                         bubble.add_tool_use(
                             event.tool_use_id, event.tool_name, event.tool_input,
                         )
+                        # AskUserQuestion: render choices as clickable buttons
+                        if event.tool_name == "AskUserQuestion":
+                            questions = event.tool_input.get("questions", [])
+                            if questions:
+                                from reclawed.widgets.ask_user_question import AskUserQuestionWidget
+                                try:
+                                    await bubble.mount(AskUserQuestionWidget(questions))
+                                except Exception:
+                                    pass
                         msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamToolResult):
@@ -957,8 +1093,16 @@ class ChatScreen(Screen):
                     stream_session.message_count = len(
                         self.store.get_session_messages(stream_session.id)
                     )
-                    if stream_session.name in ("New Chat", "Group Chat"):
+                    was_unnamed = stream_session.name in ("New Chat", "Group Chat")
+                    if was_unnamed:
                         stream_session.name = self._derive_session_name(prompt)
+                    # Fire background auto-naming after first exchange
+                    if was_unnamed and self.config.auto_name_sessions:
+                        self._auto_name_session(
+                            stream_session.id,
+                            prompt,
+                            self._derive_session_name(prompt),
+                        )
                     # Update context gauge
                     if event.input_tokens:
                         stream_session.last_input_tokens = event.input_tokens
@@ -1274,10 +1418,22 @@ class ChatScreen(Screen):
     # --- Typing indicators ---
 
     async def _on_tool_approval_needed(self, tool_name: str, tool_input: dict, future: asyncio.Future) -> None:
-        """Called from ClaudeSession's can_use_tool — show approval UI."""
+        """Called from ClaudeSession's can_use_tool — show approval UI.
+
+        Special handling for AskUserQuestion: renders choices as clickable
+        buttons instead of approve/deny.
+        """
         from reclawed.widgets.tool_approval import ToolApprovalWidget
         tool_use_id = f"approval-{id(future)}"
         self._pending_approvals[tool_use_id] = future
+
+        # AskUserQuestion: auto-approve (choices rendered at StreamToolUse level)
+        if tool_name == "AskUserQuestion":
+            if not future.done():
+                from claude_agent_sdk import PermissionResultAllow
+                future.set_result(PermissionResultAllow())
+            return
+
         try:
             msg_list = self.query_one("#message-list", MessageList)
             # Find the most recent assistant bubble
@@ -1306,15 +1462,14 @@ class ChatScreen(Screen):
                 future.set_result(PermissionResultDeny(message="User denied"))
 
     def on_choice_buttons_selected(self, event) -> None:
-        """Handle choice button click — fill compose area with the selection."""
+        """Handle choice button click — auto-submit the selection."""
         event.stop()
-        try:
-            compose = self.query_one("#compose-area", ComposeArea)
-            text_area = compose.query_one("#compose-input")
-            text_area.load_text(f"{event.label}")
-            text_area.focus()
-        except Exception:
-            pass
+        self.post_message(ComposeArea.Submitted(f"Option {event.label}: {event.description}"))
+
+    def on_ask_user_question_widget_submitted(self, event) -> None:
+        """Handle AskUserQuestion form submission — send all answers."""
+        event.stop()
+        self.post_message(ComposeArea.Submitted(event.answers))
 
     def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
         """Show @mention participant picker."""
@@ -1543,26 +1698,38 @@ class ChatScreen(Screen):
         self.session.permission_mode = next_mode
         self.store.update_session(self.session)
 
-        # Restart the Claude session with new permissions
-        session_key = self.session.id
-        old_claude = self._claude_sessions.pop(session_key, None)
-        if old_claude is not None:
-            old_claude.cancel()
-            asyncio.create_task(old_claude.stop())
-
-        self._claude = None
-
-        async def _restart():
-            await self._start_claude_session(
-                resume_id=self.session.claude_session_id,
-            )
-
-        self.app.call_later(_restart)
-
+        # Update status bar immediately (before restart)
         self._update_status()
         label = self.PERMISSION_MODE_LABELS.get(next_mode, next_mode)
         desc = self.PERMISSION_MODE_DESCRIPTIONS.get(next_mode, "")
         self.notify(f"Permissions: {label} — {desc}", timeout=3)
+
+        # Restart the Claude session with new permissions (silently)
+        session_key = self.session.id
+        old_claude = self._claude_sessions.pop(session_key, None)
+        self._claude = None
+
+        async def _restart():
+            if old_claude is not None:
+                try:
+                    old_claude.cancel()
+                    await old_claude.stop()
+                except Exception:
+                    pass
+            session = ClaudeSession(
+                cli_path=self.config.claude_binary,
+                session_id=self.session.claude_session_id,
+                model=self._selected_model,
+                cwd=self.session.cwd,
+                permission_mode=self._selected_permission,
+                allowed_tools=self._effective_allowed_tools(self.session.cwd),
+                approval_callback=self._on_tool_approval_needed,
+            )
+            self._claude_sessions[session_key] = session
+            self._claude = session
+            await session.start()
+
+        self.app.call_later(_restart)
 
     def action_cycle_respond_mode(self) -> None:
         """Cycle through room modes (F3). Broadcasts to all participants."""
@@ -1661,7 +1828,8 @@ class ChatScreen(Screen):
     def on_chat_sidebar_context_menu_requested(self, event: ChatSidebar.ContextMenuRequested) -> None:
         from reclawed.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
-            ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME,
+            ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
+            ACTION_PIN, ACTION_UNPIN,
         )
 
         def on_result(result: tuple[str, str] | None) -> None:
@@ -1695,13 +1863,66 @@ class ChatScreen(Screen):
                 sidebar = self.query_one("#chat-sidebar", ChatSidebar)
                 sidebar.start_rename(session_id)
                 return  # Don't refresh — it would destroy the rename Input
+            elif action == ACTION_GENERATE_NAME:
+                self._generate_name_for_session(session_id)
+                return  # Worker handles refresh
+            elif action == ACTION_PIN:
+                session.pinned = True
+                self.store.update_session(session)
+            elif action == ACTION_UNPIN:
+                session.pinned = False
+                self.store.update_session(session)
 
             self._refresh_sidebar()
 
         self.app.push_screen(
-            ContextMenu(event.session_id, is_muted=event.is_muted),
+            ContextMenu(event.session_id, is_muted=event.is_muted, is_pinned=event.is_pinned),
             on_result,
         )
+
+    def on_chat_sidebar_remove_workspace_requested(self, event: ChatSidebar.RemoveWorkspaceRequested) -> None:
+        """Handle workspace removal from the sidebar via right-click."""
+
+        def on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            self.config.workspaces = [
+                w for w in self.config.workspaces
+                if w.expanded_path != event.cwd
+            ]
+            self.config.save()
+            sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+            sidebar._workspaces = self.config.workspaces
+            sidebar.refresh_sessions(active_session_id=self.session.id)
+            self.notify(f"Removed workspace: {event.name}", timeout=3)
+
+        from reclawed.widgets.confirm_screen import ConfirmScreen
+        self.app.push_screen(
+            ConfirmScreen(
+                title="Remove Workspace",
+                message=f'Remove "{event.name}" from the sidebar?\nSessions will be kept.',
+            ),
+            on_confirm,
+        )
+
+    def on_chat_sidebar_refresh_workspace_requested(self, event: ChatSidebar.RefreshWorkspaceRequested) -> None:
+        """Re-import sessions from Claude Code for a workspace."""
+        from reclawed.importer import DiscoveredProject, discover_projects, import_project_sessions
+
+        # Find the matching project in ~/.claude/projects/
+        projects = discover_projects()
+        matching = [p for p in projects if p.cwd == event.cwd]
+        if not matching:
+            self.notify(f"No Claude Code project found for {event.name}", severity="warning", timeout=3)
+            return
+
+        project = matching[0]
+        count = import_project_sessions(project, self.store)
+        self._refresh_sidebar()
+        if count > 0:
+            self.notify(f"Imported {count} new session{'s' if count != 1 else ''} for {event.name}", timeout=3)
+        else:
+            self.notify(f"No new sessions found for {event.name}", timeout=3)
 
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
@@ -1773,9 +1994,34 @@ class ChatScreen(Screen):
         # Ctrl+N creates a chat in the same workspace as the active session
         self._new_chat_with_cwd(self.session.cwd)
 
+    def action_workspace_new_chat(self) -> None:
+        """Show a workspace picker, then create a new chat in the selected one (Ctrl+Shift+N)."""
+        if not self.config.workspaces:
+            self._new_chat_with_cwd(None)
+            return
+
+        from reclawed.widgets.workspace_picker import WorkspacePicker, PICK_DEFAULT
+
+        def on_picked(result: str | None) -> None:
+            if result is None:
+                return  # Cancelled
+            self._new_chat_with_cwd(None if result == PICK_DEFAULT else result)
+
+        self.app.push_screen(
+            WorkspacePicker(workspaces=self.config.workspaces),
+            on_picked,
+        )
+
     def _new_chat_with_cwd(self, cwd: str | None = None) -> None:
         self.session = self._create_new_session(cwd=cwd)
-        self._selected_model = None
+        # Apply workspace overrides for model and permission
+        ws = self.config.workspace_for_cwd(cwd)
+        self._selected_model = ws.model if ws and ws.model is not None else None
+        self._selected_permission = (
+            ws.permission_mode
+            if ws and ws.permission_mode is not None
+            else self.config.permission_mode
+        )
 
         async def _reset():
             msg_list = self.query_one("#message-list", MessageList)

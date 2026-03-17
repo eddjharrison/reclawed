@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,40 @@ from reclawed.models import Message, Session
 from reclawed.store import Store
 
 _SESSION_NAME_MAX = 60
+
+# XML-style tags injected by Claude Code that aren't real user content.
+_XML_TAG_RE = re.compile(r"<[^>]+>")
+_SYSTEM_PREFIXES = (
+    "<local-command-caveat>",
+    "<local-command-stdout>",
+    "<command-name>",
+    "<task-notification>",
+    "<system-reminder>",
+    "<file-history-snapshot>",
+)
+
+
+def _clean_user_text(raw: str) -> str | None:
+    """Extract clean display text from a Claude Code user message.
+
+    Returns ``None`` if the message is a system/command message that
+    should be skipped when choosing a session name.
+    """
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    # Skip messages that are system injections, not real user input
+    for prefix in _SYSTEM_PREFIXES:
+        if stripped.startswith(prefix):
+            return None
+    # Skip slash-command wrappers (e.g. <command-name>/prompt</command-name>)
+    if "<command-name>" in stripped:
+        return None
+    # Strip any remaining XML tags and clean up whitespace
+    cleaned = _XML_TAG_RE.sub("", stripped).strip()
+    # Collapse internal whitespace
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned if cleaned else None
 
 
 @dataclass
@@ -120,12 +155,22 @@ def parse_session_metadata(jsonl_path: Path) -> dict | None:
 
                 entry_type = entry.get("type")
 
-                # First user message → session name + created_at
+                # First real user message → session name + created_at
+                # Skip system injections (local-command-caveat, etc.)
                 if entry_type == "user" and name is None:
                     msg = entry.get("message", {})
                     content = msg.get("content", "")
-                    if isinstance(content, str) and content.strip():
-                        name = content.strip()
+                    text: str | None = None
+                    if isinstance(content, str):
+                        text = _clean_user_text(content)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text = _clean_user_text(block["text"])
+                                if text:
+                                    break
+                    if text:
+                        name = text
                         if len(name) > _SESSION_NAME_MAX:
                             name = name[:_SESSION_NAME_MAX - 1] + "…"
                         session_id = entry.get("sessionId")

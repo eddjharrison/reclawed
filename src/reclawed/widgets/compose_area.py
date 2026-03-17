@@ -28,6 +28,16 @@ class ComposeInput(TextArea):
             event.prevent_default()
             event.stop()
             self.insert("\n")
+        elif event.key == "ctrl+delete":
+            # Delete word forward
+            event.prevent_default()
+            event.stop()
+            self.action_delete_word_right()
+        elif event.key == "ctrl+shift+delete":
+            # Clear entire input
+            event.prevent_default()
+            event.stop()
+            self.clear()
         elif event.key == "at":
             # Let the @ character be inserted, then request mention autocomplete
             self.call_later(lambda: self.post_message(self.MentionRequested()))

@@ -2,7 +2,27 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import warnings
 import click
+
+# Suppress asyncio ResourceWarnings on Windows (unclosed subprocess transports
+# during garbage collection at exit — harmless but noisy).
+warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# On Windows, prevent ALL subprocess calls from opening visible console windows.
+# This patches subprocess.Popen to always include CREATE_NO_WINDOW.
+if sys.platform == "win32":
+    import subprocess as _sp
+    _orig_popen_init = _sp.Popen.__init__
+
+    def _patched_popen_init(self, *args, **kwargs):  # type: ignore
+        if "creationflags" not in kwargs:
+            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW
+        _orig_popen_init(self, *args, **kwargs)
+
+    _sp.Popen.__init__ = _patched_popen_init  # type: ignore
 
 from reclawed.app import ReclawedApp
 from reclawed.config import Config
@@ -28,3 +48,10 @@ def main(continue_session: bool, session_id: str | None) -> None:
 
     app = ReclawedApp(config=config, resume_session_id=resume_id)
     app.run()
+
+    # Suppress noisy asyncio tracebacks on Windows during cleanup
+    if sys.platform == "win32":
+        try:
+            sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass

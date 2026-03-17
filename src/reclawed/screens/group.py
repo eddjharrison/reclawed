@@ -22,11 +22,17 @@ from textual.widgets import Button, Input, Label, Static
 async def _start_cloudflare_tunnel(port: int) -> tuple[str | None, asyncio.subprocess.Process | None]:
     """Try to start a cloudflare quick tunnel. Returns (wss_url, proc) or (None, None)."""
     import re
+    import sys
+    _no_win = {}
+    if sys.platform == "win32":
+        import subprocess as _sp
+        _no_win["creationflags"] = _sp.CREATE_NO_WINDOW
     try:
         proc = await asyncio.create_subprocess_exec(
             "cloudflared", "tunnel", "--url", f"http://localhost:{port}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **_no_win,
         )
         assert proc.stderr is not None
         url_pattern = re.compile(r'https?://[^\s|]*trycloudflare\.com[^\s|]*')
