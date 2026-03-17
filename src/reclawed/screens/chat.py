@@ -94,14 +94,16 @@ class ChatScreen(Screen):
     _MODE_COMPAT = {"own": "claude_assists", "mentions": "humans_only", "all": "full_auto", "off": "humans_only"}
 
     # Permission modes — can be switched mid-chat via F5
-    PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions"]
+    PERMISSION_MODES = ["default", "plan", "acceptEdits", "bypassPermissions"]
     PERMISSION_MODE_LABELS = {
         "default": "Default",
+        "plan": "Plan Mode",
         "acceptEdits": "Accept Edits",
         "bypassPermissions": "BYPASS PERMISSIONS",
     }
     PERMISSION_MODE_DESCRIPTIONS = {
         "default": "Claude asks for approval on every action",
+        "plan": "Claude creates a plan for approval before acting",
         "acceptEdits": "Claude can read and edit files without asking",
         "bypassPermissions": "Claude has unrestricted access — no approval needed",
     }
@@ -1656,7 +1658,13 @@ class ChatScreen(Screen):
         self.session.permission_mode = next_mode
         self.store.update_session(self.session)
 
-        # Restart the Claude session with new permissions
+        # Update status bar immediately (before restart)
+        self._update_status()
+        label = self.PERMISSION_MODE_LABELS.get(next_mode, next_mode)
+        desc = self.PERMISSION_MODE_DESCRIPTIONS.get(next_mode, "")
+        self.notify(f"Permissions: {label} — {desc}", timeout=3)
+
+        # Restart the Claude session with new permissions (silently)
         session_key = self.session.id
         old_claude = self._claude_sessions.pop(session_key, None)
         if old_claude is not None:
@@ -1666,16 +1674,20 @@ class ChatScreen(Screen):
         self._claude = None
 
         async def _restart():
-            await self._start_claude_session(
-                resume_id=self.session.claude_session_id,
+            session = ClaudeSession(
+                cli_path=self.config.claude_binary,
+                session_id=self.session.claude_session_id,
+                model=self._selected_model,
+                cwd=self.session.cwd,
+                permission_mode=self._selected_permission,
+                allowed_tools=self.config.allowed_tools.split(","),
+                approval_callback=self._on_tool_approval_needed,
             )
+            self._claude_sessions[session_key] = session
+            self._claude = session
+            await session.start()
 
         self.app.call_later(_restart)
-
-        self._update_status()
-        label = self.PERMISSION_MODE_LABELS.get(next_mode, next_mode)
-        desc = self.PERMISSION_MODE_DESCRIPTIONS.get(next_mode, "")
-        self.notify(f"Permissions: {label} — {desc}", timeout=3)
 
     def action_cycle_respond_mode(self) -> None:
         """Cycle through room modes (F3). Broadcasts to all participants."""
