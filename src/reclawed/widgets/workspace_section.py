@@ -62,26 +62,6 @@ class WorkspaceSection(Vertical):
     WorkspaceSection .ws-header:hover .ws-name {
         color: $accent;
     }
-    WorkspaceSection .ws-add {
-        width: 4;
-        min-width: 4;
-        height: 1;
-        color: $text-muted;
-    }
-    WorkspaceSection .ws-add:hover {
-        color: $accent;
-        text-style: bold;
-    }
-    WorkspaceSection .ws-refresh {
-        width: 4;
-        min-width: 4;
-        height: 1;
-        color: $text-muted;
-    }
-    WorkspaceSection .ws-refresh:hover {
-        color: $accent;
-        text-style: bold;
-    }
     WorkspaceSection .ws-items {
         width: 100%;
         height: auto;
@@ -125,12 +105,15 @@ class WorkspaceSection(Vertical):
 
     def compose(self) -> ComposeResult:
         arrow = "▶" if self._collapsed else "▼"
+        btns = " [r][+]" if self._cwd is not None else " [+]"
         with Horizontal(classes="ws-header"):
             yield Label(arrow, classes="ws-arrow", id=f"ws-arrow-{id(self)}")
-            yield Label(f"[bold {self._color}]{self._workspace_name}[/bold {self._color}]", classes="ws-name", id=f"ws-name-{id(self)}", markup=True)
-            if self._cwd is not None:
-                yield _RefreshButton("[r]", classes="ws-refresh")
-            yield _AddButton("[+]", classes="ws-add")
+            yield Label(
+                f"[bold {self._color}]{self._workspace_name}[/bold {self._color}][dim]{btns}[/dim]",
+                classes="ws-name",
+                id=f"ws-name-{id(self)}",
+                markup=True,
+            )
         yield Vertical(
             classes="ws-items hidden" if self._collapsed else "ws-items",
             id=f"ws-items-{id(self)}",
@@ -150,23 +133,36 @@ class WorkspaceSection(Vertical):
             self.post_message(self.RemoveWorkspaceRequested(self._cwd, self._workspace_name))
             return
 
-        # Left-click on the header area (arrow or name) → toggle collapse
-        # The _AddButton handles its own click via on__add_button_pressed
+        # Left-click on the name label — check if they clicked [r] or [+]
         target = event.widget
-        if isinstance(target, Label) and (
-            "ws-arrow" in target.classes or "ws-name" in target.classes
-        ):
+        if isinstance(target, Label) and "ws-name" in target.classes:
+            event.stop()
+            # Detect click position within the rendered text
+            # The text ends with " [r][+]" or " [+]"
+            rendered = target.render().plain if hasattr(target.render(), 'plain') else str(target.render())
+            click_x = event.x
+            text_len = len(rendered)
+
+            if self._cwd is not None:
+                # Has [r][+] — last 6 chars are "[r][+]"
+                if click_x >= text_len - 3:
+                    self.post_message(self.NewChatInWorkspace(self._cwd))
+                    return
+                elif click_x >= text_len - 6:
+                    self.post_message(self.RefreshWorkspaceRequested(self._cwd, self._workspace_name))
+                    return
+            else:
+                # Just [+] — last 3 chars
+                if click_x >= text_len - 3:
+                    self.post_message(self.NewChatInWorkspace(self._cwd))
+                    return
+
+            self._toggle_collapse()
+            return
+
+        if isinstance(target, Label) and "ws-arrow" in target.classes:
             event.stop()
             self._toggle_collapse()
-
-    def on__add_button_pressed(self, event: _AddButton.Pressed) -> None:
-        event.stop()
-        self.post_message(self.NewChatInWorkspace(self._cwd))
-
-    def on__refresh_button_pressed(self, event: _RefreshButton.Pressed) -> None:
-        event.stop()
-        if self._cwd is not None:
-            self.post_message(self.RefreshWorkspaceRequested(self._cwd, self._workspace_name))
 
     @property
     def items_container(self) -> Vertical:
