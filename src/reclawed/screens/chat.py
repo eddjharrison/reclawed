@@ -940,9 +940,10 @@ class ChatScreen(Screen):
         )
         # Use a direct subprocess with text output and stderr suppressed
         # to avoid ANSI escape codes leaking into the terminal
-        import os
+        import os, sys, subprocess as _sp
         env = os.environ.copy()
         env["NO_COLOR"] = "1"
+        _flags = {"creationflags": _sp.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
         proc = await asyncio.create_subprocess_exec(
             self.config.claude_binary, "-p", naming_prompt,
             "--output-format", "text",
@@ -951,6 +952,7 @@ class ChatScreen(Screen):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=env,
+            **_flags,
         )
         stdout, _ = await proc.communicate()
         generated_name = stdout.decode("utf-8", errors="replace").strip() if stdout else None

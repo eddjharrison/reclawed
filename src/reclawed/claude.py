@@ -5,8 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from dataclasses import dataclass
 from typing import AsyncIterator
+
+# On Windows, prevent subprocess console windows from appearing.
+_SUBPROCESS_FLAGS: dict = {}
+if sys.platform == "win32":
+    import subprocess
+    _SUBPROCESS_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +120,8 @@ class ClaudeProcess:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                limit=16 * 1024 * 1024,  # 16MB — Claude result lines can be very long
+                limit=16 * 1024 * 1024,
+                **_SUBPROCESS_FLAGS,
             )
 
             captured_session_id: str | None = None
