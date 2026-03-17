@@ -77,6 +77,32 @@ def copy_to_clipboard(text: str) -> bool:
     return False
 
 
+def open_file_externally(path: str) -> bool:
+    """Open a file with the OS default application.
+
+    Returns ``True`` on success, ``False`` if the file doesn't exist or the
+    open command failed.
+
+    Platform support:
+      - macOS: ``open``
+      - Windows: ``start``
+      - Linux / other: ``xdg-open``
+    """
+    if not Path(path).exists():
+        return False
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", path])
+        elif system == "Windows":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def detect_question(text: str) -> bool:
     """Detect if the assistant's response ends with a question.
 

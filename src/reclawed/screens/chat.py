@@ -399,6 +399,33 @@ class ChatScreen(Screen):
 
         self.app.push_screen(FileInputScreen(), callback=_on_dismiss)
 
+    def on_attachment_chip_preview_requested(
+        self, event: "AttachmentChip.PreviewRequested"
+    ) -> None:
+        """Handle click on compose-area attachment chip — open file externally."""
+        event.stop()
+        self._preview_file(event.path)
+
+    def on_message_bubble_attachment_preview_requested(
+        self, event: "MessageBubble.AttachmentPreviewRequested"
+    ) -> None:
+        """Handle click on message bubble attachment indicator — open file externally."""
+        event.stop()
+        self._preview_file(event.path)
+
+    def _preview_file(self, path: str) -> None:
+        """Open a file with the OS default viewer."""
+        from reclawed.utils import open_file_externally
+
+        if open_file_externally(path):
+            self.notify(f"Opening preview: {Path(path).name}", timeout=3)
+        else:
+            self.notify(
+                f"Cannot preview — file not found: {Path(path).name}",
+                severity="warning",
+                timeout=4,
+            )
+
     # --- Group chat relay helpers ---
 
     async def _try_reconnect_group(self) -> None:

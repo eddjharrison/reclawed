@@ -31,6 +31,18 @@ class ReplyIndicator(Label):
         self.post_message(MessageBubble.ReplyClicked(self._reply_to_id))
 
 
+class AttachmentIndicator(Label):
+    """Clickable attachment label in message bubbles — click to preview."""
+
+    def __init__(self, text: str, file_path: str, **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._file_path = file_path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(MessageBubble.AttachmentPreviewRequested(self._file_path))
+
+
 class MessageBubble(Vertical):
     """Displays a single chat message with role styling and optional reply indicator."""
 
@@ -112,6 +124,10 @@ class MessageBubble(Vertical):
         margin-bottom: 0;
         border-left: thick $accent;
     }
+    MessageBubble .attachment-indicator:hover {
+        text-style: underline;
+        background: $primary 20%;
+    }
     """
 
     selected: reactive[bool] = reactive(False)
@@ -121,6 +137,12 @@ class MessageBubble(Vertical):
         def __init__(self, message_id: str) -> None:
             super().__init__()
             self.message_id = message_id
+
+    class AttachmentPreviewRequested(TMessage):
+        """Posted when user clicks an attachment indicator to preview it."""
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
 
     class ReplyClicked(TMessage):
         """Posted when the reply-indicator banner is clicked.
@@ -187,14 +209,16 @@ class MessageBubble(Vertical):
 
         yield Label(f"{role_label}  {ts}", classes=header_classes)
 
-        # Show attachment indicators if message has images
+        # Show attachment indicators if message has images (clickable to preview)
         attachments = parse_attachments(self._message.attachments)
         for att in attachments:
             filename = att.get("filename", "image")
             size = att.get("size_bytes", 0)
+            file_path = att.get("path", "")
             size_str = format_file_size(size) if size else ""
-            yield Label(
-                f"📁 {filename} ({size_str})",
+            yield AttachmentIndicator(
+                f"📁 {filename} ({size_str}) — click to preview",
+                file_path=file_path,
                 classes="attachment-indicator",
             )
 
