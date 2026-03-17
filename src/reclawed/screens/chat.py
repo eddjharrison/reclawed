@@ -1056,26 +1056,21 @@ class ChatScreen(Screen):
                         )
                         # AskUserQuestion: render choices as clickable buttons
                         if event.tool_name == "AskUserQuestion":
-                            import json, logging
-                            logging.getLogger("reclawed").warning(
-                                f"AskUserQuestion tool_input keys: {list(event.tool_input.keys())} "
-                                f"full: {json.dumps(event.tool_input)[:300]}"
-                            )
-                            choices_raw = (
-                                event.tool_input.get("options")
-                                or event.tool_input.get("choices")
-                                or []
-                            )
-                            if choices_raw:
+                            questions = event.tool_input.get("questions", [])
+                            if questions:
                                 from reclawed.widgets.choice_buttons import ChoiceButtons
-                                choices = [
-                                    (str(i + 1), opt if isinstance(opt, str) else str(opt))
-                                    for i, opt in enumerate(choices_raw)
-                                ]
-                                try:
-                                    await bubble.mount(ChoiceButtons(choices))
-                                except Exception:
-                                    pass
+                                for q in questions:
+                                    options = q.get("options", [])
+                                    if options:
+                                        choices = []
+                                        for i, opt in enumerate(options):
+                                            label = opt.get("label", str(i + 1)) if isinstance(opt, dict) else str(opt)
+                                            desc = opt.get("description", "") if isinstance(opt, dict) else ""
+                                            choices.append((label, desc))
+                                        try:
+                                            await bubble.mount(ChoiceButtons(choices))
+                                        except Exception:
+                                            pass
                         msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamToolResult):
@@ -1438,45 +1433,11 @@ class ChatScreen(Screen):
         tool_use_id = f"approval-{id(future)}"
         self._pending_approvals[tool_use_id] = future
 
-        # AskUserQuestion: render choices as buttons, auto-approve
+        # AskUserQuestion: auto-approve (choices rendered at StreamToolUse level)
         if tool_name == "AskUserQuestion":
-            # Log the tool_input so we can see the structure
-            import json, logging
-            logging.getLogger("reclawed").warning(f"AskUserQuestion tool_input: {json.dumps(tool_input, indent=2)[:500]}")
-
-            # Auto-approve the tool use
             if not future.done():
                 from claude_agent_sdk import PermissionResultAllow
                 future.set_result(PermissionResultAllow())
-
-            # Render question + choices as clickable buttons
-            question = tool_input.get("question", tool_input.get("text", ""))
-            # Try various possible field names for choices
-            choices_raw = (
-                tool_input.get("options")
-                or tool_input.get("choices")
-                or tool_input.get("items")
-                or []
-            )
-
-            if question or choices_raw:
-                try:
-                    msg_list = self.query_one("#message-list", MessageList)
-                    bubbles = list(msg_list.query(MessageBubble))
-                    if bubbles:
-                        bubble = bubbles[-1]
-                        # Build numbered choices for ChoiceButtons
-                        if choices_raw:
-                            from reclawed.widgets.choice_buttons import ChoiceButtons
-                            choices = []
-                            for i, opt in enumerate(choices_raw):
-                                label = str(i + 1)
-                                desc = opt if isinstance(opt, str) else str(opt)
-                                choices.append((label, desc))
-                            await bubble.mount(ChoiceButtons(choices))
-                            msg_list.scroll_end(animate=False)
-                except Exception as e:
-                    logging.getLogger("reclawed").warning(f"AskUserQuestion UI failed: {e}")
             return
 
         try:

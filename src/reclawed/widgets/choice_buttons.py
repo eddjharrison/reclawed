@@ -41,7 +41,9 @@ class ChoiceButtons(Horizontal):
 
     def compose(self) -> ComposeResult:
         for idx, (label, description) in enumerate(self._choices):
-            yield Button(f"Option {label}", id=f"choice-{idx}")
+            # Use the label directly if it's descriptive, otherwise prefix "Option"
+            btn_text = label if len(label) > 3 else f"Option {label}"
+            yield Button(btn_text, id=f"choice-{idx}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
