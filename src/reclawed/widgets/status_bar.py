@@ -56,7 +56,7 @@ def _context_battery(tokens: int, max_tokens: int) -> str:
 
     filled_chars = "\u2588" * filled
     empty_chars = "\u2591" * empty
-    return f"[{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
+    return f"\U0001f50b [{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
 
 
 def _git_info(cwd: str | None) -> tuple[str | None, str | None]:
@@ -222,7 +222,7 @@ class StatusBar(Static):
 
         # Context battery gauge — always show
         ctx = _context_battery(self._context_tokens, self._context_max)
-        parts.append(ctx if ctx else f"[green]{'.' * 10}[/green] 0%")
+        parts.append(ctx if ctx else f"\U0001f50b [green]{'.' * 10}[/green] 0%")
 
         # Workspace
         if self._workspace_name:
