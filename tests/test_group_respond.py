@@ -228,7 +228,9 @@ class TestStatusBarGroupMode:
     def test_no_group_mode_by_default(self):
         bar = self._make_bar()
         bar._refresh_display()
-        assert "[" not in bar._last_render
+        assert "Humans Only" not in bar._last_render
+        assert "Full Auto" not in bar._last_render
+        assert "C2C" not in bar._last_render
 
     def test_group_mode_shown_when_set(self):
         bar = self._make_bar()

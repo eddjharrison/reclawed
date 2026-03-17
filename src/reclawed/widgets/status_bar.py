@@ -209,14 +209,13 @@ class StatusBar(Static):
     def _refresh_display(self) -> None:
         parts: list[str] = []
 
-        # Model
-        if self._model:
-            parts.append(f"[bold cyan]{_short_model(self._model)}[/bold cyan]")
+        # Model — always show something
+        model_display = _short_model(self._model) if self._model else "sonnet"
+        parts.append(f"[bold]{model_display}[/bold]")
 
-        # Context battery gauge
+        # Context battery gauge — always show
         ctx = _context_battery(self._context_tokens, self._context_max)
-        if ctx:
-            parts.append(ctx)
+        parts.append(ctx if ctx else f"[green]{'.' * 10}[/green] 0%")
 
         # Workspace
         if self._workspace_name:
