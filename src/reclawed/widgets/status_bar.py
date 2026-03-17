@@ -1,21 +1,40 @@
-"""Minimal status bar — context gauge, model, cost, conditional badges."""
+"""Minimal status bar — styled after Claude Code CLI status line."""
 
 from __future__ import annotations
 
 from textual.widgets import Static
 
-_BAR_WIDTH = 10
+# Model display name mapping — short codes like Claude Code uses
+_MODEL_SHORT: dict[str, str] = {
+    "claude-opus-4-6": "Opus 4.6",
+    "claude-sonnet-4-6": "Sonnet 4.6",
+    "claude-haiku-4-5": "Haiku 4.5",
+    "claude-sonnet-4-5": "Sonnet 4.5",
+    "claude-opus-4-5-20250918": "Opus 4.5",
+}
 
 
-def _context_bar(tokens: int, max_tokens: int) -> str:
-    """Render a compact progress bar: ████████░░ 78%"""
+def _short_model(model: str) -> str:
+    """Return a short display name for the model."""
+    if not model:
+        return ""
+    if model in _MODEL_SHORT:
+        return _MODEL_SHORT[model]
+    # Fallback: strip "claude-" prefix and clean up
+    short = model.replace("claude-", "").replace("-", " ").title()
+    return short
+
+
+def _battery_gauge(tokens: int, max_tokens: int) -> str:
+    """Render a battery-style context gauge: 🔋[██░░░] 16%"""
     if max_tokens <= 0 or tokens <= 0:
         return ""
     pct = min(tokens / max_tokens, 1.0)
-    filled = round(pct * _BAR_WIDTH)
-    empty = _BAR_WIDTH - filled
+    bar_width = 5
+    filled = round(pct * bar_width)
+    empty = bar_width - filled
     bar = "\u2588" * filled + "\u2591" * empty
-    return f"{bar} {pct:.0%}"
+    return f"[{bar}] {pct:.0%}"
 
 
 class StatusBar(Static):
@@ -25,14 +44,14 @@ class StatusBar(Static):
     StatusBar {
         width: 100%;
         height: 1;
-        background: $accent;
-        color: $text;
+        background: $surface;
+        color: $text-muted;
         padding: 0 1;
     }
     """
 
     def __init__(self, **kwargs) -> None:
-        super().__init__("Re:Clawed | New Chat", **kwargs)
+        super().__init__("", **kwargs)
         self._session_name = "New Chat"
         self._model = ""
         self._cost = 0.0
@@ -115,34 +134,29 @@ class StatusBar(Static):
         self._refresh_display()
 
     def _refresh_display(self) -> None:
-        parts: list[str] = []
+        left_parts: list[str] = []
+        right_parts: list[str] = []
 
-        # Left: session name
-        parts.append(self._session_name)
-
-        # Workspace (only if set)
+        # Left side: workspace + context gauge
         if self._workspace_name:
-            parts.append(f"[{self._workspace_name}]")
+            left_parts.append(f"\U0001f4c1 {self._workspace_name}")
 
-        # Transient states take priority
+        # Context gauge (battery style)
+        ctx = _battery_gauge(self._context_tokens, self._context_max)
+        if ctx:
+            left_parts.append(ctx)
+
+        # Transient states
         if self._connection_status:
-            parts.append(self._connection_status)
+            left_parts.append(self._connection_status)
         elif self._typing_indicator:
-            parts.append(self._typing_indicator)
+            left_parts.append(self._typing_indicator)
         elif self._streaming_indicator:
-            parts.append(self._streaming_indicator)
-        else:
-            # Context gauge (only when not streaming/typing)
-            ctx = _context_bar(self._context_tokens, self._context_max)
-            if ctx:
-                parts.append(ctx)
-            # Model
-            if self._model:
-                parts.append(self._model)
+            left_parts.append(self._streaming_indicator)
 
-        # Conditional badges (only when non-default)
+        # Right side: badges, model, tokens, cost
         if self._encrypted:
-            parts.append("Encrypted")
+            right_parts.append("\U0001f512")
 
         _mode_labels = {
             "humans_only": "Humans Only",
@@ -153,14 +167,35 @@ class StatusBar(Static):
             "all": "Full Auto", "off": "Humans Only",
         }
         if self._group_mode is not None:
-            parts.append(_mode_labels.get(self._group_mode, self._group_mode))
+            right_parts.append(_mode_labels.get(self._group_mode, self._group_mode))
 
-        # Only show bypass permissions — other modes are normal operation
         if self._permission_mode == "bypassPermissions":
-            parts.append("!! BYPASS !!")
+            right_parts.append("!! BYPASS !!")
 
-        # Cost (always, right side)
+        # Model (short name)
+        if self._model:
+            right_parts.append(_short_model(self._model))
+
+        # Token count
+        if self._context_tokens > 0:
+            if self._context_tokens >= 1000:
+                right_parts.append(f"{self._context_tokens / 1000:.1f}k")
+            else:
+                right_parts.append(str(self._context_tokens))
+
+        # Cost
         if self._cost > 0:
-            parts.append(f"${self._cost:.4f}")
+            right_parts.append(f"${self._cost:.4f}")
 
-        self.update(" | ".join(parts))
+        left = " | ".join(left_parts) if left_parts else ""
+        right = "  ".join(right_parts) if right_parts else ""
+
+        if left and right:
+            # Pad middle to push right side to the edge
+            self.update(f"{left}  {right}")
+        elif left:
+            self.update(left)
+        elif right:
+            self.update(right)
+        else:
+            self.update("")
