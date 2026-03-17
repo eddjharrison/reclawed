@@ -6,10 +6,14 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 - [x] **Workspace sections in sidebar** — each cwd/project gets its own collapsible section
 - [x] **Import existing sessions** — auto-discover from `~/.claude/projects/`, import via Settings screen
-- [x] **New chat in any workspace** — `+ New Chat` per workspace section, Ctrl+N uses current workspace
+- [x] **New chat in any workspace** — `+` per workspace header, F6 workspace picker, Ctrl+N in current workspace
 - [x] **Default workspace** — sessions without a workspace go under "Default" section
-- [x] **Workspace badge** — current workspace shown in status bar
-- [ ] **Per-workspace config** — different models, permissions, tools per workspace
+- [x] **Workspace badge** — current workspace shown in status bar with color
+- [x] **Per-workspace config** — different models, permissions, tools per workspace in config.toml
+- [x] **Color-coded workspace badges** — auto-assigned from palette (cyan, yellow, green, magenta, blue, red)
+- [x] **Workspace removal** — right-click header to remove with confirmation
+- [x] **Session refresh** — `r` button in workspace header to re-import from Claude Code
+- [ ] **Resizable sidebar** — drag to resize sidebar width
 
 ## Settings
 
@@ -38,22 +42,40 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Tool activity display** — real-time tool activity shown inline in message bubbles (Reading, Editing, Running, Searching...) with collapsible details
 - [x] **Tool approval UI** — when Claude needs permission, approve/deny buttons appear inline. SDK `can_use_tool` callback bridges to TUI via asyncio.Future
 - [x] **Question handling** — detects when Claude asks a question, highlights the bubble with accent border
-- [x] **Choice selection** — numbered options rendered as clickable buttons, auto-fills compose area on click
+- [x] **Choice selection** — numbered options rendered as clickable buttons, auto-submit on click
+- [x] **AskUserQuestion widget** — multi-question forms with clickable options, collect-then-submit, matches Claude Code CLI
+- [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
+- [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
+
+## Session Management
+
+- [x] **Auto-naming sessions** — haiku generates 3-5 word names after first exchange (configurable)
+- [x] **Generate name on demand** — context menu → "Generate name"
+- [x] **Session pinning** — pin sessions to top of workspace via context menu
+- [x] **Imported session name cleanup** — strips XML tags and skips system messages
+- [x] **Newest first** — sessions sorted by pinned DESC, updated_at DESC
 
 ## Visuals
 
-- [x] **Status bar redesign** — decluttered minimal bar. Only shows what matters NOW. Conditional badges (bypass perms, room mode) appear only when non-default
-- [x] **Context gauge** — `████████░░ 78%` progress bar showing context window usage. Tracks input_tokens from SDK, persisted per-session
-- [ ] **BUG: Status bar invisible** — StatusBar widget not rendering in the chat panel Vertical layout. Needs CSS investigation — likely height:1 being compressed to 0 in the flex container. The widget exists and updates correctly (verified in tests), just not visible in the TUI
-- [x] **Full settings editor** — tabbed settings screen (General, Claude, Group Chat, Workspaces) with Select dropdowns and Input fields. All config fields editable from TUI
-- [ ] **Color-coded workspace badges** — different colors per workspace in status bar
+- [x] **Status bar redesign** — battery gauge, model emoji (🧠/🤖/⚡), git branch+status, permission badges, workspace color
+- [x] **Context gauge** — draining battery style, green/yellow/red based on remaining context
+- [x] **Status bar visible** — fixed dock:bottom compression bug
+- [x] **Full settings editor** — tabbed settings screen (General, Claude, Group Chat, Workspaces)
+- [x] **Quit confirmation** — Ctrl+D shows confirm dialog with y/n/arrow key navigation
 - Open to ideas
+
+## Windows Polish
+
+- [x] **No extra terminal window** — subprocess CREATE_NO_WINDOW patch for all processes including SDK
+- [x] **Clean exit** — suppressed asyncio ResourceWarning tracebacks
+- [x] **Ctrl+Enter newlines** — Windows Terminal sends ctrl+j for Ctrl+Enter
+- [x] **No ANSI leakage** — naming subprocess uses NO_COLOR=1 + stdin/stderr DEVNULL
 
 ## Group Chat Enhancements
 
 - [x] **Invite to chat** — Ctrl+I upgrades a 1:1 session into a group. Claude keeps full context, messages stay. Connection string generated for sharing
 - [x] **Clear room modes** — F3 cycles per-room synchronized modes: Humans Only, Claude Assists, Full Auto, C2C. Broadcast via relay so all participants see the same mode
-- [x] **Mid-chat permission switching** — F5 cycles permission modes (default/acceptEdits/bypassPermissions) without losing context. Per-session, persisted. Status bar shows current mode
+- [x] **Mid-chat permission switching** — F5 cycles permission modes (default/plan/acceptEdits/bypassPermissions) without losing context. Per-session, persisted
 - [x] **Autonomous Claude-to-Claude** — C2C mode + bypassPermissions = Claudes work together overnight with full filesystem access
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
