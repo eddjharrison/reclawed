@@ -7,7 +7,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.message import Message as TMessage
-from textual.widgets import Button, TextArea
+from textual.events import Click
+from textual.widgets import Button, Label, TextArea
 
 from reclawed.widgets.attachment_preview import AttachmentPreview
 
@@ -62,6 +63,17 @@ class ComposeInput(TextArea):
             self.post_message(self.AttachFileRequested())
 
 
+class _AttachLabel(Label):
+    """Clickable attach icon."""
+
+    class Clicked(TMessage):
+        """Posted when clicked."""
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(self.Clicked())
+
+
 class ComposeArea(Vertical):
     """Text input area with send button and attachment support."""
 
@@ -85,21 +97,16 @@ class ComposeArea(Vertical):
         min-height: 3;
         max-height: 8;
     }
-    ComposeArea #attach-btn {
-        width: 5;
-        min-width: 5;
-        height: 3;
-        min-height: 3;
-        margin-left: 1;
-        background: $surface;
+    ComposeArea #attach-label {
+        width: 2;
+        height: 1;
+        margin: 1 0 0 1;
         color: $text-muted;
-        border: tall $surface-lighten-2;
     }
-    ComposeArea #attach-btn:hover {
-        background: $primary 30%;
-        color: $text;
+    ComposeArea #attach-label:hover {
+        color: $accent;
     }
-    ComposeArea #send-btn {
+    ComposeArea Button {
         width: 8;
         min-width: 8;
         min-height: 3;
@@ -145,7 +152,7 @@ class ComposeArea(Vertical):
         yield AttachmentPreview(id="attachment-preview")
         with Horizontal(id="compose-row"):
             yield ComposeInput(id="compose-input")
-            yield Button("📁", id="attach-btn", variant="default")
+            yield _AttachLabel("📁", id="attach-label")
             yield Button("Send", id="send-btn", variant="primary")
 
     def on_mount(self) -> None:
@@ -154,9 +161,10 @@ class ComposeArea(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send-btn":
             self._submit()
-        elif event.button.id == "attach-btn":
-            event.stop()
-            self.post_message(self.AttachFileTriggered())
+
+    def on__attach_label_clicked(self, event: _AttachLabel.Clicked) -> None:
+        event.stop()
+        self.post_message(self.AttachFileTriggered())
 
     def on_compose_input_send_requested(self) -> None:
         self._submit()
