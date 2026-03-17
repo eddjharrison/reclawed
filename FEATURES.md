@@ -64,6 +64,21 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Quit confirmation** — Ctrl+D shows confirm dialog with y/n/arrow key navigation
 - Open to ideas
 
+## Message Queue & Side Questions
+
+When Claude is busy responding, the user should still be able to compose and queue follow-up messages — and ask quick side questions without derailing the current task.
+
+- [ ] **Message queue** — type and send messages while Claude is still responding. Queued messages are sent in order once the current response completes. Visual indicator showing "2 queued" in the compose area. No more waiting for a response to finish before typing the next thought
+- [ ] **/btw side questions** — Claude Code's `/btw` command lets you ask a quick question without interrupting the current work. In the TUI this could be: a keyboard shortcut (e.g. `Ctrl+B`) that opens a lightweight side panel or modal, sends the question to a separate haiku instance, shows the answer, and returns focus to the main conversation. The main Claude session continues uninterrupted. Think of it as a quick lookup while Claude is working — "btw what's the syntax for X?" without losing context
+- [ ] **Queue visibility** — show pending messages in the compose area or a small indicator. Allow reordering or cancelling queued messages before they're sent
+
+### Design considerations
+
+- Message queue needs careful handling with the Agent SDK — messages must be sent sequentially after each response completes, not in parallel
+- /btw should use a separate lightweight session (haiku, no tools, no session history) to keep it fast and cheap
+- In group chat, queued messages should still broadcast in order
+- The queue should persist if the user switches sessions — queued messages stay with their session
+
 ## Windows Polish
 
 - [x] **No extra terminal window** — subprocess CREATE_NO_WINDOW patch for all processes including SDK
