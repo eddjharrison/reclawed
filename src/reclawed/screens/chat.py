@@ -1407,10 +1407,23 @@ class ChatScreen(Screen):
     # --- Typing indicators ---
 
     async def _on_tool_approval_needed(self, tool_name: str, tool_input: dict, future: asyncio.Future) -> None:
-        """Called from ClaudeSession's can_use_tool — show approval UI."""
+        """Called from ClaudeSession's can_use_tool — show approval UI.
+
+        Special handling for AskUserQuestion: renders choices as clickable
+        buttons instead of approve/deny.
+        """
         from reclawed.widgets.tool_approval import ToolApprovalWidget
         tool_use_id = f"approval-{id(future)}"
         self._pending_approvals[tool_use_id] = future
+
+        # AskUserQuestion: render choices as buttons, auto-approve
+        if tool_name == "AskUserQuestion":
+            # Auto-approve the tool use — Claude is just asking a question
+            if not future.done():
+                from claude_agent_sdk import PermissionResultAllow
+                future.set_result(PermissionResultAllow())
+            return
+
         try:
             msg_list = self.query_one("#message-list", MessageList)
             # Find the most recent assistant bubble
