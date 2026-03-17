@@ -115,6 +115,34 @@ Git for conversations — save checkpoints, branch from any point, explore diffe
 - [ ] **Compare branches** — side-by-side view of how two branches diverged. Useful for "I tried approach A and approach B — which worked better?"
 - [ ] **Merge branch context** — take findings from an exploratory branch and inject them as context into the main conversation. "I explored Redis in a branch and here's what I learned"
 
+## Orchestrator / Worker Sessions
+
+Hierarchical multi-session workflow — one Claude plans and delegates, child Claude instances execute specific tasks, results flow back up. Automates the common pattern of "architect Claude + implementation Claudes" across a sprint.
+
+- [ ] **Spawn worker from orchestrator** — orchestrator Claude (or user) triggers a new child session for a specific task. Child is forked from orchestrator with the task prompt injected. Appears nested under the parent in the sidebar
+- [ ] **Nested session tree** — worker sessions display as collapsible children under their orchestrator in the sidebar. Visual hierarchy: orchestrator → worker 1, worker 2, worker 3. Click to switch between them while others continue in background
+- [ ] **Worker autonomy** — workers can run in `bypassPermissions` mode independently. Orchestrator stays in `plan` or `acceptEdits` mode for oversight. Each worker has its own permission level
+- [ ] **Auto-summary on completion** — when a worker finishes (detects completion or user marks done), a summary (commit hashes, changes made, edge cases found) is auto-injected into the orchestrator's context. Keeps orchestrator clean and focused
+- [ ] **Sprint tracking** — orchestrator maintains a live sprint doc. As workers complete tasks, the doc updates with status, commit refs, and any issues found. Visible as a pinned message or dedicated panel
+- [ ] **Orchestrator-initiated delegation** — orchestrator Claude can suggest spawning workers: "This has 3 independent tasks — want me to spin up workers for each?" User approves, workers launch in parallel
+- [ ] **Worker templates** — preconfigured worker types: "implementation sprint", "test writer", "code reviewer", "documentation". Each gets a tailored system prompt and permission level
+
+### How it differs from existing features
+
+| Feature | Purpose |
+|---------|---------|
+| **Group chat** | Multiple humans + their Claudes collaborating as peers |
+| **Session branching** | Exploring alternative approaches from a checkpoint |
+| **Orchestrator/Worker** | Hierarchical delegation — one Claude plans, children execute, results flow up |
+
+### Design considerations
+
+- Workers are full `ClaudeSession` instances, not SDK subagents — they get their own context window, tools, and permissions
+- Fork from orchestrator carries the high-level plan but not implementation details (keeps worker context clean)
+- The orchestrator never sees raw code diffs from workers — only summaries. This preserves orchestrator context for strategic decisions
+- Workers could be different models: orchestrator on Opus for planning, workers on Sonnet for speed
+- In group chat, Tommy's orchestrator could delegate to Tommy's workers while Ed's orchestrator delegates to Ed's workers — coordinated via the relay
+
 ## Extensibility / Plugin Ecosystem
 
 The TUI should integrate with Claude Code's extensibility features — plugins, skills, MCP servers — and provide a way to discover, install, and manage them without leaving the app.
