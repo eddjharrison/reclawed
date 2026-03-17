@@ -6,11 +6,11 @@ import subprocess
 from textual.widgets import Static
 
 _MODEL_SHORT: dict[str, str] = {
-    "claude-opus-4-6": "Opus 4.6 (1M context)",
-    "claude-sonnet-4-6": "Sonnet 4.6",
-    "claude-haiku-4-5": "Haiku 4.5",
-    "claude-sonnet-4-5": "Sonnet 4.5",
-    "claude-opus-4-5-20250918": "Opus 4.5",
+    "claude-opus-4-6": "\U0001f9e0 Opus 4.6 (1M context)",
+    "claude-sonnet-4-6": "\U0001f916 Sonnet 4.6",
+    "claude-haiku-4-5": "\u26a1 Haiku 4.5",
+    "claude-sonnet-4-5": "\U0001f916 Sonnet 4.5",
+    "claude-opus-4-5-20250918": "\U0001f9e0 Opus 4.5",
 }
 
 
@@ -218,7 +218,7 @@ class StatusBar(Static):
 
         # Model — always show something, with dot indicator
         model_display = _short_model(self._model) if self._model else "sonnet"
-        parts.append(f"\u2b24 [bold]{model_display}[/bold]")
+        parts.append(f"[bold]{model_display}[/bold]")
 
         # Context battery gauge — always show
         ctx = _context_battery(self._context_tokens, self._context_max)
