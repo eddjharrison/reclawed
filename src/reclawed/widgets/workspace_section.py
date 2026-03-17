@@ -9,42 +9,17 @@ from textual.message import Message as TMessage
 from textual.widgets import Collapsible, Label
 
 
-class _NewChatLabel(Label):
-    """A small clickable label that posts a message when clicked."""
-
-    class Pressed(TMessage):
-        """Posted when this label is clicked."""
-
-    def on_click(self, event: Click) -> None:
-        event.stop()
-        self.post_message(self.Pressed())
-
-
 class WorkspaceSection(Vertical):
     """A collapsible workspace section in the sidebar.
 
-    Contains ChatListItem widgets with a clickable '[+]' aligned right
-    in the header area.
-    Posts ``NewChatInWorkspace(cwd)`` when the add button is clicked.
+    The Collapsible title includes a '[+]' suffix. Clicking it posts
+    ``NewChatInWorkspace(cwd)``.
     """
 
     DEFAULT_CSS = """
     WorkspaceSection {
         width: 100%;
         height: auto;
-    }
-    WorkspaceSection .ws-add-btn {
-        dock: right;
-        width: 3;
-        height: 1;
-        color: $text-muted;
-        content-align: center middle;
-        margin-top: 0;
-        offset-y: -1;
-    }
-    WorkspaceSection .ws-add-btn:hover {
-        color: $accent;
-        text-style: bold;
     }
     """
 
@@ -76,19 +51,26 @@ class WorkspaceSection(Vertical):
         self._collapsed = collapsed
 
     def compose(self) -> ComposeResult:
-        with Collapsible(title=self._workspace_name, collapsed=self._collapsed):
+        title = f"{self._workspace_name}  [+]"
+        with Collapsible(title=title, collapsed=self._collapsed):
             yield Vertical(id=f"ws-items-{id(self)}")
-        yield _NewChatLabel("[+]", classes="ws-add-btn")
-
-    def on__new_chat_label_pressed(self, event: _NewChatLabel.Pressed) -> None:
-        event.stop()
-        self.post_message(self.NewChatInWorkspace(self._cwd))
 
     def on_click(self, event: Click) -> None:
-        # Right-click on workspace header → remove workspace
         if event.button == 3 and self._cwd is not None:
+            # Right-click → remove workspace
             event.stop()
             self.post_message(self.RemoveWorkspaceRequested(self._cwd, self._workspace_name))
+            return
+
+        # Left-click on the header row — check if they clicked the [+] area
+        # The [+] is at the end of the title, so check if click x is far right
+        if event.button == 1 and event.y == 0:
+            # Header row is y=0. The [+] occupies the last few chars.
+            # Get the widget width and check if click is in the right portion
+            width = self.size.width
+            if event.x >= width - 6:
+                event.stop()
+                self.post_message(self.NewChatInWorkspace(self._cwd))
 
     @property
     def items_container(self) -> Vertical:
