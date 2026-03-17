@@ -1439,15 +1439,10 @@ class ChatScreen(Screen):
                 future.set_result(PermissionResultDeny(message="User denied"))
 
     def on_choice_buttons_selected(self, event) -> None:
-        """Handle choice button click — fill compose area with the selection."""
+        """Handle choice button click — auto-submit the selection."""
         event.stop()
-        try:
-            compose = self.query_one("#compose-area", ComposeArea)
-            text_area = compose.query_one("#compose-input")
-            text_area.load_text(f"{event.label}")
-            text_area.focus()
-        except Exception:
-            pass
+        # Simulate sending the choice as a message
+        self.post_message(ComposeArea.Submitted(f"Option {event.label}: {event.description}"))
 
     def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
         """Show @mention participant picker."""

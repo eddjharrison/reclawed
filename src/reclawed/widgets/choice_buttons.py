@@ -22,8 +22,8 @@ class ChoiceButtons(Horizontal):
     }
     ChoiceButtons Button {
         margin-right: 1;
-        min-width: 8;
-        height: 1;
+        min-width: 6;
+        height: 3;
     }
     """
 
@@ -41,8 +41,7 @@ class ChoiceButtons(Horizontal):
 
     def compose(self) -> ComposeResult:
         for idx, (label, description) in enumerate(self._choices):
-            short = description[:30] + "..." if len(description) > 30 else description
-            yield Button(f"{label}. {short}", id=f"choice-{idx}")
+            yield Button(f"Option {label}", id=f"choice-{idx}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
