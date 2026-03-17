@@ -13,6 +13,9 @@ class SpawnProposalsWidget(Vertical):
 
     Posts ``SpawnProposalsWidget.SpawnRequested(proposals, orchestrator_session_id)``
     when the user clicks "Spawn All" or an individual "Spawn" button.
+
+    Each proposal dict may include an optional ``template_id`` key; when
+    present the template name is shown as a tag alongside the model/permissions.
     """
 
     DEFAULT_CSS = """
@@ -63,11 +66,14 @@ class SpawnProposalsWidget(Vertical):
         self,
         proposals: list[dict],
         orchestrator_session_id: str,
+        template_names: dict[str, str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._proposals = proposals
         self._orchestrator_session_id = orchestrator_session_id
+        # Mapping of template_id → human-readable template name for display
+        self._template_names: dict[str, str] = template_names or {}
 
     def compose(self) -> ComposeResult:
         n = len(self._proposals)
@@ -78,9 +84,16 @@ class SpawnProposalsWidget(Vertical):
         for i, p in enumerate(self._proposals):
             model = p.get("model", "sonnet")
             perm = p.get("permission_mode", "bypassPermissions")
+            template_id = p.get("template_id")
+            # Build the meta line: "sonnet / bypassPermissions" or
+            # "sonnet / bypassPermissions  [Implementation Sprint]"
+            meta = f"{model} / {perm}"
+            if template_id:
+                tmpl_name = self._template_names.get(template_id, template_id)
+                meta += f"  [{tmpl_name}]"
             with Vertical(classes="proposal-row"):
                 yield Label(f"  {i + 1}. {p['task']}", classes="proposal-task")
-                yield Label(f"     {model} / {perm}", classes="proposal-meta")
+                yield Label(f"     {meta}", classes="proposal-meta")
         with Horizontal(classes="spawn-buttons"):
             yield Button(f"Spawn All ({n})", id="btn-spawn-all", variant="success")
             yield Button("Skip", id="btn-skip", variant="error")

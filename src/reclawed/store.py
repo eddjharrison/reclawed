@@ -101,6 +101,8 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN session_type TEXT",
             "ALTER TABLE sessions ADD COLUMN worker_status TEXT",
             "ALTER TABLE sessions ADD COLUMN worker_summary TEXT",
+            # Worker template tracking
+            "ALTER TABLE sessions ADD COLUMN worker_template_id TEXT",
         ]
         for sql in migrations:
             try:
@@ -121,8 +123,8 @@ class Store:
             "total_cost_usd, message_count, muted, archived, unread_count, "
             "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, "
             "cwd, room_mode, permission_mode, last_input_tokens, pinned, "
-            "parent_session_id, session_type, worker_status, worker_summary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "parent_session_id, session_type, worker_status, worker_summary, worker_template_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
@@ -131,7 +133,7 @@ class Store:
              session.relay_token, session.encryption_passphrase, session.cwd,
              session.room_mode, session.permission_mode, session.last_input_tokens,
              int(session.pinned), session.parent_session_id, session.session_type,
-             session.worker_status, session.worker_summary),
+             session.worker_status, session.worker_summary, session.worker_template_id),
         )
         self._conn.commit()
         return session
@@ -161,7 +163,7 @@ class Store:
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
             "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=?, "
             "last_input_tokens=?, pinned=?, parent_session_id=?, session_type=?, "
-            "worker_status=?, worker_summary=? WHERE id=?",
+            "worker_status=?, worker_summary=?, worker_template_id=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
@@ -170,7 +172,7 @@ class Store:
              session.room_mode, session.permission_mode,
              session.last_input_tokens, int(session.pinned),
              session.parent_session_id, session.session_type,
-             session.worker_status, session.worker_summary, session.id),
+             session.worker_status, session.worker_summary, session.worker_template_id, session.id),
         )
         self._conn.commit()
 
@@ -465,4 +467,5 @@ class Store:
             session_type=row["session_type"] if "session_type" in keys else None,
             worker_status=row["worker_status"] if "worker_status" in keys else None,
             worker_summary=row["worker_summary"] if "worker_summary" in keys else None,
+            worker_template_id=row["worker_template_id"] if "worker_template_id" in keys else None,
         )

@@ -1,8 +1,9 @@
-"""Full settings editor with tabs — General, Claude, Group Chat, Workspaces."""
+"""Full settings editor with tabs — General, Claude, Group Chat, Workspaces, Templates."""
 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 
 from rich.text import Text
@@ -12,11 +13,11 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, Checkbox, Input, Label, Select, Static,
+    Button, Checkbox, Input, Label, Select, Static, TextArea,
     TabbedContent, TabPane,
 )
 
-from reclawed.config import Config, Workspace, THEME_MAP, _config_file_path
+from reclawed.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate, THEME_MAP, _config_file_path
 from reclawed.importer import (
     DiscoveredProject,
     discover_projects,
@@ -108,6 +109,54 @@ class SettingsScreen(ModalScreen[bool]):
     SettingsScreen #btn-add {
         width: 10;
     }
+    SettingsScreen #template-list {
+        width: 100%;
+        height: 8;
+        border: solid $primary 30%;
+        margin-bottom: 1;
+    }
+    SettingsScreen .tmpl-row {
+        width: 100%;
+        height: 1;
+    }
+    SettingsScreen .tmpl-icon {
+        width: 3;
+        color: $text-muted;
+    }
+    SettingsScreen .tmpl-name {
+        width: 1fr;
+    }
+    SettingsScreen .tmpl-info {
+        width: 22;
+        color: $text-muted;
+    }
+    SettingsScreen .tmpl-btn {
+        width: 6;
+        min-width: 6;
+        height: 1;
+        border: none;
+        padding: 0 0;
+        margin: 0 0 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
+    SettingsScreen .tmpl-btn:hover {
+        color: $primary;
+        background: $surface-lighten-1;
+    }
+    SettingsScreen .tmpl-del:hover {
+        color: $error;
+    }
+    SettingsScreen #btn-new-template {
+        width: 18;
+        margin-top: 1;
+    }
+    SettingsScreen #tmpl-hint {
+        width: 100%;
+        color: $text-muted;
+        height: 1;
+        margin-bottom: 1;
+    }
     SettingsScreen #config-path {
         width: 100%;
         color: $text-muted;
@@ -156,6 +205,10 @@ class SettingsScreen(ModalScreen[bool]):
         self._dirty = False
         # True after the first unsaved-close warning; a second Close will dismiss.
         self._close_warned = False
+        # Custom (non-builtin) templates being edited in this session.
+        self._custom_templates: list[WorkerTemplate] = [
+            t for t in config.worker_templates if not t.builtin
+        ]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-dialog"):
@@ -169,6 +222,8 @@ class SettingsScreen(ModalScreen[bool]):
                     yield from self._group_fields()
                 with TabPane("Workspaces", id="tab-workspaces"):
                     yield from self._workspace_fields()
+                with TabPane("Templates", id="tab-templates"):
+                    yield from self._template_fields()
             yield Label(f"Config: {_config_file_path()}", id="config-path")
             yield Label("", id="status-line")
             with Horizontal(id="button-bar"):
@@ -266,11 +321,20 @@ class SettingsScreen(ModalScreen[bool]):
             yield Button("Add", id="btn-add")
         yield Button("Import Selected", id="btn-import", variant="primary")
 
+    def _template_fields(self) -> ComposeResult:
+        yield Label(
+            "Built-in templates (🔒) are read-only. Custom templates can be edited or deleted.",
+            id="tmpl-hint",
+        )
+        yield VerticalScroll(id="template-list")
+        yield Button("＋ New Template", id="btn-new-template")
+
     async def on_mount(self) -> None:
         self._set_status("Scanning for projects...")
         projects = await asyncio.to_thread(discover_projects)
         self._projects = projects
         self._populate_project_list()
+        self._populate_template_list()
         self._set_status(f"Found {len(projects)} projects")
         # Apply initial relay-field enabled/disabled state based on current mode.
         self._update_relay_fields(self._config.relay_mode)
@@ -292,6 +356,36 @@ class SettingsScreen(ModalScreen[bool]):
             edit_btn = Button("⚙", id=f"btn-ws-edit-{id(project)}", classes="ws-edit-btn")
             edit_btn._project_cwd = project.cwd  # type: ignore[attr-defined]
             row.mount(edit_btn)
+
+    def _populate_template_list(self) -> None:
+        """Rebuild the template list widget from current config + custom templates."""
+        try:
+            template_list = self.query_one("#template-list", VerticalScroll)
+        except Exception:
+            return
+        template_list.remove_children()
+        # Show builtins first (always), then custom templates
+        for tmpl in BUILTIN_TEMPLATES:
+            self._mount_template_row(template_list, tmpl)
+        for tmpl in self._custom_templates:
+            self._mount_template_row(template_list, tmpl)
+
+    def _mount_template_row(self, container: VerticalScroll, tmpl: WorkerTemplate) -> None:
+        """Mount a single template row into *container*."""
+        icon = "🔒" if tmpl.builtin else "✎"
+        info = f"{tmpl.model} / {tmpl.permission_mode}"
+        row = Horizontal(classes="tmpl-row", id=f"tmpl-row-{tmpl.id}")
+        container.mount(row)
+        row.mount(Static(icon, classes="tmpl-icon"))
+        row.mount(Label(tmpl.name, classes="tmpl-name"))
+        row.mount(Label(info, classes="tmpl-info"))
+        if not tmpl.builtin:
+            edit_btn = Button("Edit", id=f"btn-tmpl-edit-{tmpl.id}", classes="tmpl-btn")
+            edit_btn._template_id = tmpl.id  # type: ignore[attr-defined]
+            row.mount(edit_btn)
+            del_btn = Button("Del", id=f"btn-tmpl-del-{tmpl.id}", classes="tmpl-btn tmpl-del")
+            del_btn._template_id = tmpl.id  # type: ignore[attr-defined]
+            row.mount(del_btn)
 
     # ------------------------------------------------------------------ #
     # Event handlers
@@ -340,6 +434,17 @@ class SettingsScreen(ModalScreen[bool]):
             cwd = getattr(event.button, "_project_cwd", None)
             if cwd:
                 self._open_workspace_config(cwd)
+            event.stop()
+        elif event.button.id == "btn-new-template":
+            self._open_template_editor(None)
+            event.stop()
+        elif event.button.id and event.button.id.startswith("btn-tmpl-edit-"):
+            tmpl_id = event.button.id[len("btn-tmpl-edit-"):]
+            self._open_template_editor(tmpl_id)
+            event.stop()
+        elif event.button.id and event.button.id.startswith("btn-tmpl-del-"):
+            tmpl_id = event.button.id[len("btn-tmpl-del-"):]
+            self._delete_template(tmpl_id)
             event.stop()
 
     # ------------------------------------------------------------------ #
@@ -397,6 +502,46 @@ class SettingsScreen(ModalScreen[bool]):
                 self._set_status(f"Overrides updated for {Path(cwd).name} (save to persist)")
 
         self.app.push_screen(WorkspaceConfigModal(cwd, overrides), _on_result)
+
+    # ------------------------------------------------------------------ #
+    # Template editor helpers
+    # ------------------------------------------------------------------ #
+
+    def _open_template_editor(self, template_id: str | None) -> None:
+        """Open WorkerTemplateModal to create (template_id=None) or edit a custom template."""
+        existing: WorkerTemplate | None = None
+        if template_id is not None:
+            existing = next((t for t in self._custom_templates if t.id == template_id), None)
+
+        def _on_result(result: WorkerTemplate | None) -> None:
+            if result is None:
+                return
+            if template_id is None:
+                # New template
+                self._custom_templates.append(result)
+                self._set_status(f"Template '{result.name}' added (save to persist)")
+            else:
+                # Replace existing
+                idx = next(
+                    (i for i, t in enumerate(self._custom_templates) if t.id == template_id),
+                    None,
+                )
+                if idx is not None:
+                    self._custom_templates[idx] = result
+                self._set_status(f"Template '{result.name}' updated (save to persist)")
+            self._populate_template_list()
+            self._mark_dirty()
+
+        self.app.push_screen(WorkerTemplateModal(existing), _on_result)
+
+    def _delete_template(self, template_id: str) -> None:
+        """Remove a custom template by ID and refresh the list."""
+        before = len(self._custom_templates)
+        self._custom_templates = [t for t in self._custom_templates if t.id != template_id]
+        if len(self._custom_templates) < before:
+            self._populate_template_list()
+            self._set_status("Template deleted (save to persist)")
+            self._mark_dirty()
 
     # ------------------------------------------------------------------ #
     # Validation helpers
@@ -529,6 +674,9 @@ class SettingsScreen(ModalScreen[bool]):
 
         # Workspaces — update from checked projects
         self._update_workspaces_from_checked()
+
+        # Templates — rebuild from builtins + current custom list
+        c.worker_templates = list(BUILTIN_TEMPLATES) + list(self._custom_templates)
 
         c.save()
         self._changed = True
@@ -784,6 +932,190 @@ class WorkspaceConfigModal(ModalScreen[dict | None]):
             "permission_mode": perm if perm else None,
             "allowed_tools": tools if tools else None,
         })
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class WorkerTemplateModal(ModalScreen["WorkerTemplate | None"]):
+    """Modal for creating or editing a custom :class:`~reclawed.config.WorkerTemplate`.
+
+    Pass an existing ``WorkerTemplate`` to edit it, or ``None`` to create a new one.
+    Returns the saved ``WorkerTemplate`` on success, or ``None`` on cancel.
+    """
+
+    DEFAULT_CSS = """
+    WorkerTemplateModal {
+        align: center middle;
+    }
+    WorkerTemplateModal > #wtm-dialog {
+        width: 72;
+        height: auto;
+        max-height: 40;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    WorkerTemplateModal #wtm-title {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        color: $primary;
+        margin-bottom: 1;
+    }
+    WorkerTemplateModal .wtm-row {
+        width: 100%;
+        height: 3;
+    }
+    WorkerTemplateModal .wtm-label {
+        width: 18;
+        padding: 1 1 0 0;
+    }
+    WorkerTemplateModal .wtm-label-top {
+        width: 100%;
+        color: $text-muted;
+        margin-top: 1;
+        height: 1;
+    }
+    WorkerTemplateModal .wtm-input {
+        width: 1fr;
+    }
+    WorkerTemplateModal .wtm-select {
+        width: 1fr;
+    }
+    WorkerTemplateModal #ta-wtm-prompt {
+        height: 7;
+        margin-bottom: 1;
+    }
+    WorkerTemplateModal #wtm-error {
+        width: 100%;
+        color: $error;
+        height: 1;
+        margin-bottom: 0;
+    }
+    WorkerTemplateModal #wtm-buttons {
+        width: 100%;
+        height: 3;
+        align-horizontal: right;
+        margin-top: 1;
+    }
+    WorkerTemplateModal #wtm-buttons Button {
+        margin-left: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+    ]
+
+    _MODEL_OPTIONS = [
+        ("sonnet", "sonnet"),
+        ("opus", "opus"),
+        ("haiku", "haiku"),
+    ]
+    _PERM_OPTIONS = [
+        ("default", "default"),
+        ("acceptEdits", "acceptEdits"),
+        ("bypassPermissions", "bypassPermissions"),
+    ]
+
+    def __init__(self, template: WorkerTemplate | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._template = template  # None → creating new
+
+    def compose(self) -> ComposeResult:
+        is_new = self._template is None
+        title = "New Worker Template" if is_new else f"Edit Template: {self._template.name}"  # type: ignore[union-attr]
+        model_val = self._template.model if self._template else "sonnet"
+        perm_val = self._template.permission_mode if self._template else "bypassPermissions"
+        name_val = self._template.name if self._template else ""
+        prompt_val = self._template.system_prompt if self._template else ""
+        tools_val = (self._template.allowed_tools or "") if self._template else ""
+
+        with Vertical(id="wtm-dialog"):
+            yield Label(title, id="wtm-title")
+            with Horizontal(classes="wtm-row"):
+                yield Label("Name", classes="wtm-label")
+                yield Input(value=name_val, placeholder="e.g. Security Auditor", id="inp-wtm-name", classes="wtm-input")
+            yield Label("System Prompt", classes="wtm-label-top")
+            yield TextArea(prompt_val, id="ta-wtm-prompt")
+            with Horizontal(classes="wtm-row"):
+                yield Label("Model", classes="wtm-label")
+                yield Select(self._MODEL_OPTIONS, value=model_val, id="sel-wtm-model", classes="wtm-select", allow_blank=False)
+            with Horizontal(classes="wtm-row"):
+                yield Label("Permission Mode", classes="wtm-label")
+                yield Select(self._PERM_OPTIONS, value=perm_val, id="sel-wtm-perm", classes="wtm-select", allow_blank=False)
+            with Horizontal(classes="wtm-row"):
+                yield Label("Allowed Tools", classes="wtm-label")
+                yield Input(
+                    value=tools_val,
+                    placeholder="(inherit global, e.g. Read,Edit,Bash)",
+                    id="inp-wtm-tools",
+                    classes="wtm-input",
+                )
+            yield Label("", id="wtm-error")
+            with Horizontal(id="wtm-buttons"):
+                yield Button("Save", id="btn-wtm-save", variant="primary")
+                yield Button("Cancel", id="btn-wtm-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#inp-wtm-name", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-wtm-save":
+            self._do_save()
+        elif event.button.id == "btn-wtm-cancel":
+            self.dismiss(None)
+
+    def _do_save(self) -> None:
+        name = self.query_one("#inp-wtm-name", Input).value.strip()
+        if not name:
+            self._set_error("Name is required")
+            return
+
+        prompt = self.query_one("#ta-wtm-prompt", TextArea).text.strip()
+        if not prompt:
+            self._set_error("System prompt is required")
+            return
+
+        try:
+            model_sel = self.query_one("#sel-wtm-model", Select)
+            model = str(model_sel.value) if model_sel.value and model_sel.value != Select.BLANK else "sonnet"
+        except Exception:
+            model = "sonnet"
+
+        try:
+            perm_sel = self.query_one("#sel-wtm-perm", Select)
+            perm = str(perm_sel.value) if perm_sel.value and perm_sel.value != Select.BLANK else "bypassPermissions"
+        except Exception:
+            perm = "bypassPermissions"
+
+        tools_raw = self.query_one("#inp-wtm-tools", Input).value.strip()
+        tools: str | None = tools_raw if tools_raw else None
+
+        # Preserve ID when editing, generate a new one when creating
+        if self._template is not None:
+            tmpl_id = self._template.id
+        else:
+            # Slug from name + short uuid for uniqueness
+            slug = "-".join(name.lower().split())[:24]
+            tmpl_id = f"{slug}-{uuid.uuid4().hex[:6]}"
+
+        self.dismiss(WorkerTemplate(
+            id=tmpl_id,
+            name=name,
+            system_prompt=prompt,
+            model=model,
+            permission_mode=perm,
+            allowed_tools=tools,
+            builtin=False,
+        ))
+
+    def _set_error(self, msg: str) -> None:
+        try:
+            self.query_one("#wtm-error", Label).update(msg)
+        except Exception:
+            pass
 
     def action_cancel(self) -> None:
         self.dismiss(None)

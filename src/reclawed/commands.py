@@ -24,6 +24,11 @@ class ReclawedCommands(Provider):
             command=self._open_settings,
             help="Discover and import Claude sessions from other projects",
         )
+        yield DiscoveryHit(
+            display="Spawn Worker from Template...",
+            command=self._spawn_worker_from_template,
+            help="Open the worker spawner with template selection",
+        )
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -35,6 +40,8 @@ class ReclawedCommands(Provider):
              "Update your participant name shown in group chats"),
             ("Import Workspaces", self._open_settings,
              "Discover and import Claude sessions from other projects"),
+            ("Spawn Worker from Template...", self._spawn_worker_from_template,
+             "Open the worker spawner with template selection"),
         ]
 
         for display, callback, help_text in commands:
@@ -58,3 +65,9 @@ class ReclawedCommands(Provider):
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_change_display_name()
+
+    async def _spawn_worker_from_template(self) -> None:
+        from reclawed.screens.chat import ChatScreen
+        screen = self.app.screen
+        if isinstance(screen, ChatScreen):
+            screen.action_spawn_worker()

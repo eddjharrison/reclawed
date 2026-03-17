@@ -1,8 +1,8 @@
-"""Tests for config parsing, workspaces, and workspace_for_cwd."""
+"""Tests for config parsing, workspaces, workspace_for_cwd, and worker templates."""
 
 from pathlib import Path
 
-from reclawed.config import Config, Workspace
+from reclawed.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate
 
 
 def test_workspace_expanded_path(tmp_path):
@@ -297,3 +297,221 @@ def test_config_save_roundtrip_workspace_overrides(tmp_path):
     assert frontend.model is None
     assert frontend.permission_mode is None
     assert frontend.allowed_tools is None
+
+
+# ---------------------------------------------------------------------------
+# Worker Templates — dataclass defaults
+# ---------------------------------------------------------------------------
+
+
+def test_worker_template_defaults():
+    """WorkerTemplate has expected default field values."""
+    tmpl = WorkerTemplate(id="my-tmpl", name="My Template", system_prompt="Do stuff.")
+    assert tmpl.model == "sonnet"
+    assert tmpl.permission_mode == "bypassPermissions"
+    assert tmpl.allowed_tools is None
+    assert tmpl.builtin is False
+
+
+def test_worker_template_custom_fields():
+    """WorkerTemplate stores all custom field values."""
+    tmpl = WorkerTemplate(
+        id="reviewer",
+        name="Code Reviewer",
+        system_prompt="Review this code.",
+        model="opus",
+        permission_mode="acceptEdits",
+        allowed_tools="Read,Glob,Grep",
+        builtin=False,
+    )
+    assert tmpl.id == "reviewer"
+    assert tmpl.name == "Code Reviewer"
+    assert tmpl.system_prompt == "Review this code."
+    assert tmpl.model == "opus"
+    assert tmpl.permission_mode == "acceptEdits"
+    assert tmpl.allowed_tools == "Read,Glob,Grep"
+    assert tmpl.builtin is False
+
+
+# ---------------------------------------------------------------------------
+# Worker Templates — builtin merge logic
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_templates_count():
+    """BUILTIN_TEMPLATES contains exactly 4 entries."""
+    assert len(BUILTIN_TEMPLATES) == 4
+
+
+def test_builtin_templates_ids():
+    """BUILTIN_TEMPLATES has the expected IDs."""
+    ids = {t.id for t in BUILTIN_TEMPLATES}
+    assert ids == {"implementation", "test-writer", "code-reviewer", "doc-writer"}
+
+
+def test_builtin_templates_all_marked_builtin():
+    """All BUILTIN_TEMPLATES have builtin=True."""
+    for t in BUILTIN_TEMPLATES:
+        assert t.builtin is True, f"{t.id} should have builtin=True"
+
+
+def test_config_default_has_builtin_templates():
+    """Default Config always includes the 4 built-in templates."""
+    cfg = Config()
+    builtin_ids = {t.id for t in cfg.worker_templates if t.builtin}
+    assert builtin_ids == {"implementation", "test-writer", "code-reviewer", "doc-writer"}
+
+
+def test_builtin_templates_appear_first():
+    """Built-in templates come before custom ones in config.worker_templates."""
+    custom = WorkerTemplate(id="my-custom", name="Custom", system_prompt="Do it.", builtin=False)
+    cfg = Config(worker_templates=[custom])
+    ids = [t.id for t in cfg.worker_templates]
+    # All builtins should precede any custom template
+    builtin_indices = [i for i, t in enumerate(cfg.worker_templates) if t.builtin]
+    custom_indices = [i for i, t in enumerate(cfg.worker_templates) if not t.builtin]
+    assert max(builtin_indices) < min(custom_indices)
+
+
+def test_custom_templates_not_duplicated_with_builtins():
+    """A custom template with the same ID as a builtin is ignored (builtin wins)."""
+    impersonator = WorkerTemplate(
+        id="implementation",  # same ID as a builtin
+        name="Fake Implementation",
+        system_prompt="I am a fake.",
+        builtin=False,
+    )
+    cfg = Config(worker_templates=[impersonator])
+    impl_templates = [t for t in cfg.worker_templates if t.id == "implementation"]
+    assert len(impl_templates) == 1
+    assert impl_templates[0].builtin is True  # the builtin wins
+
+
+def test_builtin_templates_not_duplicated_on_reload(tmp_path):
+    """Loading a config file twice doesn't duplicate built-in templates."""
+    cfg = Config()
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    builtin_ids = [t.id for t in loaded.worker_templates if t.builtin]
+    assert len(builtin_ids) == len(set(builtin_ids)), "Duplicate builtins after reload"
+
+
+# ---------------------------------------------------------------------------
+# Worker Templates — save / load round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_custom_template_save_roundtrip(tmp_path):
+    """A custom template survives save() → load() unchanged."""
+    custom = WorkerTemplate(
+        id="my-worker",
+        name="My Worker",
+        system_prompt="Do the thing.",
+        model="haiku",
+        permission_mode="default",
+        builtin=False,
+    )
+    cfg = Config(worker_templates=[custom])
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    custom_loaded = [t for t in loaded.worker_templates if not t.builtin]
+    assert len(custom_loaded) == 1
+    t = custom_loaded[0]
+    assert t.id == "my-worker"
+    assert t.name == "My Worker"
+    assert t.system_prompt == "Do the thing."
+    assert t.model == "haiku"
+    assert t.permission_mode == "default"
+    assert t.allowed_tools is None
+    assert t.builtin is False
+
+
+def test_custom_template_with_allowed_tools_roundtrip(tmp_path):
+    """allowed_tools field on custom templates survives save/load."""
+    custom = WorkerTemplate(
+        id="tool-user",
+        name="Tool User",
+        system_prompt="Use the tools.",
+        allowed_tools="Read,Bash,Glob",
+        builtin=False,
+    )
+    cfg = Config(worker_templates=[custom])
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    custom_loaded = [t for t in loaded.worker_templates if not t.builtin]
+    assert len(custom_loaded) == 1
+    assert custom_loaded[0].allowed_tools == "Read,Bash,Glob"
+
+
+def test_custom_template_special_chars_in_prompt(tmp_path):
+    """System prompts with quotes and newlines round-trip correctly."""
+    custom = WorkerTemplate(
+        id="special",
+        name='Special "Chars"',
+        system_prompt='Line one.\nLine two with "quotes".',
+        builtin=False,
+    )
+    cfg = Config(worker_templates=[custom])
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    custom_loaded = [t for t in loaded.worker_templates if not t.builtin]
+    assert len(custom_loaded) == 1
+    assert custom_loaded[0].name == 'Special "Chars"'
+    assert custom_loaded[0].system_prompt == 'Line one.\nLine two with "quotes".'
+
+
+def test_multiple_custom_templates_roundtrip(tmp_path):
+    """Multiple custom templates all survive save/load."""
+    customs = [
+        WorkerTemplate(id=f"tmpl-{i}", name=f"Template {i}", system_prompt=f"Prompt {i}.", builtin=False)
+        for i in range(3)
+    ]
+    cfg = Config(worker_templates=customs)
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    custom_loaded = [t for t in loaded.worker_templates if not t.builtin]
+    assert len(custom_loaded) == 3
+    loaded_ids = {t.id for t in custom_loaded}
+    assert loaded_ids == {"tmpl-0", "tmpl-1", "tmpl-2"}
+
+
+def test_builtin_templates_not_persisted_to_toml(tmp_path):
+    """save() does not write built-in templates to the TOML file."""
+    cfg = Config()
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    content = config_file.read_text()
+    # Built-in IDs must not appear in the saved TOML
+    for builtin_id in ("implementation", "test-writer", "code-reviewer", "doc-writer"):
+        assert builtin_id not in content, f"Built-in template '{builtin_id}' should not be in TOML"
+
+
+def test_config_templates_skip_incomplete_entries(tmp_path):
+    """Template entries missing id or name are skipped on load."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        '[[worker_templates]]\n'
+        'id = "good"\nname = "Good Template"\nsystem_prompt = "Do it."\n\n'
+        '[[worker_templates]]\n'
+        'name = "Missing ID"\nsystem_prompt = "No id."\n\n'
+        '[[worker_templates]]\n'
+        'id = "missing-name"\nsystem_prompt = "No name."\n'
+    )
+    cfg = Config.load(config_path=config_file)
+    custom = [t for t in cfg.worker_templates if not t.builtin]
+    assert len(custom) == 1
+    assert custom[0].id == "good"
+
+
+def test_config_no_custom_templates_by_default(tmp_path):
+    """A config file with no [[worker_templates]] section loads only builtins."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text('theme = "dark"\n')
+    cfg = Config.load(config_path=config_file)
+    custom = [t for t in cfg.worker_templates if not t.builtin]
+    assert custom == []

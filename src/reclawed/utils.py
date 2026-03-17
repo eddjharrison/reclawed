@@ -142,7 +142,7 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
 
 
 _WORKER_PROPOSAL_PATTERN = re.compile(
-    r'^\{\{WORKER\s+task="([^"]+)"(?:\s+model="([^"]*)")?(?:\s+permissions="([^"]*)")?\s*\}\}$',
+    r'^\{\{WORKER\s+task="([^"]+)"(?:\s+model="([^"]*)")?(?:\s+permissions="([^"]*)")?(?:\s+template="([^"]*)")?\s*\}\}$',
     re.MULTILINE,
 )
 
@@ -155,10 +155,15 @@ def detect_worker_proposals(text: str) -> list[dict]:
 
     Returns a list of dicts, e.g.::
 
-        [{"task": "Implement auth", "model": "sonnet", "permission_mode": "bypassPermissions"}]
+        [{"task": "Implement auth", "model": "sonnet", "permission_mode": "bypassPermissions",
+          "template_id": "implementation"}]
 
-    Model defaults to ``"sonnet"`` and permission_mode defaults to
-    ``"bypassPermissions"`` when omitted.
+    Model defaults to ``"sonnet"``, permission_mode defaults to ``"bypassPermissions"``,
+    and template_id defaults to ``None`` when omitted.
+
+    Optional ``template=`` attribute links the proposal to a named ``WorkerTemplate``.
+    When a template is matched in ``_create_and_start_worker``, the template's
+    ``model`` and ``permission_mode`` override any values specified here.
     """
     proposals: list[dict] = []
     for m in _WORKER_PROPOSAL_PATTERN.finditer(text):
@@ -166,6 +171,7 @@ def detect_worker_proposals(text: str) -> list[dict]:
             "task": m.group(1).strip(),
             "model": m.group(2) or "sonnet",
             "permission_mode": m.group(3) or "bypassPermissions",
+            "template_id": m.group(4) or None,
         })
     return proposals
 

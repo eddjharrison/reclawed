@@ -66,3 +66,4 @@ class Session:
     session_type: str | None = None        # "orchestrator" | "worker" | None
     worker_status: str | None = None       # "running" | "complete" | None
     worker_summary: str | None = None      # haiku-generated summary
+    worker_template_id: str | None = None  # ID of the WorkerTemplate used to spawn this worker

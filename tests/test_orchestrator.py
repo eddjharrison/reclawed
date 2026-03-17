@@ -270,3 +270,107 @@ def test_detect_proposals_mixed_with_text():
     assert proposals[0]["task"] == "Implement JWT auth"
     assert proposals[1]["task"] == "Write auth tests"
     assert proposals[1]["permission_mode"] == "default"
+
+
+# --- Template attribute in worker proposals ---
+
+
+def test_detect_proposal_with_template():
+    """A proposal with template= parses the template_id correctly."""
+    text = '{{WORKER task="Implement auth" model="sonnet" permissions="bypassPermissions" template="implementation"}}'
+    proposals = detect_worker_proposals(text)
+    assert len(proposals) == 1
+    assert proposals[0]["task"] == "Implement auth"
+    assert proposals[0]["template_id"] == "implementation"
+
+
+def test_detect_proposal_template_defaults_to_none():
+    """A proposal without template= has template_id=None."""
+    text = '{{WORKER task="Quick fix" model="haiku" permissions="default"}}'
+    proposals = detect_worker_proposals(text)
+    assert len(proposals) == 1
+    assert proposals[0]["template_id"] is None
+
+
+def test_detect_proposal_only_task_template_none():
+    """Even the minimal proposal (task only) gives template_id=None."""
+    text = '{{WORKER task="Do something"}}'
+    proposals = detect_worker_proposals(text)
+    assert len(proposals) == 1
+    assert proposals[0]["template_id"] is None
+    assert proposals[0]["model"] == "sonnet"
+    assert proposals[0]["permission_mode"] == "bypassPermissions"
+
+
+def test_detect_proposal_all_fields_with_template():
+    """A proposal with all fields (task, model, permissions, template) parses fully."""
+    text = '{{WORKER task="Write tests" model="opus" permissions="acceptEdits" template="test-writer"}}'
+    proposals = detect_worker_proposals(text)
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p["task"] == "Write tests"
+    assert p["model"] == "opus"
+    assert p["permission_mode"] == "acceptEdits"
+    assert p["template_id"] == "test-writer"
+
+
+def test_detect_multiple_proposals_mixed_template_presence():
+    """Mix of proposals with and without template= are all parsed correctly."""
+    text = (
+        '{{WORKER task="Task A" model="sonnet" permissions="bypassPermissions" template="implementation"}}\n'
+        '{{WORKER task="Task B" model="haiku" permissions="default"}}\n'
+        '{{WORKER task="Task C" template="doc-writer"}}\n'
+    )
+    proposals = detect_worker_proposals(text)
+    assert len(proposals) == 3
+    assert proposals[0]["template_id"] == "implementation"
+    assert proposals[1]["template_id"] is None
+    assert proposals[2]["template_id"] == "doc-writer"
+    assert proposals[2]["model"] == "sonnet"  # default when omitted
+
+
+# --- Worker template_id field on Session ---
+
+
+def test_worker_template_id_field_default():
+    """Session.worker_template_id defaults to None."""
+    s = Session(name="Test Worker")
+    assert s.worker_template_id is None
+
+
+def test_worker_template_id_persists(store: Store):
+    """worker_template_id survives create + get round-trip in the store."""
+    worker = Session(
+        name="Implementation Worker",
+        session_type="worker",
+        worker_status="running",
+        worker_template_id="implementation",
+    )
+    store.create_session(worker)
+    loaded = store.get_session(worker.id)
+    assert loaded is not None
+    assert loaded.worker_template_id == "implementation"
+
+
+def test_worker_template_id_updateable(store: Store):
+    """worker_template_id can be updated after creation."""
+    worker = Session(name="Worker", session_type="worker", worker_template_id=None)
+    store.create_session(worker)
+
+    worker.worker_template_id = "test-writer"
+    store.update_session(worker)
+
+    loaded = store.get_session(worker.id)
+    assert loaded is not None
+    assert loaded.worker_template_id == "test-writer"
+
+
+def test_worker_template_id_column_exists_in_schema(store: Store):
+    """The worker_template_id column exists in the sessions table (migration applied)."""
+    # Verify by inserting and retrieving a session with a template ID; if the column
+    # didn't exist, create_session would raise an OperationalError.
+    worker = Session(name="Schema Check", worker_template_id="code-reviewer")
+    store.create_session(worker)
+    loaded = store.get_session(worker.id)
+    assert loaded is not None
+    assert loaded.worker_template_id == "code-reviewer"

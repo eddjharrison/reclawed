@@ -33,7 +33,6 @@ class ChatSidebar(Vertical):
 
     DEFAULT_CSS = """
     ChatSidebar {
-        width: 35;
         height: 100%;
         background: $surface;
         border-right: solid $primary 30%;

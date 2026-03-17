@@ -33,6 +33,7 @@ from reclawed.widgets.compose_area import ComposeArea
 from reclawed.widgets.message_bubble import MessageBubble
 from reclawed.widgets.message_list import MessageList
 from reclawed.widgets.quote_preview import QuotePreview
+from reclawed.widgets.resize_handle import SidebarResizeHandle
 from reclawed.widgets.status_bar import StatusBar
 
 
@@ -169,6 +170,7 @@ class ChatScreen(Screen):
         yield Header(show_clock=True)
         with Horizontal(id="main-layout"):
             yield ChatSidebar(self.store, workspaces=self.config.workspaces, id="chat-sidebar")
+            yield SidebarResizeHandle(id="resize-handle")
             with Vertical(id="chat-panel"):
                 yield MessageList(id="message-list")
                 yield QuotePreview(id="quote-preview")
@@ -229,8 +231,9 @@ class ChatScreen(Screen):
 
     async def on_mount(self) -> None:
         self._update_status()
-        # Highlight the active session in the sidebar
+        # Apply persisted sidebar width and highlight the active session
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+        sidebar.styles.width = self.config.sidebar_width
         sidebar.refresh_sessions(active_session_id=self.session.id)
         # Load existing messages if resuming a session
         if self.session.message_count > 0:
@@ -1208,8 +1211,16 @@ class ChatScreen(Screen):
                             await bubble.finalize_content(
                                 assistant_msg.content,
                                 session_type=stream_session.session_type,
+                                template_names={t.id: t.name for t in self.config.worker_templates},
+                                permission_mode=stream_session.permission_mode,
                             )
                             msg_list.scroll_end(animate=False)
+
+                        # Auto-spawn if orchestrator in bypass mode
+                        if stream_session.session_type == "orchestrator":
+                            self._auto_spawn_if_bypass(
+                                stream_session, assistant_msg.content,
+                            )
                     else:
                         # Background session got a response — bump unread
                         self.store.increment_unread(stream_session.id)
@@ -1727,7 +1738,7 @@ class ChatScreen(Screen):
                 self._create_and_start_worker(orchestrator_session_id, result)
             )
 
-        self.app.push_screen(SpawnWorkerScreen(), on_result)
+        self.app.push_screen(SpawnWorkerScreen(templates=self.config.worker_templates), on_result)
 
     async def _create_and_start_worker(
         self, orchestrator_session_id: str, params: dict
@@ -1744,6 +1755,26 @@ class ChatScreen(Screen):
             if self.session.id == orchestrator.id:
                 self.session.session_type = "orchestrator"
 
+        # Resolve template (if any) — template model/permission_mode take precedence
+        template_id: str | None = params.get("template_id")
+        template = None
+        if template_id:
+            template = next(
+                (t for t in self.config.worker_templates if t.id == template_id), None
+            )
+
+        # Effective model and permission — template overrides params when a template is used
+        effective_model = (template.model if template else None) or params.get("model", "sonnet")
+        effective_perm = (
+            (template.permission_mode if template else None)
+            or params.get("permission_mode", "bypassPermissions")
+        )
+        # Effective allowed_tools — template override if set, else workspace/global default
+        effective_tools = (
+            template.allowed_tools if (template and template.allowed_tools)
+            else self._effective_allowed_tools(orchestrator.cwd)
+        )
+
         # Create child session
         worker = Session(
             name=f"Worker: {params['task'][:30]}",
@@ -1751,8 +1782,9 @@ class ChatScreen(Screen):
             session_type="worker",
             worker_status="running",
             cwd=orchestrator.cwd,
-            model=params["model"],
-            permission_mode=params["permission_mode"],
+            model=effective_model,
+            permission_mode=effective_perm,
+            worker_template_id=template_id,
         )
         self.store.create_session(worker)
 
@@ -1761,21 +1793,29 @@ class ChatScreen(Screen):
             cli_path=self.config.claude_binary,
             session_id=orchestrator.claude_session_id,
             fork_session=bool(orchestrator.claude_session_id),
-            model=params["model"],
+            model=effective_model,
             cwd=orchestrator.cwd,
-            permission_mode=params["permission_mode"],
-            allowed_tools=self._effective_allowed_tools(orchestrator.cwd),
+            permission_mode=effective_perm,
+            allowed_tools=effective_tools,
         )
         self._claude_sessions[worker.id] = worker_claude
         asyncio.create_task(worker_claude.start())
 
-        # Inject task prompt (send_message waits for session to be ready)
-        task_prompt = (
-            "You are a worker session spawned by an orchestrator. "
-            f"Your task: {params['task']}\n\n"
-            "Work autonomously to complete this task. When done, write a clear "
-            "summary of what you accomplished, files changed, and any issues found."
-        )
+        # Inject task prompt — template system_prompt provides role context, task is appended
+        if template and template.system_prompt:
+            task_prompt = (
+                f"{template.system_prompt}\n\n"
+                f"Your task: {params['task']}\n\n"
+                "Work autonomously to complete this task. When done, write a clear "
+                "summary of what you accomplished, files changed, and any issues found."
+            )
+        else:
+            task_prompt = (
+                "You are a worker session spawned by an orchestrator. "
+                f"Your task: {params['task']}\n\n"
+                "Work autonomously to complete this task. When done, write a clear "
+                "summary of what you accomplished, files changed, and any issues found."
+            )
 
         # Create user message for the task prompt
         user_msg = Message(
@@ -1900,7 +1940,7 @@ class ChatScreen(Screen):
             self.store.update_session(worker_session)
             self._refresh_sidebar()
             # Generate summary and notify orchestrator
-            self._auto_complete_worker(worker_session.id)
+            self._generate_worker_summary(worker_session.id)
         else:
             self._refresh_sidebar()
 
@@ -2120,6 +2160,8 @@ class ChatScreen(Screen):
                         await bubble.finalize_content(
                             assistant_msg.content,
                             session_type="orchestrator",
+                            template_names={t.id: t.name for t in self.config.worker_templates},
+                            permission_mode=orchestrator.permission_mode,
                         )
                         msg_list.scroll_end(animate=False)
                     else:
@@ -2201,6 +2243,20 @@ class ChatScreen(Screen):
         lines.append('{{WORKER task="description of the task" model="sonnet" permissions="bypassPermissions"}}')
         lines.append("The user will see buttons to approve spawning. "
                       "Models: sonnet, opus, haiku. Permissions: default, acceptEdits, bypassPermissions.")
+
+        # List available worker templates so the orchestrator can reference them
+        templates = self.config.worker_templates
+        if templates:
+            lines.append("")
+            lines.append("Available worker templates (use template= to apply one):")
+            for tmpl in templates:
+                lines.append(
+                    f'  template="{tmpl.id}" — {tmpl.name} '
+                    f'(model: {tmpl.model}, permissions: {tmpl.permission_mode})'
+                )
+            lines.append(
+                'Example: {{WORKER task="write tests for auth module" template="test-writer"}}'
+            )
 
         return "\n".join(lines)
 
@@ -2541,6 +2597,17 @@ class ChatScreen(Screen):
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
         sidebar.toggle_class("hidden")
+        # Keep the resize handle in sync with the sidebar visibility
+        handle = self.query_one("#resize-handle", SidebarResizeHandle)
+        handle.toggle_class("hidden")
+
+    def on_sidebar_resize_handle_resized(self, event: SidebarResizeHandle.Resized) -> None:
+        """Apply the dragged width to the sidebar; persist on final mouse-up."""
+        sidebar = self.query_one("#chat-sidebar", ChatSidebar)
+        sidebar.styles.width = event.new_width
+        if event.final:
+            self.config.sidebar_width = event.new_width
+            self.config.save()
 
     def action_invite_to_chat(self) -> None:
         """Upgrade the current 1:1 session into a group chat (Ctrl+I)."""

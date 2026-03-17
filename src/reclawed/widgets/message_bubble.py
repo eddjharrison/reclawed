@@ -264,7 +264,11 @@ class MessageBubble(Vertical):
             self._content_widget.display = False
 
     async def finalize_content(
-        self, content: str, session_type: str | None = None,
+        self,
+        content: str,
+        session_type: str | None = None,
+        template_names: dict[str, str] | None = None,
+        permission_mode: str | None = None,
     ) -> None:
         """Switch from streaming Static back to Markdown for final render."""
         self._message.content = content
@@ -292,14 +296,17 @@ class MessageBubble(Vertical):
                         pass
 
             # Detect worker spawn proposals (orchestrator sessions only)
-            if session_type == "orchestrator":
+            # Skip widget when bypassPermissions — auto-spawn handles it
+            if session_type == "orchestrator" and permission_mode != "bypassPermissions":
                 from reclawed.utils import detect_worker_proposals
                 from reclawed.widgets.spawn_proposals import SpawnProposalsWidget
                 proposals = detect_worker_proposals(content)
                 if proposals:
                     try:
                         await self.mount(SpawnProposalsWidget(
-                            proposals, self._message.session_id,
+                            proposals,
+                            self._message.session_id,
+                            template_names=template_names,
                         ))
                     except Exception:
                         pass
