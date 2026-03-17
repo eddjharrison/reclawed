@@ -6,37 +6,28 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
-from textual.widgets import Collapsible, Label
+from textual.widgets import Label
 
 
-class _AddButton(Label):
-    """Small clickable [+] button."""
+class _ClickLabel(Label):
+    """A Label that posts Pressed when clicked."""
 
     class Pressed(TMessage):
-        """Posted when clicked."""
+        def __init__(self, action: str) -> None:
+            super().__init__()
+            self.action = action
+
+    def __init__(self, text: str, action: str, **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._action = action
 
     def on_click(self, event: Click) -> None:
         event.stop()
-        self.post_message(self.Pressed())
-
-
-class _RefreshButton(Label):
-    """Small clickable refresh button."""
-
-    class Pressed(TMessage):
-        """Posted when clicked."""
-
-    def on_click(self, event: Click) -> None:
-        event.stop()
-        self.post_message(self.Pressed())
+        self.post_message(self.Pressed(self._action))
 
 
 class WorkspaceSection(Vertical):
-    """A collapsible workspace section in the sidebar.
-
-    Custom header row with expand arrow, workspace name, and [+] button.
-    The Collapsible is hidden — we manage collapse state manually.
-    """
+    """A collapsible workspace section in the sidebar."""
 
     DEFAULT_CSS = """
     WorkspaceSection {
@@ -54,13 +45,23 @@ class WorkspaceSection(Vertical):
         color: $text;
     }
     WorkspaceSection .ws-name {
-        width: 1fr;
         height: 1;
         color: $text;
         text-style: bold;
     }
-    WorkspaceSection .ws-header:hover .ws-name {
+    WorkspaceSection .ws-spacer {
+        width: 1fr;
+        height: 1;
+    }
+    WorkspaceSection .ws-btn {
+        width: auto;
+        min-width: 3;
+        height: 1;
+        color: $text-muted;
+    }
+    WorkspaceSection .ws-btn:hover {
         color: $accent;
+        text-style: bold;
     }
     WorkspaceSection .ws-items {
         width: 100%;
@@ -83,7 +84,6 @@ class WorkspaceSection(Vertical):
             self.name = name
 
     class RefreshWorkspaceRequested(TMessage):
-        """Posted when the user clicks the refresh button to re-import sessions."""
         def __init__(self, cwd: str, name: str) -> None:
             super().__init__()
             self.cwd = cwd
@@ -105,15 +105,18 @@ class WorkspaceSection(Vertical):
 
     def compose(self) -> ComposeResult:
         arrow = "▶" if self._collapsed else "▼"
-        btns = " [r][+]" if self._cwd is not None else " [+]"
         with Horizontal(classes="ws-header"):
             yield Label(arrow, classes="ws-arrow", id=f"ws-arrow-{id(self)}")
             yield Label(
-                f"[bold {self._color}]{self._workspace_name}[/bold {self._color}][dim]{btns}[/dim]",
+                f"[bold {self._color}]{self._workspace_name}[/bold {self._color}]",
                 classes="ws-name",
                 id=f"ws-name-{id(self)}",
                 markup=True,
             )
+            yield Label("", classes="ws-spacer")  # pushes buttons right
+            if self._cwd is not None:
+                yield _ClickLabel("r", "refresh", classes="ws-btn")
+            yield _ClickLabel("+", "add", classes="ws-btn")
         yield Vertical(
             classes="ws-items hidden" if self._collapsed else "ws-items",
             id=f"ws-items-{id(self)}",
@@ -127,53 +130,33 @@ class WorkspaceSection(Vertical):
         items.toggle_class("hidden")
 
     def on_click(self, event: Click) -> None:
-        # Right-click → remove workspace
         if event.button == 3 and self._cwd is not None:
             event.stop()
             self.post_message(self.RemoveWorkspaceRequested(self._cwd, self._workspace_name))
             return
 
-        # Left-click on the name label — check if they clicked [r] or [+]
         target = event.widget
-        if isinstance(target, Label) and "ws-name" in target.classes:
-            event.stop()
-            # Detect click position within the rendered text
-            # The text ends with " [r][+]" or " [+]"
-            rendered = target.render().plain if hasattr(target.render(), 'plain') else str(target.render())
-            click_x = event.x
-            text_len = len(rendered)
-
-            if self._cwd is not None:
-                # Has [r][+] — last 6 chars are "[r][+]"
-                if click_x >= text_len - 3:
-                    self.post_message(self.NewChatInWorkspace(self._cwd))
-                    return
-                elif click_x >= text_len - 6:
-                    self.post_message(self.RefreshWorkspaceRequested(self._cwd, self._workspace_name))
-                    return
-            else:
-                # Just [+] — last 3 chars
-                if click_x >= text_len - 3:
-                    self.post_message(self.NewChatInWorkspace(self._cwd))
-                    return
-
-            self._toggle_collapse()
-            return
-
-        if isinstance(target, Label) and "ws-arrow" in target.classes:
+        if isinstance(target, Label) and (
+            "ws-arrow" in target.classes or "ws-name" in target.classes
+        ):
             event.stop()
             self._toggle_collapse()
+
+    def on__click_label_pressed(self, event: _ClickLabel.Pressed) -> None:
+        event.stop()
+        if event.action == "add":
+            self.post_message(self.NewChatInWorkspace(self._cwd))
+        elif event.action == "refresh" and self._cwd is not None:
+            self.post_message(self.RefreshWorkspaceRequested(self._cwd, self._workspace_name))
 
     @property
     def items_container(self) -> Vertical:
         return self.query_one(f"#ws-items-{id(self)}", Vertical)
 
     def expand(self) -> None:
-        """Programmatically expand this section."""
         if self._collapsed:
             self._toggle_collapse()
 
     def collapse(self) -> None:
-        """Programmatically collapse this section."""
         if not self._collapsed:
             self._toggle_collapse()
