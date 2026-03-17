@@ -20,6 +20,9 @@ THEME_MAP: dict[str, str] = {
 # Ordered list used for cycling (Ctrl+T).
 THEME_CYCLE: list[str] = list(THEME_MAP.keys())
 
+# Palette of Rich color names cycled across workspaces (index-based assignment).
+WORKSPACE_COLOR_PALETTE: list[str] = ["cyan", "yellow", "green", "magenta", "blue", "red"]
+
 
 @dataclass
 class Workspace:
@@ -27,6 +30,11 @@ class Workspace:
 
     name: str
     path: str
+    color: str = ""
+    # Optional per-workspace overrides — None means inherit from global config.
+    model: str | None = None
+    permission_mode: str | None = None
+    allowed_tools: str | None = None
 
     @property
     def expanded_path(self) -> str:
@@ -106,6 +114,10 @@ class Config:
             self.group_context_mode = "isolated"
         if self.relay_mode not in {"local", "remote"}:
             self.relay_mode = "local"
+        # Auto-assign palette colors to workspaces that have none set.
+        for idx, ws in enumerate(self.workspaces):
+            if not ws.color:
+                ws.color = WORKSPACE_COLOR_PALETTE[idx % len(WORKSPACE_COLOR_PALETTE)]
 
     @property
     def db_path(self) -> Path:
@@ -169,6 +181,13 @@ class Config:
             lines.append("[[workspaces]]")
             lines.append(f"name = {_toml_str(ws.name)}")
             lines.append(f"path = {_toml_str(ws.path)}")
+            lines.append(f"color = {_toml_str(ws.color)}")
+            if ws.model is not None:
+                lines.append(f"model = {_toml_str(ws.model)}")
+            if ws.permission_mode is not None:
+                lines.append(f"permission_mode = {_toml_str(ws.permission_mode)}")
+            if ws.allowed_tools is not None:
+                lines.append(f"allowed_tools = {_toml_str(ws.allowed_tools)}")
 
         lines.append("")  # trailing newline
 
@@ -240,10 +259,18 @@ class Config:
 
         # Parse [[workspaces]] array
         if "workspaces" in raw and isinstance(raw["workspaces"], list):
-            kwargs["workspaces"] = [
-                Workspace(name=str(w["name"]), path=str(w["path"]))
-                for w in raw["workspaces"]
-                if "name" in w and "path" in w
-            ]
+            workspaces = []
+            for w in raw["workspaces"]:
+                if "name" not in w or "path" not in w:
+                    continue
+                workspaces.append(Workspace(
+                    name=str(w["name"]),
+                    path=str(w["path"]),
+                    color=str(w.get("color", "")),
+                    model=str(w["model"]) if "model" in w else None,
+                    permission_mode=str(w["permission_mode"]) if "permission_mode" in w else None,
+                    allowed_tools=str(w["allowed_tools"]) if "allowed_tools" in w else None,
+                ))
+            kwargs["workspaces"] = workspaces
 
         return cls(**kwargs)  # type: ignore[arg-type]

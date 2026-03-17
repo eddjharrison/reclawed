@@ -112,18 +112,20 @@ class WorkspaceSection(Vertical):
         workspace_name: str,
         cwd: str | None = None,
         collapsed: bool = True,
+        color: str = "cyan",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._workspace_name = workspace_name
         self._cwd = cwd
         self._collapsed = collapsed
+        self._color = color
 
     def compose(self) -> ComposeResult:
         arrow = "▶" if self._collapsed else "▼"
         with Horizontal(classes="ws-header"):
             yield Label(arrow, classes="ws-arrow", id=f"ws-arrow-{id(self)}")
-            yield Label(self._workspace_name, classes="ws-name", id=f"ws-name-{id(self)}")
+            yield Label(f"[bold {self._color}]{self._workspace_name}[/bold {self._color}]", classes="ws-name", id=f"ws-name-{id(self)}", markup=True)
             if self._cwd is not None:
                 yield _RefreshButton("[r]", classes="ws-refresh")
             yield _AddButton("[+]", classes="ws-add")

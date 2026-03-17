@@ -152,6 +152,13 @@ class ChatScreen(Screen):
         # Pending tool approval futures: {tool_use_id: asyncio.Future}
         self._pending_approvals: dict[str, asyncio.Future] = {}
 
+    def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
+        """Return allowed tools for the given cwd, checking workspace overrides."""
+        ws = self.config.workspace_for_cwd(cwd)
+        tools_str = (ws.allowed_tools if ws and ws.allowed_tools is not None
+                     else self.config.allowed_tools)
+        return tools_str.split(",")
+
     def _create_new_session(self, cwd: str | None = None) -> Session:
         session = Session(cwd=cwd)
         self.store.create_session(session)
@@ -201,7 +208,7 @@ class ChatScreen(Screen):
             model=self._selected_model,
             cwd=self.session.cwd,
             permission_mode=self._selected_permission,
-            allowed_tools=self.config.allowed_tools.split(","),
+            allowed_tools=self._effective_allowed_tools(self.session.cwd),
             approval_callback=self._on_tool_approval_needed,
         )
         self._claude_sessions[session_key] = session
@@ -261,6 +268,7 @@ class ChatScreen(Screen):
         group_mode = self._group_respond_mode if self.session.is_group else None
         ws = self.config.workspace_for_cwd(self.session.cwd)
         workspace_name = ws.name if ws else None
+        workspace_color = ws.color if ws else "yellow"
         status.update_info(
             session_name=self.session.name,
             model=self.session.model,
@@ -269,6 +277,7 @@ class ChatScreen(Screen):
             group_mode=group_mode,
             clear_group_mode=not self.session.is_group,
             workspace_name=workspace_name,
+            workspace_color=workspace_color,
             permission_mode=self._selected_permission,
             cwd=self.session.cwd,
         )
@@ -1682,7 +1691,7 @@ class ChatScreen(Screen):
                 model=self._selected_model,
                 cwd=self.session.cwd,
                 permission_mode=self._selected_permission,
-                allowed_tools=self.config.allowed_tools.split(","),
+                allowed_tools=self._effective_allowed_tools(self.session.cwd),
                 approval_callback=self._on_tool_approval_needed,
             )
             self._claude_sessions[session_key] = session
@@ -1967,7 +1976,14 @@ class ChatScreen(Screen):
 
     def _new_chat_with_cwd(self, cwd: str | None = None) -> None:
         self.session = self._create_new_session(cwd=cwd)
-        self._selected_model = None
+        # Apply workspace overrides for model and permission
+        ws = self.config.workspace_for_cwd(cwd)
+        self._selected_model = ws.model if ws and ws.model is not None else None
+        self._selected_permission = (
+            ws.permission_mode
+            if ws and ws.permission_mode is not None
+            else self.config.permission_mode
+        )
 
         async def _reset():
             msg_list = self.query_one("#message-list", MessageList)

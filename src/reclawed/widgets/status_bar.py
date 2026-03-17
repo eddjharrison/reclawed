@@ -121,6 +121,7 @@ class StatusBar(Static):
         self._connection_status: str | None = None
         self._encrypted: bool = False
         self._workspace_name: str | None = None
+        self._workspace_color: str = "yellow"
         self._workspace_cwd: str | None = None
         self._permission_mode: str | None = None
         self._context_tokens: int = 0
@@ -137,6 +138,7 @@ class StatusBar(Static):
         group_mode: str | None = None,
         clear_group_mode: bool = False,
         workspace_name: str | None = ...,
+        workspace_color: str | None = None,
         permission_mode: str | None = ...,
         cwd: str | None = ...,
     ) -> None:
@@ -154,6 +156,8 @@ class StatusBar(Static):
             self._group_mode = group_mode
         if workspace_name is not ...:
             self._workspace_name = workspace_name
+        if workspace_color is not None:
+            self._workspace_color = workspace_color
         if permission_mode is not ...:
             self._permission_mode = permission_mode
         if cwd is not ...:
@@ -216,7 +220,8 @@ class StatusBar(Static):
 
         # Workspace
         if self._workspace_name:
-            parts.append(f"\U0001f4c1 [bold yellow]{self._workspace_name}[/bold yellow]")
+            c = getattr(self, "_workspace_color", "yellow")
+            parts.append(f"\U0001f4c1 [bold {c}]{self._workspace_name}[/bold {c}]")
 
         # Git: branch + status + token count
         git_branch = getattr(self, "_git_branch", None)

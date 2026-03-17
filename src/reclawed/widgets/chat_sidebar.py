@@ -215,6 +215,7 @@ class ChatSidebar(Vertical):
                 workspace_name=ws.name,
                 cwd=ws.expanded_path,
                 collapsed=not has_active,
+                color=ws.color or "cyan",
             )
             chat_list.mount(section)
             container = section.items_container
