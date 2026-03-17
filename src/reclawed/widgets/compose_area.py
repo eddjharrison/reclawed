@@ -20,11 +20,14 @@ class ComposeInput(TextArea):
         """Posted when user types @ to trigger mention autocomplete."""
 
     def _on_key(self, event: Key) -> None:
-        if event.key == "enter":
+        # Log key to subtitle for debugging
+        self.app.sub_title = f"Key: {event.key!r}"
+        key = event.key
+        if key == "enter":
             event.prevent_default()
             event.stop()
             self.post_message(self.SendRequested())
-        elif event.key in ("shift+enter", "shift+return", "ctrl+enter", "ctrl+return"):
+        elif ("shift" in key or "ctrl" in key) and ("enter" in key or "return" in key):
             event.prevent_default()
             event.stop()
             self.insert("\n")
