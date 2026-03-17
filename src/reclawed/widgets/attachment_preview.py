@@ -6,45 +6,26 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.events import Click
 from textual.message import Message as TMessage
-from textual.widgets import Button, Label, Static
+from textual.widgets import Label, Static
 
-from reclawed.utils import format_file_size, get_image_mime
+from reclawed.utils import format_file_size
 
 
-class AttachmentChip(Horizontal):
-    """Single attachment chip with filename and remove button."""
+class AttachmentChip(Static):
+    """Single attachment chip — click to remove."""
 
     DEFAULT_CSS = """
     AttachmentChip {
         width: auto;
-        height: 3;
-        padding: 0 1;
+        height: 1;
         margin: 0 1 0 0;
         background: $primary 20%;
-        border: tall $primary;
-    }
-    AttachmentChip .chip-icon {
-        width: 3;
-        color: $accent;
-    }
-    AttachmentChip .chip-label {
-        width: auto;
-        max-width: 30;
         color: $text;
     }
-    AttachmentChip .chip-size {
-        width: auto;
-        color: $text-muted;
-        margin-left: 1;
-    }
-    AttachmentChip .chip-remove {
-        width: 3;
-        min-width: 3;
-        margin-left: 1;
-        color: $error;
-        background: transparent;
-        border: none;
+    AttachmentChip:hover {
+        background: $error 30%;
     }
     """
 
@@ -55,22 +36,16 @@ class AttachmentChip(Horizontal):
             self.path = path
 
     def __init__(self, file_path: str, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self._file_path = file_path
         p = Path(file_path)
-        self._filename = p.name
         try:
-            self._size = p.stat().st_size
+            size = p.stat().st_size
         except OSError:
-            self._size = 0
+            size = 0
+        display_text = f" 📁 {p.name} ({format_file_size(size)}) [x] "
+        super().__init__(display_text, **kwargs)
+        self._file_path = file_path
 
-    def compose(self) -> ComposeResult:
-        yield Label("📁", classes="chip-icon")
-        yield Label(self._filename, classes="chip-label")
-        yield Label(f"({format_file_size(self._size)})", classes="chip-size")
-        yield Button("x", classes="chip-remove", variant="error")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_click(self, event: Click) -> None:
         event.stop()
         self.post_message(self.Removed(self._file_path))
 
@@ -82,17 +57,12 @@ class AttachmentPreview(Horizontal):
     AttachmentPreview {
         width: 100%;
         height: auto;
-        max-height: 5;
+        max-height: 3;
         padding: 0 1;
         display: none;
     }
     AttachmentPreview.has-attachments {
         display: block;
-    }
-    AttachmentPreview .attach-label {
-        width: auto;
-        color: $text-muted;
-        margin-right: 1;
     }
     """
 
