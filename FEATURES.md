@@ -79,3 +79,24 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Autonomous Claude-to-Claude** — C2C mode + bypassPermissions = Claudes work together overnight with full filesystem access
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
+
+## Extensibility / Plugin Ecosystem
+
+The TUI should integrate with Claude Code's extensibility features — plugins, skills, MCP servers — and provide a way to discover, install, and manage them without leaving the app.
+
+### Core ideas
+
+- [ ] **MCP server management** — browse installed MCP servers, enable/disable per workspace, see connection status in status bar. Config lives in `.claude/settings.json` but the TUI should surface it
+- [ ] **Skills browser** — list available skills (local `.claude/skills/` + global `~/.claude/skills/`), preview what they do, enable/disable per session or workspace
+- [ ] **Plugin marketplace** — browse and install community plugins/skills/MCP servers from a registry. Think VS Code extensions panel but for Claude Code capabilities
+- [ ] **Scope levels** — clear distinction between global (user-wide), project (workspace), and session-level configuration. UI should make it obvious what applies where
+- [ ] **Preconfigured bundles** — curated sets of skills + MCP servers for common project types (e.g. "Python backend" bundle includes python-expert skill, database MCP, test runner). Could ship as templates or be community-contributed
+- [ ] **Auto-detection** — Claude analyzes the project (package.json, pyproject.toml, Dockerfile, etc.) and suggests which skills, MCP servers, and tools would be useful. "This looks like a Next.js project — want to enable the frontend-developer skill and Supabase MCP?"
+- [ ] **Hooks management** — view and edit Claude Code hooks (SessionStart, PreCompact, UserPromptSubmit) from the TUI. Currently requires manual `.claude/settings.json` editing
+
+### Design considerations
+
+- The TUI wraps Claude Code — it shouldn't duplicate Claude Code's own config system, but rather provide a friendlier interface to it
+- Plugin/skill installation should modify `.claude/` files that Claude Code itself reads, so everything stays compatible if the user switches between the TUI and raw CLI
+- Per-workspace overrides (already implemented for model/permissions/tools) should extend naturally to skills and MCP servers
+- The marketplace concept depends on whether a community registry exists — start with local browsing first, add remote discovery later
