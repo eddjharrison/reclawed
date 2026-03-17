@@ -16,10 +16,11 @@ warnings.filterwarnings("ignore", category=ResourceWarning)
 if sys.platform == "win32":
     import subprocess as _sp
     _orig_popen_init = _sp.Popen.__init__
+    _NO_WIN = _sp.CREATE_NO_WINDOW
 
     def _patched_popen_init(self, *args, **kwargs):  # type: ignore
-        if "creationflags" not in kwargs:
-            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW
+        flags = kwargs.get("creationflags", 0)
+        kwargs["creationflags"] = flags | _NO_WIN
         _orig_popen_init(self, *args, **kwargs)
 
     _sp.Popen.__init__ = _patched_popen_init  # type: ignore
