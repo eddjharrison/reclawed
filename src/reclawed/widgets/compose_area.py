@@ -24,7 +24,7 @@ class ComposeInput(TextArea):
             event.prevent_default()
             event.stop()
             self.post_message(self.SendRequested())
-        elif event.key == "shift+enter":
+        elif event.key in ("shift+enter", "shift+return"):
             event.prevent_default()
             event.stop()
             self.insert("\n")
