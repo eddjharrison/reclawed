@@ -38,25 +38,31 @@ def _format_tokens(n: int) -> str:
 
 
 def _context_battery(tokens: int, max_tokens: int) -> str:
-    """Rich-markup battery gauge: green/yellow/red based on usage."""
+    """Battery gauge that drains as context fills up.
+
+    Full bar = plenty of context left (green).
+    Draining = getting used up (yellow).
+    Nearly empty = almost out of context (red).
+    """
     if max_tokens <= 0 or tokens <= 0:
         return ""
-    pct = min(tokens / max_tokens, 1.0)
-    pct_int = round(pct * 100)
+    used_pct = min(tokens / max_tokens, 1.0)
+    remaining_pct = 1.0 - used_pct
+    pct_int = round(remaining_pct * 100)
     bar_width = 10
-    filled = round(pct * bar_width)
+    filled = round(remaining_pct * bar_width)
     empty = bar_width - filled
 
-    if pct < 0.5:
+    if remaining_pct > 0.5:
         color = "green"
-    elif pct < 0.8:
+    elif remaining_pct > 0.2:
         color = "yellow"
     else:
         color = "red"
 
     filled_chars = "\u2588" * filled
     empty_chars = "\u2591" * empty
-    return f"\U0001f50b [{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
+    return f"\U0001f50b \\[[{color}]{filled_chars}{empty_chars}[/{color}]] {pct_int}%"
 
 
 def _git_info(cwd: str | None) -> tuple[str | None, str | None]:
@@ -222,7 +228,8 @@ class StatusBar(Static):
 
         # Context battery gauge — always show
         ctx = _context_battery(self._context_tokens, self._context_max)
-        parts.append(ctx if ctx else f"\U0001f50b [green]{'.' * 10}[/green] 0%")
+        full_bar = "\u2588" * 10
+        parts.append(ctx if ctx else f"\U0001f50b \\[[green]{full_bar}[/green]] 100%")
 
         # Workspace
         if self._workspace_name:
