@@ -96,6 +96,25 @@ When Claude is busy responding, the user should still be able to compose and que
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
 
+## Git Diff Review Mode
+
+Claude as code reviewer — a dedicated review screen for diffs, PRs, and staged changes, inline in the TUI.
+
+- [ ] **Diff review screen** (`Ctrl+R`) — opens a review view for the active workspace. Shows git diff (staged, unstaged, or branch comparison) with Claude's annotations per hunk. Approve/reject/comment per change
+- [ ] **PR review** — pull a PR by number (`Ctrl+R` → enter PR #), Claude reviews the full diff with context-aware comments. Uses `gh` CLI under the hood
+- [ ] **Multi-Claude review** — in group chat, both participants' Claudes review the same diff simultaneously and discuss findings in the chat. Different perspectives from different codebases
+- [ ] **Review actions** — approve all, request changes, or generate a review summary. Results can be posted as GitHub PR comments via `gh`
+
+## Session Branching / Checkpoints
+
+Git for conversations — save checkpoints, branch from any point, explore different approaches without losing work.
+
+- [ ] **Conversation checkpoints** (`Ctrl+K`) — save a named checkpoint at the current point in the conversation. Stored as a reference to the SDK session ID + message count
+- [ ] **Branch from checkpoint** (`Ctrl+B`) — fork the conversation from a checkpoint. Uses SDK's `fork_session=True` with `resume=checkpoint_session_id`. New branch appears in the sidebar under the parent session
+- [ ] **Branch tree in sidebar** — visual tree showing conversation branches under each session. Click to switch between branches. Shows message count and cost per branch
+- [ ] **Compare branches** — side-by-side view of how two branches diverged. Useful for "I tried approach A and approach B — which worked better?"
+- [ ] **Merge branch context** — take findings from an exploratory branch and inject them as context into the main conversation. "I explored Redis in a branch and here's what I learned"
+
 ## Extensibility / Plugin Ecosystem
 
 The TUI should integrate with Claude Code's extensibility features — plugins, skills, MCP servers — and provide a way to discover, install, and manage them without leaving the app.
