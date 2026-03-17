@@ -1054,6 +1054,28 @@ class ChatScreen(Screen):
                         bubble.add_tool_use(
                             event.tool_use_id, event.tool_name, event.tool_input,
                         )
+                        # AskUserQuestion: render choices as clickable buttons
+                        if event.tool_name == "AskUserQuestion":
+                            import json, logging
+                            logging.getLogger("reclawed").warning(
+                                f"AskUserQuestion tool_input keys: {list(event.tool_input.keys())} "
+                                f"full: {json.dumps(event.tool_input)[:300]}"
+                            )
+                            choices_raw = (
+                                event.tool_input.get("options")
+                                or event.tool_input.get("choices")
+                                or []
+                            )
+                            if choices_raw:
+                                from reclawed.widgets.choice_buttons import ChoiceButtons
+                                choices = [
+                                    (str(i + 1), opt if isinstance(opt, str) else str(opt))
+                                    for i, opt in enumerate(choices_raw)
+                                ]
+                                try:
+                                    await bubble.mount(ChoiceButtons(choices))
+                                except Exception:
+                                    pass
                         msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamToolResult):
