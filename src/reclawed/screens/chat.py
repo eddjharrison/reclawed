@@ -153,6 +153,10 @@ class ChatScreen(Screen):
         self._pending_echo_ids: list[str] = []
         # Pending tool approval futures: {tool_use_id: asyncio.Future}
         self._pending_approvals: dict[str, asyncio.Future] = {}
+        # Debounce timers for orchestrator auto-respond: {orchestrator_id: asyncio.TimerHandle}
+        self._orch_debounce: dict[str, asyncio.TimerHandle] = {}
+        # Track which session IDs have an active stream (prevents concurrent SDK calls)
+        self._streaming_sessions: set[str] = {}
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
@@ -1079,6 +1083,9 @@ class ChatScreen(Screen):
         bubble = msg_list.get_bubble(assistant_msg.id)
         content_parts: list[str] = []
 
+        # Mark this session as actively streaming (prevents concurrent SDK calls)
+        self._streaming_sessions.add(stream_session.id)
+
         def _is_active() -> bool:
             """Check if this stream's session is still the visible one."""
             return self.session.id == stream_session.id
@@ -1244,6 +1251,7 @@ class ChatScreen(Screen):
                 bubble.update_content(assistant_msg.content)
 
         finally:
+            self._streaming_sessions.discard(stream_session.id)
             self._sending = False
             if _is_active():
                 try:
@@ -1870,6 +1878,7 @@ class ChatScreen(Screen):
     ) -> None:
         """Stream a worker's response in the background."""
         content_parts: list[str] = []
+        self._streaming_sessions.add(worker_session.id)
 
         def _is_active() -> bool:
             return self.session.id == worker_session.id
@@ -1933,6 +1942,8 @@ class ChatScreen(Screen):
         except Exception as e:
             assistant_msg.content = f"Error: {e}"
             self.store.update_message(assistant_msg)
+        finally:
+            self._streaming_sessions.discard(worker_session.id)
 
         # Auto-mark worker complete and notify orchestrator
         if worker_session.worker_status == "running":
@@ -2066,15 +2077,48 @@ class ChatScreen(Screen):
 
         self._refresh_sidebar()
 
-        # Auto-trigger orchestrator to respond to the completion
-        asyncio.create_task(
-            self._orchestrator_auto_respond(worker.parent_session_id, notification)
-        )
+        # Auto-trigger orchestrator to respond (debounced — coalesces rapid completions)
+        self._schedule_orchestrator_respond(worker.parent_session_id, notification)
 
-    async def _orchestrator_auto_respond(
+    def _schedule_orchestrator_respond(
         self, orchestrator_session_id: str, notification: str,
     ) -> None:
-        """Auto-trigger the orchestrator Claude to respond to a worker completion."""
+        """Debounce orchestrator auto-responses.
+
+        When multiple workers complete close together, this coalesces them
+        into a single orchestrator response after a 3-second quiet period.
+        The orchestrator sees all completion notifications in its message
+        history and responds once with the full picture.
+        """
+        # Cancel any pending debounce timer for this orchestrator
+        existing = self._orch_debounce.pop(orchestrator_session_id, None)
+        if existing is not None:
+            existing.cancel()
+
+        loop = asyncio.get_event_loop()
+        handle = loop.call_later(
+            3.0,
+            lambda: asyncio.create_task(
+                self._orchestrator_auto_respond(orchestrator_session_id)
+            ),
+        )
+        self._orch_debounce[orchestrator_session_id] = handle
+
+    async def _orchestrator_auto_respond(
+        self, orchestrator_session_id: str,
+    ) -> None:
+        """Auto-trigger the orchestrator Claude to respond after debounce.
+
+        Called after a 3-second quiet period following worker completions.
+        The orchestrator sees all accumulated notifications in its chat
+        history and responds once.
+        """
+        self._orch_debounce.pop(orchestrator_session_id, None)
+
+        # Skip if this session already has an active stream (user is typing or another response is in flight)
+        if orchestrator_session_id in self._streaming_sessions:
+            return
+
         orchestrator = self.store.get_session(orchestrator_session_id)
         if not orchestrator or orchestrator.session_type != "orchestrator":
             return
@@ -2084,16 +2128,23 @@ class ChatScreen(Screen):
         if orch_claude is None:
             return
 
-        # Build prompt with orchestrator preamble + notification
-        # Temporarily swap session context to build the preamble
+        # Build prompt — preamble shows all worker statuses, prompt asks for assessment
         prev_session = self.session
         self.session = orchestrator
         preamble = self._build_orchestrator_preamble()
         self.session = prev_session
 
-        prompt = notification
+        prompt = (
+            "One or more workers have completed. Review the worker status above "
+            "and the completion notifications in the chat history. "
+            "Assess results, identify anything now unblocked, and propose "
+            "follow-up workers if needed."
+        )
         if preamble:
-            prompt = preamble + "\n\n" + notification
+            prompt = preamble + "\n\n" + prompt
+
+        # Mark this session as streaming to prevent concurrent SDK calls
+        self._streaming_sessions.add(orchestrator_session_id)
 
         # Create assistant placeholder
         assistant_msg = Message(
@@ -2183,6 +2234,8 @@ class ChatScreen(Screen):
         except Exception as e:
             assistant_msg.content = f"Error: {e}"
             self.store.update_message(assistant_msg)
+        finally:
+            self._streaming_sessions.discard(orchestrator_session_id)
 
         self._refresh_sidebar()
 

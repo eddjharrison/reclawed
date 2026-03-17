@@ -13,7 +13,7 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Color-coded workspace badges** — auto-assigned from palette (cyan, yellow, green, magenta, blue, red)
 - [x] **Workspace removal** — right-click header to remove with confirmation
 - [x] **Session refresh** — `r` button in workspace header to re-import from Claude Code
-- [ ] **Resizable sidebar** — drag to resize sidebar width
+- [x] **Resizable sidebar** — drag to resize sidebar width
 
 ## Settings
 
@@ -125,7 +125,7 @@ Hierarchical multi-session workflow — one Claude plans and delegates, child Cl
 - [x] **Auto-summary on completion** — when a worker finishes (detects completion or user marks done), a summary (commit hashes, changes made, edge cases found) is auto-injected into the orchestrator's context. Keeps orchestrator clean and focused
 - [ ] **Sprint tracking** — orchestrator maintains a live sprint doc. As workers complete tasks, the doc updates with status, commit refs, and any issues found. Visible as a pinned message or dedicated panel
 - [x] **Orchestrator-initiated delegation** — orchestrator Claude can suggest spawning workers: "This has 3 independent tasks — want me to spin up workers for each?" User approves, workers launch in parallel
-- [ ] **Worker templates** — preconfigured worker types: "implementation sprint", "test writer", "code reviewer", "documentation". Each gets a tailored system prompt and permission level
+- [x] **Worker templates** — preconfigured worker types: "implementation sprint", "test writer", "code reviewer", "documentation". Each gets a tailored system prompt and permission level
 
 ### How it differs from existing features
 
