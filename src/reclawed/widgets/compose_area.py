@@ -86,16 +86,18 @@ class ComposeArea(Vertical):
         max-height: 8;
     }
     ComposeArea #button-col {
-        width: 10;
+        width: auto;
         height: auto;
         margin-left: 1;
     }
     ComposeArea #send-btn {
-        width: 100%;
-        min-height: 3;
+        width: auto;
+        min-width: 8;
+        height: 3;
     }
     ComposeArea #attach-btn {
-        width: 100%;
+        width: auto;
+        min-width: 8;
         height: 1;
         min-height: 1;
         background: $surface;
