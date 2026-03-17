@@ -24,7 +24,8 @@ class ComposeInput(TextArea):
             event.prevent_default()
             event.stop()
             self.post_message(self.SendRequested())
-        elif event.key == "shift+enter":
+        elif event.key in ("shift+enter", "shift+return", "ctrl+j"):
+            # ctrl+j is what Windows Terminal sends for Ctrl+Enter
             event.prevent_default()
             event.stop()
             self.insert("\n")

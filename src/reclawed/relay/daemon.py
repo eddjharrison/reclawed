@@ -133,8 +133,11 @@ def start_daemon(
     if sys.platform != "win32":
         kwargs["start_new_session"] = True
     else:
+        # CREATE_NO_WINDOW prevents a visible console.
+        # CREATE_NEW_PROCESS_GROUP detaches from parent's Ctrl+C.
+        # Do NOT use DETACHED_PROCESS — it opens a new console on Windows.
         kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         )
 
     proc = subprocess.Popen(cmd, **kwargs)
