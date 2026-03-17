@@ -1,13 +1,12 @@
-"""Minimal status bar — styled after Claude Code CLI status line."""
+"""Status bar — styled after Claude Code CLI status line with Rich markup."""
 
 from __future__ import annotations
 
 import subprocess
 from textual.widgets import Static
 
-# Model display name mapping
 _MODEL_SHORT: dict[str, str] = {
-    "claude-opus-4-6": "Opus 4.6",
+    "claude-opus-4-6": "Opus 4.6 (1M context)",
     "claude-sonnet-4-6": "Sonnet 4.6",
     "claude-haiku-4-5": "Haiku 4.5",
     "claude-sonnet-4-5": "Sonnet 4.5",
@@ -27,83 +26,91 @@ def _format_tokens(n: int) -> str:
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1000:
-        return f"{n / 1000:.1f}k"
+        return f"{n / 1000:.0f}"
     return str(n)
 
 
-def _context_gauge(tokens: int, max_tokens: int) -> str:
-    """Compact context gauge: [###..] 16%"""
+def _context_battery(tokens: int, max_tokens: int) -> str:
+    """Rich-markup battery gauge: green/yellow/red based on usage."""
     if max_tokens <= 0 or tokens <= 0:
         return ""
     pct = min(tokens / max_tokens, 1.0)
-    bar_width = 5
+    pct_int = round(pct * 100)
+    bar_width = 10
     filled = round(pct * bar_width)
     empty = bar_width - filled
-    bar = "#" * filled + "." * empty
-    return f"[{bar}] {pct:.0%}"
+
+    if pct < 0.5:
+        color = "green"
+    elif pct < 0.8:
+        color = "yellow"
+    else:
+        color = "red"
+
+    filled_chars = "\u2588" * filled
+    empty_chars = "\u2591" * empty
+    return f"[{color}]\u2584[/{color}] [{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
 
 
-def _git_info(cwd: str | None) -> str | None:
-    """Get git branch + status counts: master +2 ~1 ?3"""
+def _git_info(cwd: str | None) -> tuple[str | None, str | None]:
+    """Get git branch and status. Returns (branch, status_str)."""
     if not cwd:
-        return None
+        return None, None
     try:
-        # Get branch
         branch_result = subprocess.run(
             ["git", "branch", "--show-current"],
             cwd=cwd, capture_output=True, text=True, timeout=2,
         )
         if branch_result.returncode != 0:
-            return None
+            return None, None
         branch = branch_result.stdout.strip()
         if not branch:
-            return None
-        # Truncate long branch names
+            return None, None
         if len(branch) > 20:
             branch = branch[:17] + "..."
 
-        # Get status counts
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=cwd, capture_output=True, text=True, timeout=2,
         )
-        parts = [branch]
+        status_parts = []
         if status_result.returncode == 0 and status_result.stdout.strip():
             lines = status_result.stdout.strip().splitlines()
             staged = sum(1 for l in lines if len(l) >= 2 and l[0] in "MADRC")
             modified = sum(1 for l in lines if len(l) >= 2 and l[1] == "M")
             untracked = sum(1 for l in lines if l.startswith("??"))
             if staged:
-                parts.append(f"+{staged}")
+                status_parts.append(f"[green]+{staged}[/green]")
             if modified:
-                parts.append(f"~{modified}")
+                status_parts.append(f"[yellow]~{modified}[/yellow]")
             if untracked:
-                parts.append(f"?{untracked}")
-            if not staged and not modified and not untracked:
-                parts.append("+0")
+                status_parts.append(f"[red]?{untracked}[/red]")
+            if not status_parts:
+                status_parts.append("[green]+0[/green]")
         else:
-            parts.append("+0")
+            status_parts.append("[green]+0[/green]")
 
-        return " ".join(parts)
+        status_str = " ".join(status_parts)
+        return branch, status_str
     except Exception:
-        return None
+        return None, None
 
 
 class StatusBar(Static):
-    """Bottom status bar — clean, minimal, context-aware."""
+    """Bottom status bar with Rich markup for colors and icons."""
 
     DEFAULT_CSS = """
     StatusBar {
         width: 100%;
         height: 1;
-        background: $surface;
-        color: $text-muted;
+        background: $surface-darken-1;
+        color: $text;
         padding: 0 1;
     }
     """
 
     def __init__(self, **kwargs) -> None:
-        super().__init__("", **kwargs)
+        super().__init__("", markup=True, **kwargs)
         self._session_name = "New Chat"
         self._model = ""
         self._cost = 0.0
@@ -118,7 +125,8 @@ class StatusBar(Static):
         self._permission_mode: str | None = None
         self._context_tokens: int = 0
         self._context_max: int = 200_000
-        self._git_info_str: str | None = None
+        self._git_branch: str | None = None
+        self._git_status: str | None = None
 
     def update_info(
         self,
@@ -150,7 +158,7 @@ class StatusBar(Static):
             self._permission_mode = permission_mode
         if cwd is not ...:
             self._workspace_cwd = cwd
-            self._git_info_str = _git_info(cwd)
+            self._git_branch, self._git_status = _git_info(cwd)
         self._refresh_display()
 
     def set_streaming(
@@ -163,18 +171,18 @@ class StatusBar(Static):
             self._streaming_indicator = None
         elif tokens is not None and elapsed is not None and elapsed > 0 and tokens > 0:
             rate = tokens / elapsed
-            self._streaming_indicator = f"{rate:.0f} tok/s"
+            self._streaming_indicator = f"[bold]{rate:.0f} tok/s[/bold]"
         else:
-            self._streaming_indicator = "thinking..."
+            self._streaming_indicator = "[dim]thinking...[/dim]"
         self._refresh_display()
 
     def set_typing_indicator(self, names: list[str]) -> None:
         if not names:
             self._typing_indicator = None
         elif len(names) == 1:
-            self._typing_indicator = f"{names[0]} is typing..."
+            self._typing_indicator = f"[italic]{names[0]} is typing...[/italic]"
         else:
-            self._typing_indicator = f"{', '.join(names)} are typing..."
+            self._typing_indicator = f"[italic]{', '.join(names)} are typing...[/italic]"
         self._refresh_display()
 
     def set_connection_status(self, status: str | None) -> None:
@@ -191,44 +199,49 @@ class StatusBar(Static):
         self._refresh_display()
 
     def refresh_git(self) -> None:
-        self._git_info_str = _git_info(self._workspace_cwd)
+        self._git_branch, self._git_status = _git_info(self._workspace_cwd)
         self._refresh_display()
 
     def _refresh_display(self) -> None:
         parts: list[str] = []
 
+        # Model
+        if self._model:
+            parts.append(f"[bold cyan]{_short_model(self._model)}[/bold cyan]")
+
+        # Context battery gauge
+        ctx = _context_battery(self._context_tokens, self._context_max)
+        if ctx:
+            parts.append(ctx)
+
         # Workspace
         if self._workspace_name:
-            parts.append(self._workspace_name)
+            parts.append(f"[bold yellow]{self._workspace_name}[/bold yellow]")
 
-        # Git info: branch +staged ~modified ?untracked
-        if getattr(self, "_git_info_str", None):
-            parts.append(self._git_info_str)
+        # Git: branch + status + token count
+        git_branch = getattr(self, "_git_branch", None)
+        git_status = getattr(self, "_git_status", None)
+        if git_branch:
+            git_parts = [f"[green]{git_branch}[/green]"]
+            if git_status:
+                git_parts.append(git_status)
+            if self._context_tokens > 0:
+                git_parts.append(_format_tokens(self._context_tokens))
+            parts.append(" ".join(git_parts))
+        elif self._context_tokens > 0:
+            parts.append(_format_tokens(self._context_tokens))
 
         # Transient states
         if self._connection_status:
-            parts.append(self._connection_status)
+            parts.append(f"[bold red]{self._connection_status}[/bold red]")
         elif self._typing_indicator:
             parts.append(self._typing_indicator)
         elif self._streaming_indicator:
             parts.append(self._streaming_indicator)
 
-        # Model (short name)
-        if self._model:
-            parts.append(_short_model(self._model))
-
-        # Context gauge
-        ctx = _context_gauge(self._context_tokens, self._context_max)
-        if ctx:
-            parts.append(ctx)
-
-        # Token count
-        if self._context_tokens > 0:
-            parts.append(_format_tokens(self._context_tokens))
-
-        # Conditional badges
+        # Badges
         if self._encrypted:
-            parts.append("ENC")
+            parts.append("[green]ENC[/green]")
 
         _mode_labels = {
             "humans_only": "Humans Only",
@@ -239,13 +252,13 @@ class StatusBar(Static):
             "all": "Full Auto", "off": "Humans Only",
         }
         if self._group_mode is not None:
-            parts.append(_mode_labels.get(self._group_mode, self._group_mode))
+            parts.append(f"[magenta]{_mode_labels.get(self._group_mode, self._group_mode)}[/magenta]")
 
         if self._permission_mode == "bypassPermissions":
-            parts.append("BYPASS")
+            parts.append("[bold red]>> bypass permissions on[/bold red]")
 
         # Cost
         if self._cost > 0:
             parts.append(f"${self._cost:.2f}")
 
-        self.update(" | ".join(parts))
+        self.update(" [dim]|[/dim] ".join(parts))
