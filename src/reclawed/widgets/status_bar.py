@@ -49,7 +49,7 @@ def _context_battery(tokens: int, max_tokens: int) -> str:
 
     filled_chars = "\u2588" * filled
     empty_chars = "\u2591" * empty
-    return f"\U0001f50b [{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
+    return f"[{color}]{filled_chars}{empty_chars}[/{color}] {pct_int}%"
 
 
 def _git_info(cwd: str | None) -> tuple[str | None, str | None]:
@@ -209,9 +209,9 @@ class StatusBar(Static):
     def _refresh_display(self) -> None:
         parts: list[str] = []
 
-        # Model — no hardcoded color, inherits from theme
+        # Model
         if self._model:
-            parts.append(f"[bold]{_short_model(self._model)}[/bold]")
+            parts.append(f"[bold cyan]{_short_model(self._model)}[/bold cyan]")
 
         # Context battery gauge
         ctx = _context_battery(self._context_tokens, self._context_max)
@@ -221,13 +221,13 @@ class StatusBar(Static):
         # Workspace
         if self._workspace_name:
             c = getattr(self, "_workspace_color", "yellow")
-            parts.append(f"\U0001f4c1 [bold {c}]{self._workspace_name}[/bold {c}]")
+            parts.append(f"[bold {c}]{self._workspace_name}[/bold {c}]")
 
         # Git: branch + status + token count
         git_branch = getattr(self, "_git_branch", None)
         git_status = getattr(self, "_git_status", None)
         if git_branch:
-            git_parts = [f"\U0001f500 [green]{git_branch}[/green]"]
+            git_parts = [f"[green]{git_branch}[/green]"]
             if git_status:
                 git_parts.append(git_status)
             if self._context_tokens > 0:
@@ -246,7 +246,7 @@ class StatusBar(Static):
 
         # Badges
         if self._encrypted:
-            parts.append("\U0001f512 [green]ENC[/green]")
+            parts.append("[green]ENC[/green]")
 
         _mode_labels = {
             "humans_only": "Humans Only",
