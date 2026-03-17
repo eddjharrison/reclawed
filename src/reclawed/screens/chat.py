@@ -1667,13 +1667,15 @@ class ChatScreen(Screen):
         # Restart the Claude session with new permissions (silently)
         session_key = self.session.id
         old_claude = self._claude_sessions.pop(session_key, None)
-        if old_claude is not None:
-            old_claude.cancel()
-            asyncio.create_task(old_claude.stop())
-
         self._claude = None
 
         async def _restart():
+            if old_claude is not None:
+                try:
+                    old_claude.cancel()
+                    await old_claude.stop()
+                except Exception:
+                    pass
             session = ClaudeSession(
                 cli_path=self.config.claude_binary,
                 session_id=self.session.claude_session_id,
