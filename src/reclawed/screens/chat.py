@@ -1418,10 +1418,43 @@ class ChatScreen(Screen):
 
         # AskUserQuestion: render choices as buttons, auto-approve
         if tool_name == "AskUserQuestion":
-            # Auto-approve the tool use — Claude is just asking a question
+            # Log the tool_input so we can see the structure
+            import json, logging
+            logging.getLogger("reclawed").warning(f"AskUserQuestion tool_input: {json.dumps(tool_input, indent=2)[:500]}")
+
+            # Auto-approve the tool use
             if not future.done():
                 from claude_agent_sdk import PermissionResultAllow
                 future.set_result(PermissionResultAllow())
+
+            # Render question + choices as clickable buttons
+            question = tool_input.get("question", tool_input.get("text", ""))
+            # Try various possible field names for choices
+            choices_raw = (
+                tool_input.get("options")
+                or tool_input.get("choices")
+                or tool_input.get("items")
+                or []
+            )
+
+            if question or choices_raw:
+                try:
+                    msg_list = self.query_one("#message-list", MessageList)
+                    bubbles = list(msg_list.query(MessageBubble))
+                    if bubbles:
+                        bubble = bubbles[-1]
+                        # Build numbered choices for ChoiceButtons
+                        if choices_raw:
+                            from reclawed.widgets.choice_buttons import ChoiceButtons
+                            choices = []
+                            for i, opt in enumerate(choices_raw):
+                                label = str(i + 1)
+                                desc = opt if isinstance(opt, str) else str(opt)
+                                choices.append((label, desc))
+                            await bubble.mount(ChoiceButtons(choices))
+                            msg_list.scroll_end(animate=False)
+                except Exception as e:
+                    logging.getLogger("reclawed").warning(f"AskUserQuestion UI failed: {e}")
             return
 
         try:
