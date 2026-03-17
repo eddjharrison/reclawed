@@ -390,11 +390,14 @@ class ChatScreen(Screen):
         """Handle Alt+A or attach button — open file path input."""
         event.stop()
         from reclawed.widgets.file_input_screen import FileInputScreen
-        result = await self.app.push_screen_wait(FileInputScreen())
-        if result:
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.add_attachment(result)
-            self.notify(f"Attached: {Path(result).name}", timeout=3)
+
+        def _on_dismiss(result: str | None) -> None:
+            if result:
+                compose = self.query_one("#compose-area", ComposeArea)
+                compose.add_attachment(result)
+                self.notify(f"Attached: {Path(result).name}", timeout=3)
+
+        self.app.push_screen(FileInputScreen(), callback=_on_dismiss)
 
     # --- Group chat relay helpers ---
 

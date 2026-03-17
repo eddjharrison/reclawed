@@ -85,15 +85,26 @@ class ComposeArea(Vertical):
         min-height: 3;
         max-height: 8;
     }
-    ComposeArea #send-btn {
+    ComposeArea #button-col {
         width: 10;
-        min-height: 3;
+        height: auto;
         margin-left: 1;
     }
-    ComposeArea #attach-btn {
-        width: 5;
+    ComposeArea #send-btn {
+        width: 100%;
         min-height: 3;
-        margin-left: 1;
+    }
+    ComposeArea #attach-btn {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        background: $surface;
+        color: $text-muted;
+        border: none;
+    }
+    ComposeArea #attach-btn:hover {
+        background: $primary 30%;
+        color: $text;
     }
     """
 
@@ -135,8 +146,9 @@ class ComposeArea(Vertical):
         yield AttachmentPreview(id="attachment-preview")
         with Horizontal(id="compose-row"):
             yield ComposeInput(id="compose-input")
-            yield Button("📁", id="attach-btn", variant="default")
-            yield Button("Send", id="send-btn", variant="primary")
+            with Vertical(id="button-col"):
+                yield Button("Send", id="send-btn", variant="primary")
+                yield Button("📁 Attach", id="attach-btn", variant="default")
 
     def on_mount(self) -> None:
         self.query_one("#compose-input", ComposeInput).focus()
