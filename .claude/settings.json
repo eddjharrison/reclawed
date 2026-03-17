@@ -9,8 +9,50 @@
       "Bash(.venv/*)",
       "Bash(pip*)",
       "Bash(pytest*)",
+      "Bash(ruff*)",
+      "Bash(uv*)",
+      "Bash(where*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(gh*)",
       "Glob",
       "Grep"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python $CLAUDE_PROJECT_DIR/.claude/hooks/pre_compact.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo {\"systemMessage\": \"Session stopped. Remember to commit your work!\"}"
+          }
+        ]
+      }
     ]
   }
 }
