@@ -40,15 +40,18 @@ class ChoiceButtons(Horizontal):
         self._choices = choices
 
     def compose(self) -> ComposeResult:
-        for label, description in self._choices:
+        for idx, (label, description) in enumerate(self._choices):
             short = description[:30] + "..." if len(description) > 30 else description
-            yield Button(f"{label}. {short}", id=f"choice-{label}")
+            yield Button(f"{label}. {short}", id=f"choice-{idx}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         btn_id = event.button.id or ""
-        label = btn_id.replace("choice-", "")
-        for choice_label, description in self._choices:
-            if choice_label == label:
+        idx_str = btn_id.replace("choice-", "")
+        try:
+            idx = int(idx_str)
+            if 0 <= idx < len(self._choices):
+                label, description = self._choices[idx]
                 self.post_message(self.Selected(label, description))
-                break
+        except ValueError:
+            pass
