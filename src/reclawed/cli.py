@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import sys
 import warnings
 import click
 
 # Suppress asyncio ResourceWarnings on Windows (unclosed subprocess transports
 # during garbage collection at exit — harmless but noisy).
-warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed transport")
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
 from reclawed.app import ReclawedApp
 from reclawed.config import Config
@@ -33,3 +35,10 @@ def main(continue_session: bool, session_id: str | None) -> None:
 
     app = ReclawedApp(config=config, resume_session_id=resume_id)
     app.run()
+
+    # Suppress noisy asyncio tracebacks on Windows during cleanup
+    if sys.platform == "win32":
+        try:
+            sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
