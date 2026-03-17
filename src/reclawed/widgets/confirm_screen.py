@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.events import Key
 from textual.screen import ModalScreen
@@ -14,7 +13,7 @@ class ConfirmScreen(ModalScreen[bool]):
     """Modal that asks the user to confirm or cancel an action.
 
     Dismisses with ``True`` if confirmed, ``False`` otherwise.
-    Arrow keys switch focus between buttons. Enter confirms the focused button.
+    Arrow keys switch focus between buttons. y/n/Escape as shortcuts.
     """
 
     DEFAULT_CSS = """
@@ -49,14 +48,6 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("left", "focus_previous", "", show=False),
-        Binding("right", "focus_next", "", show=False),
-        Binding("y", "confirm_yes", "", show=False),
-        Binding("n", "cancel", "", show=False),
-    ]
-
     def __init__(self, title: str, message: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self._title = title
@@ -71,14 +62,23 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button("Cancel", id="btn-cancel", variant="default")
 
     def on_mount(self) -> None:
-        # Focus the Yes button by default
         self.query_one("#btn-yes", Button).focus()
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "y":
+            event.stop()
+            self.dismiss(True)
+        elif event.key in ("n", "escape"):
+            event.stop()
+            self.dismiss(False)
+        elif event.key in ("left", "right", "tab"):
+            event.stop()
+            # Toggle focus between the two buttons
+            focused = self.app.focused
+            if focused and focused.id == "btn-yes":
+                self.query_one("#btn-cancel", Button).focus()
+            else:
+                self.query_one("#btn-yes", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "btn-yes")
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-    def action_confirm_yes(self) -> None:
-        self.dismiss(True)
