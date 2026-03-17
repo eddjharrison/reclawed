@@ -2033,15 +2033,23 @@ class ChatScreen(Screen):
         self.app.call_later(_reset)
 
     def action_quit(self) -> None:
-        # Stop all pooled Claude sessions
-        for session in self._claude_sessions.values():
-            session.cancel()
-            asyncio.create_task(session.stop())
-        # Disconnect all pooled relay clients (daemon stays running)
-        asyncio.create_task(self._stop_all_relay_clients())
-        if self._tunnel_proc is not None and self._tunnel_proc.returncode is None:
-            self._tunnel_proc.terminate()
-        self.app.exit()
+        from reclawed.widgets.confirm_screen import ConfirmScreen
+
+        def on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            for session in self._claude_sessions.values():
+                session.cancel()
+                asyncio.create_task(session.stop())
+            asyncio.create_task(self._stop_all_relay_clients())
+            if self._tunnel_proc is not None and self._tunnel_proc.returncode is None:
+                self._tunnel_proc.terminate()
+            self.app.exit()
+
+        self.app.push_screen(
+            ConfirmScreen(title="Quit Re:Clawed?", message="Are you sure you want to exit?"),
+            on_confirm,
+        )
 
     def action_help(self) -> None:
         if self._compose_focused:
