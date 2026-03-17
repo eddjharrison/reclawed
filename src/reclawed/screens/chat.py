@@ -156,7 +156,7 @@ class ChatScreen(Screen):
         # Debounce timers for orchestrator auto-respond: {orchestrator_id: asyncio.TimerHandle}
         self._orch_debounce: dict[str, asyncio.TimerHandle] = {}
         # Track which session IDs have an active stream (prevents concurrent SDK calls)
-        self._streaming_sessions: set[str] = {}
+        self._streaming_sessions: set[str] = set()
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
