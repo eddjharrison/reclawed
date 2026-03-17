@@ -100,6 +100,14 @@ class ChatSidebar(Vertical):
             self.cwd = cwd
             self.name = name
 
+    class RefreshWorkspaceRequested(TMessage):
+        """Posted when the user wants to re-import sessions for a workspace."""
+
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -269,6 +277,10 @@ class ChatSidebar(Vertical):
     def on_workspace_section_remove_workspace_requested(self, event: WorkspaceSection.RemoveWorkspaceRequested) -> None:
         event.stop()
         self.post_message(self.RemoveWorkspaceRequested(event.cwd, event.name))
+
+    def on_workspace_section_refresh_workspace_requested(self, event: WorkspaceSection.RefreshWorkspaceRequested) -> None:
+        event.stop()
+        self.post_message(self.RefreshWorkspaceRequested(event.cwd, event.name))
 
     def start_rename(self, session_id: str) -> None:
         """Trigger inline rename on the ChatListItem for the given session."""

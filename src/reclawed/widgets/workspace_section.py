@@ -20,6 +20,17 @@ class _AddButton(Label):
         self.post_message(self.Pressed())
 
 
+class _RefreshButton(Label):
+    """Small clickable refresh button."""
+
+    class Pressed(TMessage):
+        """Posted when clicked."""
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(self.Pressed())
+
+
 class WorkspaceSection(Vertical):
     """A collapsible workspace section in the sidebar.
 
@@ -60,6 +71,15 @@ class WorkspaceSection(Vertical):
         color: $accent;
         text-style: bold;
     }
+    WorkspaceSection .ws-refresh {
+        width: 3;
+        height: 1;
+        color: $text-muted;
+    }
+    WorkspaceSection .ws-refresh:hover {
+        color: $accent;
+        text-style: bold;
+    }
     WorkspaceSection .ws-items {
         width: 100%;
         height: auto;
@@ -75,6 +95,13 @@ class WorkspaceSection(Vertical):
             self.cwd = cwd
 
     class RemoveWorkspaceRequested(TMessage):
+        def __init__(self, cwd: str, name: str) -> None:
+            super().__init__()
+            self.cwd = cwd
+            self.name = name
+
+    class RefreshWorkspaceRequested(TMessage):
+        """Posted when the user clicks the refresh button to re-import sessions."""
         def __init__(self, cwd: str, name: str) -> None:
             super().__init__()
             self.cwd = cwd
@@ -97,6 +124,8 @@ class WorkspaceSection(Vertical):
         with Horizontal(classes="ws-header"):
             yield Label(arrow, classes="ws-arrow", id=f"ws-arrow-{id(self)}")
             yield Label(self._workspace_name, classes="ws-name", id=f"ws-name-{id(self)}")
+            if self._cwd is not None:
+                yield _RefreshButton("[r]", classes="ws-refresh")
             yield _AddButton("[+]", classes="ws-add")
         yield Vertical(
             classes="ws-items hidden" if self._collapsed else "ws-items",
@@ -129,6 +158,11 @@ class WorkspaceSection(Vertical):
     def on__add_button_pressed(self, event: _AddButton.Pressed) -> None:
         event.stop()
         self.post_message(self.NewChatInWorkspace(self._cwd))
+
+    def on__refresh_button_pressed(self, event: _RefreshButton.Pressed) -> None:
+        event.stop()
+        if self._cwd is not None:
+            self.post_message(self.RefreshWorkspaceRequested(self._cwd, self._workspace_name))
 
     @property
     def items_container(self) -> Vertical:

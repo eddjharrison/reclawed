@@ -1858,6 +1858,25 @@ class ChatScreen(Screen):
             on_confirm,
         )
 
+    def on_chat_sidebar_refresh_workspace_requested(self, event: ChatSidebar.RefreshWorkspaceRequested) -> None:
+        """Re-import sessions from Claude Code for a workspace."""
+        from reclawed.importer import DiscoveredProject, discover_projects, import_project_sessions
+
+        # Find the matching project in ~/.claude/projects/
+        projects = discover_projects()
+        matching = [p for p in projects if p.cwd == event.cwd]
+        if not matching:
+            self.notify(f"No Claude Code project found for {event.name}", severity="warning", timeout=3)
+            return
+
+        project = matching[0]
+        count = import_project_sessions(project, self.store)
+        self._refresh_sidebar()
+        if count > 0:
+            self.notify(f"Imported {count} new session{'s' if count != 1 else ''} for {event.name}", timeout=3)
+        else:
+            self.notify(f"No new sessions found for {event.name}", timeout=3)
+
     def action_toggle_sidebar(self) -> None:
         sidebar = self.query_one("#chat-sidebar", ChatSidebar)
         sidebar.toggle_class("hidden")
