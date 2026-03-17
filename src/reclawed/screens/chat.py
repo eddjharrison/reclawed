@@ -268,6 +268,7 @@ class ChatScreen(Screen):
             clear_group_mode=not self.session.is_group,
             workspace_name=workspace_name,
             permission_mode=self._selected_permission,
+            cwd=self.session.cwd,
         )
         status.set_encrypted(bool(self.session.encryption_passphrase))
         # Restore context gauge from persisted value
