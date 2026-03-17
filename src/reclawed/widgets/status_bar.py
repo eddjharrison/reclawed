@@ -211,7 +211,7 @@ class StatusBar(Static):
 
         # Model — no hardcoded color, inherits from theme
         if self._model:
-            parts.append(f"\u2699 [bold]{_short_model(self._model)}[/bold]")
+            parts.append(f"[bold]{_short_model(self._model)}[/bold]")
 
         # Context battery gauge
         ctx = _context_battery(self._context_tokens, self._context_max)
