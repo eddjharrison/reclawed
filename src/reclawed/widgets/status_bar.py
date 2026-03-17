@@ -19,6 +19,13 @@ def _short_model(model: str) -> str:
         return ""
     if model in _MODEL_SHORT:
         return _MODEL_SHORT[model]
+    # Try partial matching — model might be "opus" or "claude-opus-4-6-20260101"
+    lower = model.lower()
+    for key, display in _MODEL_SHORT.items():
+        # Match on the core name e.g. "opus" in "claude-opus-4-6"
+        core = key.replace("claude-", "").split("-")[0]
+        if core in lower:
+            return display
     return model.replace("claude-", "").replace("-", " ").title()
 
 
@@ -220,7 +227,7 @@ class StatusBar(Static):
         # Workspace
         if self._workspace_name:
             c = getattr(self, "_workspace_color", "yellow")
-            parts.append(f"[bold {c}]{self._workspace_name}[/bold {c}]")
+            parts.append(f"\U0001f4c1 [bold {c}]{self._workspace_name}[/bold {c}]")
 
         # Git: branch + status + token count
         git_branch = getattr(self, "_git_branch", None)
