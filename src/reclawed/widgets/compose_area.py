@@ -20,14 +20,13 @@ class ComposeInput(TextArea):
         """Posted when user types @ to trigger mention autocomplete."""
 
     def _on_key(self, event: Key) -> None:
-        # Log key to subtitle for debugging
-        self.app.sub_title = f"Key: {event.key!r}"
         key = event.key
         if key == "enter":
             event.prevent_default()
             event.stop()
             self.post_message(self.SendRequested())
-        elif ("shift" in key or "ctrl" in key) and ("enter" in key or "return" in key):
+        elif key in ("ctrl+j", "shift+enter", "shift+return", "ctrl+enter", "ctrl+return"):
+            # ctrl+j is what Windows Terminal sends for Ctrl+Enter
             event.prevent_default()
             event.stop()
             self.insert("\n")
