@@ -1059,8 +1059,18 @@ class ChatScreen(Screen):
                             questions = event.tool_input.get("questions", [])
                             if questions:
                                 from reclawed.widgets.choice_buttons import ChoiceButtons
+                                from textual.widgets import Label
                                 for q in questions:
+                                    q_text = q.get("question", "")
+                                    header = q.get("header", "")
                                     options = q.get("options", [])
+                                    # Show question text above choices
+                                    if q_text:
+                                        display = f"[bold]{header}:[/bold] {q_text}" if header else q_text
+                                        try:
+                                            await bubble.mount(Label(display, markup=True))
+                                        except Exception:
+                                            pass
                                     if options:
                                         choices = []
                                         for i, opt in enumerate(options):
