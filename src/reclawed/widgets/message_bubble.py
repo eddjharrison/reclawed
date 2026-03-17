@@ -236,9 +236,10 @@ class MessageBubble(Vertical):
             choices = detect_choices(content)
             if choices:
                 try:
-                    self.mount(ChoiceButtons(choices))
-                except Exception:
-                    pass
+                    await self.mount(ChoiceButtons(choices))
+                except Exception as e:
+                    import logging
+                    logging.getLogger("reclawed").warning(f"ChoiceButtons mount failed: {e}")
 
     def add_tool_use(self, tool_use_id: str, tool_name: str, tool_input: dict) -> None:
         """Mount a tool activity widget showing an in-progress tool call."""
