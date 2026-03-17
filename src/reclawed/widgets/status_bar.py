@@ -216,9 +216,9 @@ class StatusBar(Static):
     def _refresh_display(self) -> None:
         parts: list[str] = []
 
-        # Model — always show something
+        # Model — always show something, with dot indicator
         model_display = _short_model(self._model) if self._model else "sonnet"
-        parts.append(f"[bold]{model_display}[/bold]")
+        parts.append(f"\u2b24 [bold]{model_display}[/bold]")
 
         # Context battery gauge — always show
         ctx = _context_battery(self._context_tokens, self._context_max)
