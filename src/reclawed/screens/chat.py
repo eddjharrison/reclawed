@@ -311,6 +311,10 @@ class ChatScreen(Screen):
                 reply_context = parent_msg.content[:self.config.max_quote_length]
             quote_preview.hide()
 
+        # Build attachment metadata if images were attached
+        from reclawed.utils import make_attachment_json
+        attachments_json = make_attachment_json(event.attachments) if event.attachments else None
+
         # Create and display user message
         user_msg = Message(
             role="user",
@@ -319,6 +323,7 @@ class ChatScreen(Screen):
             reply_to_id=reply_to_id,
             sender_name=self.config.participant_name if self.session.is_group else None,
             sender_type="human" if self.session.is_group else None,
+            attachments=attachments_json,
         )
         self.store.add_message(user_msg)
 
@@ -361,8 +366,35 @@ class ChatScreen(Screen):
         self.store.add_message(assistant_msg)
         await msg_list.add_message(assistant_msg)
 
-        # Stream response
-        self._stream_response(prompt, assistant_msg, reply_context)
+        # Stream response — pass image attachments to Claude
+        self._stream_response(
+            prompt, assistant_msg, reply_context,
+            attachments=event.attachments or None,
+        )
+
+    async def on_compose_area_paste_image_triggered(self, event: ComposeArea.PasteImageTriggered) -> None:
+        """Handle Alt+V — grab image from clipboard and attach it."""
+        event.stop()
+        from reclawed.utils import grab_clipboard_image
+        # Run clipboard grab in thread to avoid blocking
+        import asyncio
+        path = await asyncio.to_thread(grab_clipboard_image)
+        if path:
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.add_attachment(str(path))
+            self.notify(f"Image pasted: {path.name}", timeout=3)
+        else:
+            self.notify("No image found in clipboard", severity="warning", timeout=3)
+
+    async def on_compose_area_attach_file_triggered(self, event: ComposeArea.AttachFileTriggered) -> None:
+        """Handle Alt+A or attach button — open file path input."""
+        event.stop()
+        from reclawed.widgets.file_input_screen import FileInputScreen
+        result = await self.app.push_screen_wait(FileInputScreen())
+        if result:
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.add_attachment(result)
+            self.notify(f"Attached: {Path(result).name}", timeout=3)
 
     # --- Group chat relay helpers ---
 
@@ -997,7 +1029,8 @@ class ChatScreen(Screen):
 
     @work(thread=False)
     async def _stream_response(
-        self, prompt: str, assistant_msg: Message, reply_context: str | None
+        self, prompt: str, assistant_msg: Message, reply_context: str | None,
+        attachments: list[str] | None = None,
     ) -> None:
         # Capture context at start so session switches don't confuse us
         stream_session = self.session
@@ -1028,6 +1061,7 @@ class ChatScreen(Screen):
                 session_id=stream_session.claude_session_id,
                 reply_context=reply_context,
                 model=self._selected_model,
+                attachments=attachments,
             ):
                 if isinstance(event, StreamSessionId):
                     stream_session.claude_session_id = event.session_id

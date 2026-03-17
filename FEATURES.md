@@ -44,6 +44,7 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Question handling** — detects when Claude asks a question, highlights the bubble with accent border
 - [x] **Choice selection** — numbered options rendered as clickable buttons, auto-submit on click
 - [x] **AskUserQuestion widget** — multi-question forms with clickable options, collect-then-submit, matches Claude Code CLI
+- [x] **Image attachments** — Alt+V pastes image from clipboard, Alt+A or 📁 button opens file path dialog. Images sent to Claude as base64 multimodal content. Cross-platform: Windows (PowerShell), macOS (pngpaste/osascript), Linux (xclip/wl-paste)
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
 

@@ -1,13 +1,15 @@
-"""Compose area with text input and send functionality."""
+"""Compose area with text input, send functionality, and image attachments."""
 
 from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.events import Key
 from textual.message import Message as TMessage
 from textual.widgets import Button, TextArea
+
+from reclawed.widgets.attachment_preview import AttachmentPreview
 
 
 class ComposeInput(TextArea):
@@ -18,6 +20,12 @@ class ComposeInput(TextArea):
 
     class MentionRequested(TMessage):
         """Posted when user types @ to trigger mention autocomplete."""
+
+    class PasteImageRequested(TMessage):
+        """Posted when user presses Alt+V to paste an image from clipboard."""
+
+    class AttachFileRequested(TMessage):
+        """Posted when user presses Alt+A to attach a file by path."""
 
     def _on_key(self, event: Key) -> None:
         if event.key == "enter":
@@ -42,27 +50,48 @@ class ComposeInput(TextArea):
         elif event.key == "at":
             # Let the @ character be inserted, then request mention autocomplete
             self.call_later(lambda: self.post_message(self.MentionRequested()))
+        elif event.key == "alt+v":
+            # Paste image from clipboard
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.PasteImageRequested())
+        elif event.key == "alt+a":
+            # Attach file by path
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.AttachFileRequested())
 
 
-class ComposeArea(Horizontal):
-    """Text input area with send button."""
+class ComposeArea(Vertical):
+    """Text input area with send button and attachment support."""
 
     DEFAULT_CSS = """
     ComposeArea {
         width: 100%;
         height: auto;
         min-height: 3;
-        max-height: 10;
+        max-height: 14;
         dock: bottom;
         padding: 0 1;
+    }
+    ComposeArea #compose-row {
+        width: 100%;
+        height: auto;
+        min-height: 3;
+        max-height: 10;
     }
     ComposeArea ComposeInput {
         width: 1fr;
         min-height: 3;
         max-height: 8;
     }
-    ComposeArea Button {
+    ComposeArea #send-btn {
         width: 10;
+        min-height: 3;
+        margin-left: 1;
+    }
+    ComposeArea #attach-btn {
+        width: 5;
         min-height: 3;
         margin-left: 1;
     }
@@ -74,10 +103,16 @@ class ComposeArea(Horizontal):
 
     class Submitted(TMessage):
         """Posted when the user submits a message."""
-        def __init__(self, text: str, editing_message_id: str | None = None) -> None:
+        def __init__(
+            self,
+            text: str,
+            editing_message_id: str | None = None,
+            attachments: list[str] | None = None,
+        ) -> None:
             super().__init__()
             self.text = text
             self.editing_message_id = editing_message_id
+            self.attachments = attachments or []
 
     class TypingStarted(TMessage):
         """Posted when the user types in the compose area."""
@@ -85,14 +120,23 @@ class ComposeArea(Horizontal):
     class MentionTriggered(TMessage):
         """Posted when @mention autocomplete is needed."""
 
+    class AttachFileTriggered(TMessage):
+        """Posted when the user wants to attach a file (opens path input)."""
+
+    class PasteImageTriggered(TMessage):
+        """Posted when the user wants to paste an image from clipboard."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._editing_message_id: str | None = None
         self._participants: list[str] = []  # participant names for @mention
 
     def compose(self) -> ComposeResult:
-        yield ComposeInput(id="compose-input")
-        yield Button("Send", id="send-btn", variant="primary")
+        yield AttachmentPreview(id="attachment-preview")
+        with Horizontal(id="compose-row"):
+            yield ComposeInput(id="compose-input")
+            yield Button("📁", id="attach-btn", variant="default")
+            yield Button("Send", id="send-btn", variant="primary")
 
     def on_mount(self) -> None:
         self.query_one("#compose-input", ComposeInput).focus()
@@ -100,9 +144,22 @@ class ComposeArea(Horizontal):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "send-btn":
             self._submit()
+        elif event.button.id == "attach-btn":
+            event.stop()
+            self.post_message(self.AttachFileTriggered())
 
     def on_compose_input_send_requested(self) -> None:
         self._submit()
+
+    def on_compose_input_paste_image_requested(self, event: ComposeInput.PasteImageRequested) -> None:
+        """Forward paste request to ChatScreen."""
+        event.stop()
+        self.post_message(self.PasteImageTriggered())
+
+    def on_compose_input_attach_file_requested(self, event: ComposeInput.AttachFileRequested) -> None:
+        """Forward attach request to ChatScreen."""
+        event.stop()
+        self.post_message(self.AttachFileTriggered())
 
     def on_text_area_changed(self, event) -> None:
         """Post TypingStarted on any text change."""
@@ -124,12 +181,33 @@ class ComposeArea(Horizontal):
         ta.insert(f"{name} ")
         ta.focus()
 
+    def add_attachment(self, path: str) -> None:
+        """Add an image attachment to the preview strip."""
+        preview = self.query_one("#attachment-preview", AttachmentPreview)
+        preview.add_attachment(path)
+
+    def get_attachments(self) -> list[str]:
+        """Return current attachment file paths."""
+        preview = self.query_one("#attachment-preview", AttachmentPreview)
+        return preview.paths
+
+    def clear_attachments(self) -> None:
+        """Remove all queued attachments."""
+        preview = self.query_one("#attachment-preview", AttachmentPreview)
+        preview.clear()
+
     def _submit(self) -> None:
         ta = self.query_one("#compose-input", ComposeInput)
         text = ta.text.strip()
-        if text:
-            self.post_message(self.Submitted(text, editing_message_id=self._editing_message_id))
+        attachments = self.get_attachments()
+        if text or attachments:
+            self.post_message(self.Submitted(
+                text or "(image attached)",
+                editing_message_id=self._editing_message_id,
+                attachments=attachments,
+            ))
             ta.clear()
+            self.clear_attachments()
             self._editing_message_id = None
             # Remove edit indicator if present
             try:
@@ -167,15 +245,18 @@ class ComposeArea(Horizontal):
         self._editing_message_id = None
         ta = self.query_one("#compose-input", ComposeInput)
         ta.clear()
+        self.clear_attachments()
         try:
             self.query_one("#edit-indicator").remove()
         except Exception:
             pass
 
     def action_cancel(self) -> None:
-        """Handle Escape — cancel edit mode if active, otherwise no-op."""
+        """Handle Escape — cancel edit mode if active, otherwise clear attachments."""
         if self._editing_message_id is not None:
             self.cancel_edit()
+        elif self.get_attachments():
+            self.clear_attachments()
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable the compose area."""

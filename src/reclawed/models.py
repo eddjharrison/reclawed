@@ -35,6 +35,7 @@ class Message:
     sender_type: str | None = None  # "human" | "claude"
     edited_at: datetime | None = None
     deleted: bool = False
+    attachments: str | None = None  # JSON list of {path, filename, mime_type, size_bytes}
 
 
 @dataclass

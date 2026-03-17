@@ -8,8 +8,11 @@ multiple queries within a session.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import os
+from pathlib import Path
 from typing import AsyncIterator
 
 from claude_agent_sdk import (
@@ -129,12 +132,16 @@ class ClaudeSession:
         session_id: str | None = None,
         reply_context: str | None = None,
         model: str | None = None,
+        attachments: list[str] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a message and yield streaming events.
 
         The signature intentionally matches ``ClaudeProcess.send_message()``
         for drop-in compatibility.  The ``session_id`` parameter is accepted
         but ignored — the SDK client already knows its session.
+
+        If *attachments* is provided (list of file paths), the prompt is sent
+        as multimodal content with image blocks.
         """
         # Wait for start() to finish (it runs as a background task)
         try:
@@ -164,7 +171,12 @@ class ClaudeSession:
                 pass
 
         try:
-            await self._client.query(full_prompt)
+            # Build the query — multimodal if we have image attachments
+            if attachments:
+                query_input = self._build_multimodal_message(full_prompt, attachments)
+                await self._client.query(query_input)
+            else:
+                await self._client.query(full_prompt)
 
             full_content_parts: list[str] = []
             last_model: str | None = None
@@ -267,6 +279,36 @@ class ClaudeSession:
         except Exception as exc:
             log.error("Tool approval error: %s", exc)
             return PermissionResultAllow()
+
+    @staticmethod
+    def _build_multimodal_message(
+        text: str, attachments: list[str],
+    ) -> str:
+        """Build a multimodal prompt string with image file references.
+
+        The Claude Code CLI accepts file paths prefixed with the image
+        reference syntax.  We encode images as base64 data URIs embedded
+        in the prompt text, which the CLI forwards to the API.
+
+        For now, we prepend file references so the CLI's built-in handling
+        can pick them up.  If the SDK adds native image block support in
+        the future, this method should be updated.
+        """
+        from reclawed.utils import get_image_mime
+
+        parts: list[str] = []
+        for path in attachments:
+            p = Path(path)
+            if p.exists() and p.is_file():
+                mime = get_image_mime(p)
+                b64 = base64.standard_b64encode(p.read_bytes()).decode("ascii")
+                # Use data URI format that Claude Code recognizes
+                parts.append(f"![image](<data:{mime};base64,{b64}>)")
+
+        if parts:
+            image_refs = "\n\n".join(parts)
+            return f"{image_refs}\n\n{text}"
+        return text
 
     @property
     def session_id(self) -> str | None:

@@ -94,6 +94,8 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN last_input_tokens INTEGER NOT NULL DEFAULT 0",
             # Session pinning
             "ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+            # Message attachments (JSON)
+            "ALTER TABLE messages ADD COLUMN attachments TEXT",
         ]
         for sql in migrations:
             try:
@@ -214,13 +216,13 @@ class Store:
         self._conn.execute(
             "INSERT INTO messages (id, seq, role, content, timestamp, session_id, claude_session_id, "
             "reply_to_id, bookmarked, cost_usd, duration_ms, model, input_tokens, output_tokens, "
-            "sender_name, sender_type, encrypted) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "sender_name, sender_type, encrypted, attachments) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (msg.id, msg.seq, msg.role, stored_content, _fmt_dt(msg.timestamp),
              msg.session_id, msg.claude_session_id, msg.reply_to_id,
              int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
              msg.model, msg.input_tokens, msg.output_tokens,
-             msg.sender_name, msg.sender_type, encrypted),
+             msg.sender_name, msg.sender_type, encrypted, msg.attachments),
         )
         self._conn.commit()
         # Update session message count
@@ -240,12 +242,12 @@ class Store:
         self._conn.execute(
             "UPDATE messages SET content=?, bookmarked=?, cost_usd=?, duration_ms=?, model=?, "
             "input_tokens=?, output_tokens=?, claude_session_id=?, sender_name=?, sender_type=?, "
-            "edited_at=?, deleted=?, encrypted=? WHERE id=?",
+            "edited_at=?, deleted=?, encrypted=?, attachments=? WHERE id=?",
             (stored_content, int(msg.bookmarked), msg.cost_usd, msg.duration_ms,
              msg.model, msg.input_tokens, msg.output_tokens, msg.claude_session_id,
              msg.sender_name, msg.sender_type,
              _fmt_dt(msg.edited_at) if msg.edited_at else None,
-             int(msg.deleted), encrypted, msg.id),
+             int(msg.deleted), encrypted, msg.attachments, msg.id),
         )
         self._conn.commit()
 
@@ -412,6 +414,7 @@ class Store:
             sender_type=row["sender_type"] if "sender_type" in keys else None,
             edited_at=_parse_dt(edited_at_raw) if edited_at_raw else None,
             deleted=bool(row["deleted"]) if "deleted" in keys else False,
+            attachments=row["attachments"] if "attachments" in keys else None,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:

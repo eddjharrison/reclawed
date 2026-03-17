@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import mimetypes
+import os
 import platform
 import re
 import subprocess
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 
 def format_relative_time(ts: datetime) -> str:
@@ -107,3 +113,188 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
             description = m.group(3).strip()
             choices.append((label, description))
     return choices if len(choices) >= 2 else []
+
+
+# ---------------------------------------------------------------------------
+# Image / attachment helpers
+# ---------------------------------------------------------------------------
+
+# Supported image types for Claude multimodal input
+IMAGE_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+}
+
+# Max file size for image attachments (20 MB — Anthropic API limit)
+MAX_IMAGE_SIZE = 20 * 1024 * 1024
+
+
+def is_image_file(path: str | Path) -> bool:
+    """Check if a file path points to a supported image type."""
+    ext = Path(path).suffix.lower()
+    return ext in IMAGE_MIME_TYPES
+
+
+def get_image_mime(path: str | Path) -> str:
+    """Return the MIME type for an image file, or a sensible default."""
+    ext = Path(path).suffix.lower()
+    return IMAGE_MIME_TYPES.get(ext, "application/octet-stream")
+
+
+def image_to_base64(path: str | Path) -> str:
+    """Read an image file and return its base64-encoded contents."""
+    return base64.standard_b64encode(Path(path).read_bytes()).decode("ascii")
+
+
+def make_attachment_json(paths: list[str | Path]) -> str | None:
+    """Build the JSON attachment metadata string for a list of file paths.
+
+    Returns ``None`` if *paths* is empty.  Each entry has::
+
+        {"path": str, "filename": str, "mime_type": str, "size_bytes": int}
+    """
+    if not paths:
+        return None
+    entries = []
+    for p in paths:
+        p = Path(p)
+        entries.append({
+            "path": str(p),
+            "filename": p.name,
+            "mime_type": get_image_mime(p),
+            "size_bytes": p.stat().st_size,
+        })
+    return json.dumps(entries)
+
+
+def parse_attachments(json_str: str | None) -> list[dict]:
+    """Parse the JSON attachment string back into a list of dicts."""
+    if not json_str:
+        return []
+    try:
+        return json.loads(json_str)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def grab_clipboard_image() -> Path | None:
+    """Try to grab an image from the system clipboard.
+
+    Returns a temporary file path if an image was found, ``None`` otherwise.
+    Works on Windows, macOS, and Linux (with xclip).
+    """
+    system = platform.system()
+
+    if system == "Windows":
+        return _grab_clipboard_image_windows()
+    elif system == "Darwin":
+        return _grab_clipboard_image_macos()
+    else:
+        return _grab_clipboard_image_linux()
+
+
+def _grab_clipboard_image_windows() -> Path | None:
+    """Windows: Use PowerShell to grab clipboard image."""
+    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    # PowerShell script to save clipboard image
+    ps_script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($img -ne $null) {{
+    $img.Save('{tmp}', [System.Drawing.Imaging.ImageFormat]::Png)
+    Write-Output 'OK'
+}} else {{
+    Write-Output 'NONE'
+}}
+"""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            capture_output=True, text=True, timeout=5,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+        )
+        if "OK" in result.stdout and tmp.exists() and tmp.stat().st_size > 0:
+            return tmp
+    except Exception:
+        pass
+    return None
+
+
+def _grab_clipboard_image_macos() -> Path | None:
+    """macOS: Use pngpaste or osascript to grab clipboard image."""
+    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    # Try pngpaste first (homebrew: brew install pngpaste)
+    try:
+        subprocess.run(["pngpaste", str(tmp)], check=True, capture_output=True, timeout=5)
+        if tmp.exists() and tmp.stat().st_size > 0:
+            return tmp
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    # Fallback: osascript
+    script = f'''
+    set tmpPath to POSIX file "{tmp}"
+    try
+        set imgData to the clipboard as «class PNGf»
+        set fRef to open for access tmpPath with write permission
+        write imgData to fRef
+        close access fRef
+        return "OK"
+    on error
+        return "NONE"
+    end try
+    '''
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=5,
+        )
+        if "OK" in result.stdout and tmp.exists() and tmp.stat().st_size > 0:
+            return tmp
+    except Exception:
+        pass
+    return None
+
+
+def _grab_clipboard_image_linux() -> Path | None:
+    """Linux: Use xclip to grab clipboard image."""
+    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    try:
+        result = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+            capture_output=True, timeout=5,
+        )
+        if result.returncode == 0 and len(result.stdout) > 0:
+            tmp.write_bytes(result.stdout)
+            return tmp
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    # Try wl-paste for Wayland
+    try:
+        result = subprocess.run(
+            ["wl-paste", "--type", "image/png"],
+            capture_output=True, timeout=5,
+        )
+        if result.returncode == 0 and len(result.stdout) > 0:
+            tmp.write_bytes(result.stdout)
+            return tmp
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    return None
+
+
+def format_file_size(size_bytes: int) -> str:
+    """Format a file size as a human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f}MB"

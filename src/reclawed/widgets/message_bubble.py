@@ -10,7 +10,10 @@ from textual.reactive import reactive
 from textual.widgets import Label, Markdown, Static
 
 from reclawed.models import Message
-from reclawed.utils import detect_choices, detect_question, format_relative_time
+from reclawed.utils import (
+    detect_choices, detect_question, format_file_size, format_relative_time,
+    parse_attachments,
+)
 from reclawed.widgets.choice_buttons import ChoiceButtons
 from reclawed.widgets.tool_activity import ToolActivityWidget
 
@@ -102,6 +105,13 @@ class MessageBubble(Vertical):
         color: $text-disabled;
         text-style: italic dim;
     }
+    MessageBubble .attachment-indicator {
+        color: $accent;
+        background: $primary 10%;
+        padding: 0 1;
+        margin-bottom: 0;
+        border-left: thick $accent;
+    }
     """
 
     selected: reactive[bool] = reactive(False)
@@ -176,6 +186,17 @@ class MessageBubble(Vertical):
             header_classes += " sender-claude"
 
         yield Label(f"{role_label}  {ts}", classes=header_classes)
+
+        # Show attachment indicators if message has images
+        attachments = parse_attachments(self._message.attachments)
+        for att in attachments:
+            filename = att.get("filename", "image")
+            size = att.get("size_bytes", 0)
+            size_str = format_file_size(size) if size else ""
+            yield Label(
+                f"📁 {filename} ({size_str})",
+                classes="attachment-indicator",
+            )
 
         # Static widget for fast streaming display (hidden until streaming starts)
         self._stream_widget = Static("", id="bubble-stream", classes="bubble-stream")
