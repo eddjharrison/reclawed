@@ -209,9 +209,9 @@ class StatusBar(Static):
     def _refresh_display(self) -> None:
         parts: list[str] = []
 
-        # Model
+        # Model — no hardcoded color, inherits from theme
         if self._model:
-            parts.append(f"\u2699 [bold cyan]{_short_model(self._model)}[/bold cyan]")
+            parts.append(f"\u2699 [bold]{_short_model(self._model)}[/bold]")
 
         # Context battery gauge
         ctx = _context_battery(self._context_tokens, self._context_max)
@@ -263,7 +263,7 @@ class StatusBar(Static):
             _perm_labels = {
                 "plan": "[bold green]>> plan mode on[/bold green]",
                 "acceptEdits": "[bold magenta]>> accept edits on[/bold magenta]",
-                "bypassPermissions": "[bold red]>> bypass permissions on[/bold red]",
+                "bypassPermissions": "[bold white on red]>> bypass permissions on[/bold white on red]",
             }
             parts.append(_perm_labels.get(self._permission_mode, f"[bold]>> {self._permission_mode} on[/bold]"))
 
