@@ -190,7 +190,7 @@ class StatusBar(Static):
             rate = tokens / elapsed
             self._streaming_indicator = f"[bold]{rate:.0f} tok/s[/bold]"
         else:
-            self._streaming_indicator = "[dim]thinking...[/dim]"
+            self._streaming_indicator = None
         self._refresh_display()
 
     def set_typing_indicator(self, names: list[str]) -> None:
