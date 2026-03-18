@@ -29,6 +29,11 @@ class ReclawedCommands(Provider):
             command=self._spawn_worker_from_template,
             help="Open the worker spawner with template selection",
         )
+        yield DiscoveryHit(
+            display="Browse Memory Files (Ctrl+M)",
+            command=self._open_memory_browser,
+            help="View and edit Claude's per-project memory files",
+        )
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -42,6 +47,8 @@ class ReclawedCommands(Provider):
              "Discover and import Claude sessions from other projects"),
             ("Spawn Worker from Template...", self._spawn_worker_from_template,
              "Open the worker spawner with template selection"),
+            ("Browse Memory Files (Ctrl+M)", self._open_memory_browser,
+             "View and edit Claude's per-project memory files"),
         ]
 
         for display, callback, help_text in commands:
@@ -71,3 +78,9 @@ class ReclawedCommands(Provider):
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_spawn_worker()
+
+    async def _open_memory_browser(self) -> None:
+        from reclawed.screens.chat import ChatScreen
+        screen = self.app.screen
+        if isinstance(screen, ChatScreen):
+            screen.action_memory_browser()

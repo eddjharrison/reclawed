@@ -56,6 +56,7 @@ class ChatScreen(Screen):
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
         Binding("f7", "toggle_orchestrator", "Orchestrator", show=True, key_display="F7", priority=True),
+        Binding("ctrl+m", "memory_browser", "Memory", show=True, key_display="^M", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -2709,6 +2710,12 @@ class ChatScreen(Screen):
             await self._start_relay_client(self.session)
 
         self.app.call_later(_setup)
+
+    def action_memory_browser(self) -> None:
+        """Open the memory file browser for the current session's project."""
+        from reclawed.screens.memory import MemoryScreen
+
+        self.app.push_screen(MemoryScreen(cwd=self.session.cwd))
 
     def action_settings(self) -> None:
         from reclawed.screens.settings import SettingsScreen
