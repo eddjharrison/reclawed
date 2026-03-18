@@ -1899,7 +1899,16 @@ class ChatScreen(Screen):
             return self.session.id == worker_session.id
 
         msg_list = self.query_one("#message-list", MessageList)
-        bubble = msg_list.get_bubble(assistant_msg.id) if _is_active() else None
+
+        def _get_bubble():
+            """Look up the bubble dynamically — handles the case where the user
+            navigates to the worker session after the stream has already started."""
+            if not _is_active():
+                return None
+            try:
+                return msg_list.get_bubble(assistant_msg.id)
+            except Exception:
+                return None
 
         try:
             async for event in worker_claude.send_message(
@@ -1914,7 +1923,8 @@ class ChatScreen(Screen):
 
                 elif isinstance(event, StreamToken):
                     content_parts.append(event.text)
-                    if _is_active() and bubble:
+                    bubble = _get_bubble()
+                    if bubble:
                         bubble.update_content("".join(content_parts))
                         msg_list.scroll_end(animate=False)
 
@@ -1940,7 +1950,8 @@ class ChatScreen(Screen):
                     )
                     self.store.update_session(worker_session)
 
-                    if _is_active() and bubble:
+                    bubble = _get_bubble()
+                    if bubble:
                         await bubble.finalize_content(assistant_msg.content)
                         msg_list.scroll_end(animate=False)
                     else:
@@ -1951,7 +1962,8 @@ class ChatScreen(Screen):
                 elif isinstance(event, StreamError):
                     assistant_msg.content = f"Error: {event.message}"
                     self.store.update_message(assistant_msg)
-                    if _is_active() and bubble:
+                    bubble = _get_bubble()
+                    if bubble:
                         await bubble.finalize_content(assistant_msg.content)
 
         except Exception as e:
@@ -1994,12 +2006,14 @@ class ChatScreen(Screen):
         if not messages:
             return
 
-        # Collect last 10 messages for context
+        # Collect last 10 messages for context — use generous truncation so Haiku
+        # can see the full worker output (assistant messages contain the summary)
         recent = [m for m in messages if not m.deleted][-10:]
         context_parts: list[str] = []
         for msg in recent:
             role = "Human" if msg.role == "user" else "Claude"
-            text = msg.content[:300] if msg.content else ""
+            limit = 3000 if msg.role == "assistant" else 500
+            text = msg.content[:limit] if msg.content else ""
             context_parts.append(f"{role}: {text}")
         context = "\n".join(context_parts)
 
