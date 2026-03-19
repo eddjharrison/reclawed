@@ -275,20 +275,41 @@ class SettingsScreen(ModalScreen[bool]):
         width: 95;
         max-height: 42;
     }
-    SettingsScreen .scope-badge { width: auto; min-width: 8; padding: 0 1; }
+    SettingsScreen .scope-badge { width: 9; color: $text-muted; }
     SettingsScreen .scope-project { color: green; }
     SettingsScreen .scope-user { color: cyan; }
     SettingsScreen .scope-local { color: yellow; }
-    SettingsScreen .hook-section { width: 100%; height: auto; margin: 0 0 1 0; border-left: thick $primary 30%; padding: 0 1; }
-    SettingsScreen .hook-detail { width: 1fr; color: $text-muted; }
-    SettingsScreen .hook-actions { width: auto; height: 3; }
-    SettingsScreen #hooks-list { width: 100%; height: auto; max-height: 20; }
-    SettingsScreen #mcp-list { width: 100%; height: auto; max-height: 20; }
-    SettingsScreen .mcp-row { width: 100%; height: 3; padding: 0 1; }
+    SettingsScreen .hook-row {
+        width: 100%;
+        height: auto;
+        max-height: 5;
+        border-left: thick $primary 30%;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    SettingsScreen .hook-header {
+        width: 100%;
+        height: 1;
+    }
+    SettingsScreen .hook-event { width: 20; text-style: bold; }
+    SettingsScreen .hook-detail { width: 1fr; height: 1; color: $text-muted; }
+    SettingsScreen .hook-remove { width: 10; min-width: 10; height: 3; }
+    SettingsScreen #hooks-list { width: 100%; height: auto; max-height: 22; }
+    SettingsScreen #mcp-list { width: 100%; height: auto; max-height: 22; }
+    SettingsScreen .mcp-row {
+        width: 100%;
+        height: 1;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    SettingsScreen .mcp-name { width: 24; text-style: bold; }
+    SettingsScreen .mcp-type { width: 8; color: $text-muted; }
+    SettingsScreen .mcp-status { width: 12; }
     SettingsScreen .mcp-status-connected { color: green; }
     SettingsScreen .mcp-status-failed { color: red; }
     SettingsScreen .mcp-status-disabled { color: $text-disabled; }
     SettingsScreen .mcp-status-pending { color: yellow; }
+    SettingsScreen .mcp-status-unknown { color: $text-disabled; }
     """
 
     BINDINGS = [
@@ -627,28 +648,24 @@ class SettingsScreen(ModalScreen[bool]):
             return
 
         for i, sh in enumerate(hooks):
-            cmds = "; ".join(h.command[:60] for h in sh.group.hooks)
+            cmds = "; ".join(h.command[:50] for h in sh.group.hooks)
             timeout_text = ""
             if sh.group.hooks and sh.group.hooks[0].timeout:
                 timeout_text = f" ({sh.group.hooks[0].timeout}ms)"
-            matcher_text = f"matcher: {sh.group.matcher}" if sh.group.matcher else ""
+            matcher_text = ""
+            if sh.group.matcher:
+                matcher_text = f"[{sh.group.matcher}] "
 
-            section = Vertical(classes="hook-section")
-            hooks_list.mount(section)
+            row = Vertical(classes="hook-row")
+            hooks_list.mount(row)
 
-            header = Horizontal()
-            section.mount(header)
-            header.mount(Label(f"{sh.event}", classes="field-label"))
+            header = Horizontal(classes="hook-header")
+            row.mount(header)
+            header.mount(Label(sh.event, classes="hook-event"))
             header.mount(Label(sh.scope, classes=f"scope-badge scope-{sh.scope}"))
+            header.mount(Button("x", id=f"btn-rm-hook-{i}", variant="error", classes="hook-remove"))
 
-            detail = f"  {cmds}{timeout_text}"
-            if matcher_text:
-                detail = f"  {matcher_text} | {detail.strip()}"
-            section.mount(Label(detail, classes="hook-detail"))
-
-            actions = Horizontal(classes="hook-actions")
-            section.mount(actions)
-            actions.mount(Button("Remove", id=f"btn-rm-hook-{i}", variant="error"))
+            row.mount(Label(f"{matcher_text}{cmds}{timeout_text}", classes="hook-detail"))
 
     def _show_hook_editor(self) -> None:
         def on_dismiss(result: "dict | None") -> None:
@@ -724,11 +741,9 @@ class SettingsScreen(ModalScreen[bool]):
 
             row = Horizontal(classes="mcp-row")
             mcp_list.mount(row)
-            row.mount(Label(f"[bold]{name}[/bold]", markup=True))
-            row.mount(Label(srv_type))
-            status_lbl = Label(status)
-            if status_class:
-                status_lbl.add_class(status_class)
+            row.mount(Label(name, classes="mcp-name"))
+            row.mount(Label(srv_type, classes="mcp-type"))
+            status_lbl = Label(status, classes=f"mcp-status mcp-status-{status}")
             row.mount(status_lbl)
             row.mount(Label(scope, classes=f"scope-badge scope-{scope}"))
 
