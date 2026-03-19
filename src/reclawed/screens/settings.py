@@ -15,6 +15,7 @@ from textual.widgets import (
     TabbedContent, TabPane,
 )
 
+from reclawed.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry, HOOK_EVENTS
 from reclawed.config import Config, Workspace, THEME_MAP
 from reclawed.importer import (
     DiscoveredProject,
@@ -22,6 +23,80 @@ from reclawed.importer import (
     import_project_sessions,
 )
 from reclawed.store import Store
+
+
+class HookEditorScreen(ModalScreen["dict | None"]):
+    """Modal for adding a new hook."""
+
+    DEFAULT_CSS = """
+    HookEditorScreen {
+        align: center middle;
+    }
+    HookEditorScreen > #hook-dialog {
+        width: 70;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    HookEditorScreen .field-row {
+        width: 100%;
+        height: 3;
+    }
+    HookEditorScreen .field-label {
+        width: 15;
+        padding: 1 1 0 0;
+    }
+    HookEditorScreen .field-input {
+        width: 1fr;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        events = [(e, e) for e in HOOK_EVENTS]
+        scopes = [("project", "project"), ("user", "user"), ("local", "local")]
+        with Vertical(id="hook-dialog"):
+            yield Label("Add Hook", id="hook-title")
+            with Horizontal(classes="field-row"):
+                yield Label("Event", classes="field-label")
+                yield Select(events, value="PreToolUse", id="sel-hook-event")
+            with Horizontal(classes="field-row"):
+                yield Label("Scope", classes="field-label")
+                yield Select(scopes, value="project", id="sel-hook-scope")
+            with Horizontal(classes="field-row"):
+                yield Label("Matcher", classes="field-label")
+                yield Input(placeholder="optional regex", id="inp-hook-matcher", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Command", classes="field-label")
+                yield Input(placeholder="shell command", id="inp-hook-cmd", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Timeout (ms)", classes="field-label")
+                yield Input(placeholder="optional", id="inp-hook-timeout", classes="field-input")
+            with Horizontal():
+                yield Button("Save", id="btn-hook-save", variant="primary")
+                yield Button("Cancel", id="btn-hook-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-hook-save":
+            try:
+                ev = str(self.query_one("#sel-hook-event", Select).value)
+                scope = str(self.query_one("#sel-hook-scope", Select).value)
+                matcher = self.query_one("#inp-hook-matcher", Input).value.strip() or None
+                cmd = self.query_one("#inp-hook-cmd", Input).value.strip()
+                timeout_str = self.query_one("#inp-hook-timeout", Input).value.strip()
+                timeout = int(timeout_str) if timeout_str else None
+                if not cmd:
+                    return
+                self.dismiss({"event": ev, "scope": scope, "matcher": matcher, "command": cmd, "timeout": timeout})
+            except Exception:
+                pass
+        elif event.button.id == "btn-hook-cancel":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SettingsScreen(ModalScreen[bool]):
@@ -107,16 +182,43 @@ class SettingsScreen(ModalScreen[bool]):
     SettingsScreen #button-bar Button {
         margin-left: 1;
     }
+    SettingsScreen > #settings-dialog {
+        width: 95;
+        max-height: 42;
+    }
+    SettingsScreen .scope-badge { width: auto; min-width: 8; padding: 0 1; }
+    SettingsScreen .scope-project { color: green; }
+    SettingsScreen .scope-user { color: cyan; }
+    SettingsScreen .scope-local { color: yellow; }
+    SettingsScreen .hook-section { width: 100%; height: auto; margin: 0 0 1 0; border-left: thick $primary 30%; padding: 0 1; }
+    SettingsScreen .hook-detail { width: 1fr; color: $text-muted; }
+    SettingsScreen .hook-actions { width: auto; height: 3; }
+    SettingsScreen #hooks-list { width: 100%; height: auto; max-height: 20; }
+    SettingsScreen #mcp-list { width: 100%; height: auto; max-height: 20; }
+    SettingsScreen .mcp-row { width: 100%; height: 3; padding: 0 1; }
+    SettingsScreen .mcp-status-connected { color: green; }
+    SettingsScreen .mcp-status-failed { color: red; }
+    SettingsScreen .mcp-status-disabled { color: $text-disabled; }
+    SettingsScreen .mcp-status-pending { color: yellow; }
     """
 
     BINDINGS = [
         Binding("escape", "close", "Close", priority=True),
     ]
 
-    def __init__(self, config: Config, store: Store, **kwargs) -> None:
+    def __init__(
+        self,
+        config: Config,
+        store: Store,
+        project_dir: str | None = None,
+        claude_session=None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._config = config
         self._store = store
+        self._project_dir = project_dir
+        self._claude_session = claude_session
         self._projects: list[DiscoveredProject] = []
         self._checked: set[str] = set()
         self._changed = False
@@ -133,6 +235,10 @@ class SettingsScreen(ModalScreen[bool]):
                     yield from self._group_fields()
                 with TabPane("Workspaces", id="tab-workspaces"):
                     yield from self._workspace_fields()
+                with TabPane("Hooks", id="tab-hooks"):
+                    yield from self._hooks_fields()
+                with TabPane("MCP", id="tab-mcp"):
+                    yield from self._mcp_fields()
             yield Label("", id="status-line")
             with Horizontal(id="button-bar"):
                 yield Button("Save", id="btn-save", variant="primary")
@@ -209,7 +315,18 @@ class SettingsScreen(ModalScreen[bool]):
             yield Button("Add", id="btn-add")
         yield Button("Import Selected", id="btn-import", variant="primary")
 
+    def _hooks_fields(self) -> ComposeResult:
+        yield VerticalScroll(id="hooks-list")
+        yield Button("Add Hook", id="btn-add-hook", variant="primary")
+
+    def _mcp_fields(self) -> ComposeResult:
+        yield VerticalScroll(id="mcp-list")
+        with Horizontal():
+            yield Button("Add Server", id="btn-add-mcp", variant="primary")
+            yield Button("Refresh", id="btn-refresh-mcp")
+
     async def on_mount(self) -> None:
+        self._populate_hooks_list()
         self._set_status("Scanning for projects...")
         projects = await asyncio.to_thread(discover_projects)
         self._projects = projects
@@ -249,6 +366,11 @@ class SettingsScreen(ModalScreen[bool]):
             self._handle_add_path()
         elif event.button.id == "btn-import":
             self._handle_import()
+        elif event.button.id == "btn-add-hook":
+            self._show_hook_editor()
+        elif event.button.id and event.button.id.startswith("btn-rm-hook-"):
+            idx = int(event.button.id.split("-")[-1])
+            self._remove_hook(idx)
 
     def _save_all_settings(self) -> None:
         """Collect all field values and save to config."""
@@ -392,6 +514,74 @@ class SettingsScreen(ModalScreen[bool]):
         self._config.save()
         self._changed = True
         self._set_status(f"Imported {total_imported} sessions, {len(self._config.workspaces)} workspaces saved")
+
+    def _populate_hooks_list(self) -> None:
+        """Load hooks from all scopes and display them."""
+        try:
+            hooks_list = self.query_one("#hooks-list", VerticalScroll)
+        except Exception:
+            return
+        hooks_list.remove_children()
+
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        hooks = mgr.load_hooks()
+
+        if not hooks:
+            hooks_list.mount(Label("[dim]No hooks configured[/dim]", markup=True))
+            return
+
+        for i, sh in enumerate(hooks):
+            cmds = "; ".join(h.command[:60] for h in sh.group.hooks)
+            timeout_text = ""
+            if sh.group.hooks and sh.group.hooks[0].timeout:
+                timeout_text = f" ({sh.group.hooks[0].timeout}ms)"
+            matcher_text = f"matcher: {sh.group.matcher}" if sh.group.matcher else ""
+
+            section = Vertical(classes="hook-section")
+            hooks_list.mount(section)
+
+            header = Horizontal()
+            section.mount(header)
+            header.mount(Label(f"{sh.event}", classes="field-label"))
+            header.mount(Label(sh.scope, classes=f"scope-badge scope-{sh.scope}"))
+
+            detail = f"  {cmds}{timeout_text}"
+            if matcher_text:
+                detail = f"  {matcher_text} | {detail.strip()}"
+            section.mount(Label(detail, classes="hook-detail"))
+
+            actions = Horizontal(classes="hook-actions")
+            section.mount(actions)
+            actions.mount(Button("Remove", id=f"btn-rm-hook-{i}", variant="error"))
+
+    def _show_hook_editor(self) -> None:
+        def on_dismiss(result: "dict | None") -> None:
+            if result:
+                mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+                group = HookGroup(
+                    matcher=result["matcher"],
+                    hooks=[HookEntry(
+                        command=result["command"],
+                        timeout=result["timeout"],
+                    )],
+                )
+                mgr.save_hook(result["scope"], result["event"], group)
+                self._changed = True
+                self._populate_hooks_list()
+                self._set_status("Hook added")
+        self.app.push_screen(HookEditorScreen(), on_dismiss)
+
+    def _remove_hook(self, display_index: int) -> None:
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        hooks = mgr.load_hooks()
+        if 0 <= display_index < len(hooks):
+            sh = hooks[display_index]
+            scope_hooks = [h for h in hooks if h.event == sh.event and h.scope == sh.scope]
+            scope_index = scope_hooks.index(sh)
+            mgr.remove_hook(sh.scope, sh.event, scope_index)
+            self._changed = True
+            self._populate_hooks_list()
+            self._set_status("Hook removed")
 
     def _set_status(self, text: str) -> None:
         try:
