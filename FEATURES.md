@@ -45,8 +45,14 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **Choice selection** — numbered options rendered as clickable buttons, auto-submit on click
 - [x] **AskUserQuestion widget** — multi-question forms with clickable options, collect-then-submit, matches Claude Code CLI
 - [x] **Image attachments** — Alt+V pastes image from clipboard, Alt+A or 📁 button opens file path dialog. Images sent to Claude as base64 multimodal content. Cross-platform: Windows (PowerShell), macOS (pngpaste/osascript), Linux (xclip/wl-paste)
+- [x] **Clickable file references** — file paths in tool activity (Read, Edit, Write, Search) are clickable. Opens DocumentScreen in view mode, or diff mode for Edit tools with before/after capture
 - [ ] **Task delegation** — assign specific tasks to specific Claudes in the group
 - [ ] **Commit coordination** — Claudes working on different branches can coordinate merges
+
+## Document Viewer & Memory Browser
+
+- [x] **DocumentScreen** — reusable text viewer/editor screen with three modes: view (read-only, syntax highlighted), edit (full TextArea, Ctrl+S to save, unsaved changes warning), and diff (unified diff with green/red line highlighting, hunk navigation with n/p). Supports opening by file path or raw content. Syntax detection from file extension
+- [x] **Memory browser** — Ctrl+M opens two-panel screen for browsing Claude's memory files (`~/.claude/projects/{workspace}/memory/`). Left panel lists files with size, right panel shows preview. Create new memories (n), delete with confirmation (d), open in DocumentScreen for full editing (Enter)
 
 ## Session Management
 
