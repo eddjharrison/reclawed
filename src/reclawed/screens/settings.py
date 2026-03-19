@@ -685,16 +685,36 @@ class SettingsScreen(ModalScreen[bool]):
         self.app.push_screen(HookEditorScreen(), on_dismiss)
 
     def _remove_hook(self, display_index: int) -> None:
+        from reclawed.widgets.confirm_screen import ConfirmScreen
+
         mgr = ClaudeSettingsManager(project_dir=self._project_dir)
         hooks = mgr.load_hooks()
-        if 0 <= display_index < len(hooks):
-            sh = hooks[display_index]
-            scope_hooks = [h for h in hooks if h.event == sh.event and h.scope == sh.scope]
-            scope_index = scope_hooks.index(sh)
-            mgr.remove_hook(sh.scope, sh.event, scope_index)
+        if not (0 <= display_index < len(hooks)):
+            return
+        sh = hooks[display_index]
+
+        def on_confirm(confirmed: bool) -> None:
+            if not confirmed:
+                return
+            fresh_hooks = mgr.load_hooks()
+            if not (0 <= display_index < len(fresh_hooks)):
+                return
+            target = fresh_hooks[display_index]
+            scope_hooks = [h for h in fresh_hooks if h.event == target.event and h.scope == target.scope]
+            scope_index = scope_hooks.index(target)
+            mgr.remove_hook(target.scope, target.event, scope_index)
             self._changed = True
             self._populate_hooks_list()
             self._set_status("Hook removed")
+
+        cmd_preview = sh.group.hooks[0].command[:40] if sh.group.hooks else "?"
+        self.app.push_screen(
+            ConfirmScreen(
+                title=f"Remove {sh.event} hook?",
+                message=f"{cmd_preview}",
+            ),
+            on_confirm,
+        )
 
     async def _populate_mcp_list_async(self) -> None:
         """Async wrapper to populate MCP list with SDK status."""
