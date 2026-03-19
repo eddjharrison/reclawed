@@ -2094,7 +2094,12 @@ class ChatScreen(Screen):
                 sidebar.refresh_sessions(active_session_id=self.session.id)
 
         self.app.push_screen(
-            SettingsScreen(self.config, self.store),
+            SettingsScreen(
+                self.config,
+                self.store,
+                project_dir=self.session.cwd,
+                claude_session=self._claude,
+            ),
             on_settings_dismissed,
         )
 
