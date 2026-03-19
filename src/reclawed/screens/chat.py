@@ -294,36 +294,30 @@ class ChatScreen(Screen):
 
     # --- Message handling ---
 
-    async def on_compose_area_submitted(self, event: ComposeArea.Submitted) -> None:
-        # Handle edit mode
-        if event.editing_message_id:
-            await self._handle_edit_submit(event.editing_message_id, event.text)
-            return
+    def _session_queue(self) -> deque[QueuedMessage]:
+        """Get or create the message queue for the active session."""
+        sid = self.session.id
+        if sid not in self._message_queues:
+            self._message_queues[sid] = deque()
+        return self._message_queues[sid]
 
-        if self._is_streaming:
-            return
-        self._is_streaming = True
-        compose = self.query_one("#compose-area", ComposeArea)
-        compose.set_enabled(False)
+    async def _send_message(
+        self,
+        text: str,
+        attachments: list[str] | None = None,
+        reply_to_id: str | None = None,
+        reply_context: str | None = None,
+    ) -> None:
+        """Create user + assistant messages and start streaming.
 
-        quote_preview = self.query_one("#quote-preview", QuotePreview)
-        reply_to_id = quote_preview.reply_to_id
-        reply_context = None
-
-        if reply_to_id:
-            parent_msg = self.store.get_message(reply_to_id)
-            if parent_msg:
-                reply_context = parent_msg.content[:self.config.max_quote_length]
-            quote_preview.hide()
-
-        # Build attachment metadata if images were attached
+        Called from on_compose_area_submitted and from queue drain.
+        """
         from reclawed.utils import make_attachment_json
-        attachments_json = make_attachment_json(event.attachments) if event.attachments else None
+        attachments_json = make_attachment_json(attachments) if attachments else None
 
-        # Create and display user message
         user_msg = Message(
             role="user",
-            content=event.text,
+            content=text,
             session_id=self.session.id,
             reply_to_id=reply_to_id,
             sender_name=self.config.participant_name if self.session.is_group else None,
@@ -335,25 +329,22 @@ class ChatScreen(Screen):
         msg_list = self.query_one("#message-list", MessageList)
         await msg_list.add_message(user_msg)
 
-        # In group sessions, broadcast the user's message to all participants.
+        # Broadcast in group sessions
         if self.session.is_group and self._relay_client is not None:
             try:
                 self._pending_echo_ids.append(user_msg.id)
-                await self._relay_client.send_message(event.text, sender_type="human")
+                await self._relay_client.send_message(text, sender_type="human")
             except Exception:
-                pass  # Best-effort; don't break the local send flow
+                pass
 
-        # In "Humans Only" mode, skip Claude unless the user @mentions their Claude.
+        # In "Humans Only" mode, skip Claude unless @mentioned
         if self.session.is_group and self._group_respond_mode == "humans_only":
-            if not self._is_mentioned(event.text):
+            if not self._is_mentioned(text):
                 self._is_streaming = False
-                compose = self.query_one("#compose-area", ComposeArea)
-                compose.set_enabled(True)
-                compose.query_one("#compose-input").focus()
                 return
 
-        # Build prompt with optional group context preamble
-        prompt = event.text
+        # Build prompt
+        prompt = text
         if self.session.is_group:
             preamble = self._build_group_context_preamble()
             if preamble:
@@ -371,10 +362,56 @@ class ChatScreen(Screen):
         self.store.add_message(assistant_msg)
         await msg_list.add_message(assistant_msg)
 
-        # Stream response — pass image attachments to Claude
         self._stream_response(
             prompt, assistant_msg, reply_context,
-            attachments=event.attachments or None,
+            attachments=attachments or None,
+        )
+
+    async def on_compose_area_submitted(self, event: ComposeArea.Submitted) -> None:
+        # Handle edit mode
+        if event.editing_message_id:
+            await self._handle_edit_submit(event.editing_message_id, event.text)
+            return
+
+        compose = self.query_one("#compose-area", ComposeArea)
+
+        if self._is_streaming:
+            # Capture reply context before clearing quote preview
+            quote_preview = self.query_one("#quote-preview", QuotePreview)
+            queued_reply_to_id = quote_preview.reply_to_id
+            queued_reply_context = None
+            if queued_reply_to_id:
+                parent = self.store.get_message(queued_reply_to_id)
+                if parent:
+                    queued_reply_context = parent.content[:self.config.max_quote_length]
+                quote_preview.hide()
+
+            queue = self._session_queue()
+            queue.append(QueuedMessage(
+                text=event.text,
+                attachments=list(event.attachments),
+                reply_to_id=queued_reply_to_id,
+                reply_context=queued_reply_context,
+            ))
+            compose.set_queue_count(len(queue))
+            return
+
+        self._is_streaming = True
+
+        quote_preview = self.query_one("#quote-preview", QuotePreview)
+        reply_to_id = quote_preview.reply_to_id
+        reply_context = None
+        if reply_to_id:
+            parent_msg = self.store.get_message(reply_to_id)
+            if parent_msg:
+                reply_context = parent_msg.content[:self.config.max_quote_length]
+            quote_preview.hide()
+
+        await self._send_message(
+            event.text,
+            attachments=list(event.attachments),
+            reply_to_id=reply_to_id,
+            reply_context=reply_context,
         )
 
     async def on_compose_area_paste_image_triggered(self, event: ComposeArea.PasteImageTriggered) -> None:
@@ -1390,8 +1427,6 @@ class ChatScreen(Screen):
 
         # 6. Create new assistant placeholder and stream fresh response
         self._is_streaming = True
-        compose = self.query_one("#compose-area", ComposeArea)
-        compose.set_enabled(False)
 
         prompt = new_content
         if self.session.is_group:
