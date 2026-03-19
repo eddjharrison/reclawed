@@ -154,6 +154,15 @@ class MessageBubble(Vertical):
             super().__init__()
             self.reply_to_id = reply_to_id
 
+    class FileClicked(TMessage):
+        """Posted when a file reference inside a message bubble is clicked.
+
+        ``path`` is the absolute (or workspace-relative) path to the file.
+        """
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
+
     def __init__(self, message: Message, reply_preview: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._message = message
