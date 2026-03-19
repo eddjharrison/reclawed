@@ -426,18 +426,16 @@ class SettingsScreen(ModalScreen[bool]):
         yield Button("Import Selected", id="btn-import", variant="primary")
 
     def _hooks_fields(self) -> ComposeResult:
-        yield VerticalScroll(id="hooks-list")
-        yield Button("Add Hook", id="btn-add-hook", variant="primary")
+        yield Label("", id="hooks-summary")
+        yield Button("Manage Hooks", id="btn-manage-hooks", variant="primary")
 
     def _mcp_fields(self) -> ComposeResult:
-        yield VerticalScroll(id="mcp-list")
-        with Horizontal():
-            yield Button("Add Server", id="btn-add-mcp", variant="primary")
-            yield Button("Refresh", id="btn-refresh-mcp")
+        yield Label("", id="mcp-summary")
+        yield Button("Manage MCP Servers", id="btn-manage-mcp", variant="primary")
 
     async def on_mount(self) -> None:
-        self._populate_hooks_list()
-        self.call_later(self._populate_mcp_list_async)
+        self._update_hooks_summary()
+        self._update_mcp_summary()
         self._set_status("Scanning for projects...")
         projects = await asyncio.to_thread(discover_projects)
         self._projects = projects
@@ -477,17 +475,10 @@ class SettingsScreen(ModalScreen[bool]):
             self._handle_add_path()
         elif event.button.id == "btn-import":
             self._handle_import()
-        elif event.button.id == "btn-add-hook":
-            self._show_hook_editor()
-        elif event.button.id and event.button.id.startswith("btn-rm-hook-"):
-            idx = int(event.button.id.split("-")[-1])
-            self._remove_hook(idx)
-        elif event.button.id == "btn-add-mcp":
-            self._show_mcp_editor()
-        elif event.button.id == "btn-refresh-mcp":
-            self.call_later(self._populate_mcp_list_async)
-        elif event.button.id and event.button.id.startswith("btn-mcp-"):
-            self._handle_mcp_action(event.button.id)
+        elif event.button.id == "btn-manage-hooks":
+            self._open_hooks_manager()
+        elif event.button.id == "btn-manage-mcp":
+            self._open_mcp_manager()
 
     def _save_all_settings(self) -> None:
         """Collect all field values and save to config."""
@@ -632,195 +623,66 @@ class SettingsScreen(ModalScreen[bool]):
         self._changed = True
         self._set_status(f"Imported {total_imported} sessions, {len(self._config.workspaces)} workspaces saved")
 
-    def _populate_hooks_list(self) -> None:
-        """Load hooks from all scopes and display them."""
+    def _update_hooks_summary(self) -> None:
+        """Update the hooks tab summary label."""
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        hooks = mgr.load_hooks()
         try:
-            hooks_list = self.query_one("#hooks-list", VerticalScroll)
+            label = self.query_one("#hooks-summary", Label)
         except Exception:
             return
-        hooks_list.remove_children()
-
-        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-        hooks = mgr.load_hooks()
-
         if not hooks:
-            hooks_list.mount(Label("[dim]No hooks configured[/dim]", markup=True))
-            return
+            label.update("No hooks configured")
+        else:
+            events = sorted({h.event for h in hooks})
+            label.update(f"{len(hooks)} hooks: {', '.join(events)}
 
-        for i, sh in enumerate(hooks):
-            cmds = "; ".join(h.command[:50] for h in sh.group.hooks)
-            timeout_text = ""
-            if sh.group.hooks and sh.group.hooks[0].timeout:
-                timeout_text = f" ({sh.group.hooks[0].timeout}ms)"
-            matcher_text = ""
-            if sh.group.matcher:
-                matcher_text = f"[{sh.group.matcher}] "
+Click Manage Hooks to view, edit, add, remove, or change scope.")
 
-            row = Vertical(classes="hook-row")
-            hooks_list.mount(row)
+    def _open_hooks_manager(self) -> None:
+        from reclawed.screens.hooks_manager import HooksManagerScreen
 
-            header = Horizontal(classes="hook-header")
-            row.mount(header)
-            header.mount(Label(sh.event, classes="hook-event"))
-            header.mount(Label(sh.scope, classes=f"scope-badge scope-{sh.scope}"))
-            header.mount(Button("x", id=f"btn-rm-hook-{i}", variant="error", classes="hook-remove"))
-
-            row.mount(Label(f"{matcher_text}{cmds}{timeout_text}", classes="hook-detail"))
-
-    def _show_hook_editor(self) -> None:
-        def on_dismiss(result: "dict | None") -> None:
-            if result:
-                mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-                group = HookGroup(
-                    matcher=result["matcher"],
-                    hooks=[HookEntry(
-                        command=result["command"],
-                        timeout=result["timeout"],
-                    )],
-                )
-                mgr.save_hook(result["scope"], result["event"], group)
+        def on_dismiss(changed: bool) -> None:
+            if changed:
                 self._changed = True
-                self._populate_hooks_list()
-                self._set_status("Hook added")
-        self.app.push_screen(HookEditorScreen(), on_dismiss)
+                self._update_hooks_summary()
 
-    def _remove_hook(self, display_index: int) -> None:
-        from reclawed.widgets.confirm_screen import ConfirmScreen
-
-        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-        hooks = mgr.load_hooks()
-        if not (0 <= display_index < len(hooks)):
-            return
-        sh = hooks[display_index]
-
-        def on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            fresh_hooks = mgr.load_hooks()
-            if not (0 <= display_index < len(fresh_hooks)):
-                return
-            target = fresh_hooks[display_index]
-            scope_hooks = [h for h in fresh_hooks if h.event == target.event and h.scope == target.scope]
-            scope_index = scope_hooks.index(target)
-            mgr.remove_hook(target.scope, target.event, scope_index)
-            self._changed = True
-            self._populate_hooks_list()
-            self._set_status("Hook removed")
-
-        cmd_preview = sh.group.hooks[0].command[:40] if sh.group.hooks else "?"
         self.app.push_screen(
-            ConfirmScreen(
-                title=f"Remove {sh.event} hook?",
-                message=f"{cmd_preview}",
-            ),
-            on_confirm,
+            HooksManagerScreen(project_dir=self._project_dir),
+            on_dismiss,
         )
 
-    async def _populate_mcp_list_async(self) -> None:
-        """Async wrapper to populate MCP list with SDK status."""
-        await self._populate_mcp_list()
-
-    async def _populate_mcp_list(self) -> None:
-        """Load MCP servers from files + SDK status and display."""
+    def _update_mcp_summary(self) -> None:
+        """Update the MCP tab summary label."""
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        servers = mgr.load_mcp_servers()
         try:
-            mcp_list = self.query_one("#mcp-list", VerticalScroll)
+            label = self.query_one("#mcp-summary", Label)
         except Exception:
             return
-        mcp_list.remove_children()
+        if not servers:
+            label.update("No MCP servers configured")
+        else:
+            names = sorted(s.name for s in servers)
+            label.update(f"{len(servers)} servers: {', '.join(names)}
 
-        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-        file_servers = {s.name: s for s in mgr.load_mcp_servers()}
+Click Manage MCP Servers to view status, authenticate, enable/disable, or add servers.")
 
-        sdk_statuses: dict[str, dict] = {}
-        if self._claude_session:
-            try:
-                resp = await self._claude_session.get_mcp_status()
-                for srv in resp.get("mcpServers", []):
-                    sdk_statuses[srv["name"]] = srv
-            except Exception:
-                pass
+    def _open_mcp_manager(self) -> None:
+        from reclawed.screens.mcp_manager import McpManagerScreen
 
-        all_names = sorted(set(file_servers) | set(sdk_statuses))
-
-        if not all_names:
-            mcp_list.mount(Label("[dim]No MCP servers configured[/dim]", markup=True))
-            return
-
-        for name in all_names:
-            file_entry = file_servers.get(name)
-            sdk_entry = sdk_statuses.get(name)
-
-            cfg = (file_entry.config if file_entry else
-                   sdk_entry.get("config", {}) if sdk_entry else {})
-            srv_type = cfg.get("type", "stdio")
-
-            status = sdk_entry.get("status", "unknown") if sdk_entry else "unknown"
-            status_class = f"mcp-status-{status}" if status != "unknown" else ""
-
-            scope = file_entry.scope if file_entry else sdk_entry.get("scope", "?") if sdk_entry else "?"
-
-            row = Horizontal(classes="mcp-row")
-            mcp_list.mount(row)
-            row.mount(Label(name, classes="mcp-name"))
-            row.mount(Label(srv_type, classes="mcp-type"))
-            status_lbl = Label(status, classes=f"mcp-status mcp-status-{status}")
-            row.mount(status_lbl)
-            row.mount(Label(scope, classes=f"scope-badge scope-{scope}"))
-
-            if status in ("connected", "pending"):
-                row.mount(Button("Disable", id=f"btn-mcp-disable-{name}"))
-            elif status == "disabled":
-                row.mount(Button("Enable", id=f"btn-mcp-enable-{name}"))
-            if status == "failed":
-                row.mount(Button("Reconnect", id=f"btn-mcp-reconnect-{name}"))
-            if file_entry and scope != "managed":
-                row.mount(Button("Remove", id=f"btn-mcp-remove-{name}-{scope}", variant="error"))
-
-    def _show_mcp_editor(self) -> None:
-        def on_dismiss(result: "dict | None") -> None:
-            if result:
-                mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-                mgr.save_mcp_server(result["scope"], result["name"], result["config"])
+        def on_dismiss(changed: bool) -> None:
+            if changed:
                 self._changed = True
-                self.call_later(self._populate_mcp_list_async)
-                self._set_status("MCP server added")
-        self.app.push_screen(McpServerEditorScreen(), on_dismiss)
+                self._update_mcp_summary()
 
-    def _handle_mcp_action(self, button_id: str) -> None:
-        """Handle MCP enable/disable/reconnect/remove buttons."""
-        parts = button_id.split("-", 3)  # btn-mcp-action-name...
-        if len(parts) < 4:
-            return
-        action = parts[2]
-        rest = parts[3]
-
-        async def _do_action() -> None:
-            if action in ("enable", "disable", "reconnect") and not self._claude_session:
-                self._set_status("No active session for MCP control")
-                return
-            try:
-                if action == "enable":
-                    await self._claude_session.toggle_mcp_server(rest, True)
-                    self._set_status(f"Enabled {rest}")
-                elif action == "disable":
-                    await self._claude_session.toggle_mcp_server(rest, False)
-                    self._set_status(f"Disabled {rest}")
-                elif action == "reconnect":
-                    await self._claude_session.reconnect_mcp_server(rest)
-                    self._set_status(f"Reconnecting {rest}...")
-                elif action == "remove":
-                    name_scope = rest.rsplit("-", 1)
-                    if len(name_scope) == 2:
-                        name, scope = name_scope
-                        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-                        mgr.remove_mcp_server(scope, name)
-                        self._changed = True
-                        self._set_status(f"Removed {name}")
-            except Exception as e:
-                self._set_status(f"Error: {e}")
-            await self._populate_mcp_list()
-
-        self.call_later(_do_action)
+        self.app.push_screen(
+            McpManagerScreen(
+                project_dir=self._project_dir,
+                claude_session=self._claude_session,
+            ),
+            on_dismiss,
+        )
 
     def _set_status(self, text: str) -> None:
         try:

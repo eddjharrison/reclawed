@@ -66,6 +66,8 @@ class ChatScreen(Screen):
         Binding("f3", "cycle_respond_mode", "Respond mode", show=True, key_display="F3", priority=True),
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
+        Binding("f7", "hooks_manager", "Hooks", show=False, priority=True),
+        Binding("f8", "mcp_manager", "MCP", show=False, priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -2101,6 +2103,23 @@ class ChatScreen(Screen):
                 claude_session=self._claude,
             ),
             on_settings_dismissed,
+        )
+
+    def action_hooks_manager(self) -> None:
+        from reclawed.screens.hooks_manager import HooksManagerScreen
+        self.app.push_screen(
+            HooksManagerScreen(project_dir=self.session.cwd),
+            lambda changed: None,
+        )
+
+    def action_mcp_manager(self) -> None:
+        from reclawed.screens.mcp_manager import McpManagerScreen
+        self.app.push_screen(
+            McpManagerScreen(
+                project_dir=self.session.cwd,
+                claude_session=self._claude,
+            ),
+            lambda changed: None,
         )
 
     def action_change_display_name(self) -> None:
