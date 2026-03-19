@@ -35,6 +35,7 @@ from reclawed.widgets.message_list import MessageList
 from reclawed.widgets.quote_preview import QuotePreview
 from reclawed.widgets.resize_handle import SidebarResizeHandle
 from reclawed.widgets.status_bar import StatusBar
+from reclawed.widgets.tool_activity import ToolActivityWidget
 
 
 class ChatScreen(Screen):
@@ -158,6 +159,11 @@ class ChatScreen(Screen):
         self._orch_debounce: dict[str, asyncio.TimerHandle] = {}
         # Track which session IDs have an active stream (prevents concurrent SDK calls)
         self._streaming_sessions: set[str] = set()
+        # File diff capture: tool_use_id -> (file_path, before_content)
+        # Populated when an Edit/Write StreamToolUse fires; consumed on StreamToolResult.
+        self._pending_file_snapshots: dict[str, tuple[str, str]] = {}
+        # Completed diffs: file_path -> (before, after) for DocumentScreen diff view
+        self._file_diffs: dict[str, tuple[str, str]] = {}
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
@@ -1160,6 +1166,17 @@ class ChatScreen(Screen):
                                     await bubble.mount(AskUserQuestionWidget(questions))
                                 except Exception:
                                     pass
+                        # Capture file content *before* Edit/Write so we can show a diff later
+                        if event.tool_name in ("Edit", "MultiEdit", "Write"):
+                            file_path = event.tool_input.get("file_path", "")
+                            if file_path:
+                                try:
+                                    before = Path(file_path).read_text(encoding="utf-8")
+                                except OSError:
+                                    before = ""
+                                self._pending_file_snapshots[event.tool_use_id] = (
+                                    file_path, before
+                                )
                         msg_list.scroll_end(animate=False)
 
                 elif isinstance(event, StreamToolResult):
@@ -1167,6 +1184,17 @@ class ChatScreen(Screen):
                         bubble.complete_tool(
                             event.tool_use_id, event.content, event.is_error,
                         )
+                    # Capture file content *after* Edit/Write to complete the diff pair
+                    if event.tool_use_id in self._pending_file_snapshots:
+                        file_path, before = self._pending_file_snapshots.pop(
+                            event.tool_use_id
+                        )
+                        if not event.is_error:
+                            try:
+                                after = Path(file_path).read_text(encoding="utf-8")
+                                self._file_diffs[file_path] = (before, after)
+                            except OSError:
+                                pass
 
                 elif isinstance(event, StreamResult):
                     assistant_msg.content = event.content or "".join(content_parts)
@@ -1311,6 +1339,41 @@ class ChatScreen(Screen):
             self.notify("Original message not found", severity="warning")
             return
         msg_list.select_message(event.reply_to_id)
+
+    def on_message_bubble_file_clicked(self, event: "MessageBubble.FileClicked") -> None:
+        """Open a file reference clicked inside a message bubble."""
+        event.stop()
+        self._open_file_in_document_screen(event.path)
+
+    def on_tool_activity_widget_file_clicked(
+        self, event: "ToolActivityWidget.FileClicked"
+    ) -> None:
+        """Open the file from a completed file-based tool activity widget."""
+        event.stop()
+        self._open_file_in_document_screen(event.path)
+
+    def _open_file_in_document_screen(self, path: str) -> None:
+        """Open *path* in DocumentScreen — diff view if we have a before/after pair."""
+        from reclawed.screens.document import DocumentScreen
+
+        p = Path(path)
+        if path in self._file_diffs:
+            before, after = self._file_diffs[path]
+            self.app.push_screen(
+                DocumentScreen(
+                    before=before,
+                    after=after,
+                    title=f"Changes to {p.name}",
+                )
+            )
+        elif p.exists():
+            self.app.push_screen(DocumentScreen(path=p, mode="view"))
+        else:
+            self.notify(
+                f"File not found: {p.name}",
+                severity="warning",
+                timeout=3,
+            )
 
     def action_select_prev(self) -> None:
         if self._compose_focused:
@@ -2280,13 +2343,14 @@ class ChatScreen(Screen):
         if not proposals:
             return
 
-        # Safety cap: check how many workers already exist
+        # Safety cap: only count RUNNING workers (completed don't block new spawns)
         existing = self.store.get_worker_sessions(orchestrator.id)
-        remaining = self.MAX_WORKERS_PER_ORCHESTRATOR - len(existing)
+        running = [w for w in existing if w.worker_status == "running"]
+        remaining = self.MAX_WORKERS_PER_ORCHESTRATOR - len(running)
         if remaining <= 0:
             self.notify(
-                f"Worker cap reached ({self.MAX_WORKERS_PER_ORCHESTRATOR}) — "
-                "skipping auto-spawn. Mark workers complete or archive old ones.",
+                f"Concurrent worker cap reached ({self.MAX_WORKERS_PER_ORCHESTRATOR} running) — "
+                "waiting for workers to complete before spawning more.",
                 severity="warning", timeout=5,
             )
             return
@@ -2304,19 +2368,30 @@ class ChatScreen(Screen):
 
         workers = self.store.get_worker_sessions(self.session.id)
         if workers:
+            running = [w for w in workers if w.worker_status != "complete"]
+            completed = [w for w in workers if w.worker_status == "complete"]
+
             lines.append("[Orchestrator context — you are managing workers:]")
-            for w in workers:
-                status_icon = "\u2713" if w.worker_status == "complete" else "\u27f3"
+
+            # Trim completed: show count for older ones, detail for recent 3
+            if len(completed) > 5:
+                earlier = len(completed) - 3
+                lines.append(f"({earlier} earlier workers completed successfully)")
+                completed = completed[-3:]  # show only last 3
+
+            for w in completed:
                 if w.worker_summary:
-                    lines.append(f'{status_icon} Worker "{w.name}": {w.worker_summary}')
+                    lines.append(f'\u2713 Worker "{w.name}": {w.worker_summary}')
                 else:
-                    msg_count = w.message_count
-                    cost = f"${w.total_cost_usd:.2f}" if w.total_cost_usd else "$0.00"
-                    status_text = "Complete" if w.worker_status == "complete" else "In progress"
-                    lines.append(
-                        f'{status_icon} Worker "{w.name}": {status_text} '
-                        f'({msg_count} messages, {cost})'
-                    )
+                    lines.append(f'\u2713 Worker "{w.name}": Complete')
+
+            for w in running:
+                msg_count = w.message_count
+                cost = f"${w.total_cost_usd:.2f}" if w.total_cost_usd else "$0.00"
+                lines.append(
+                    f'\u27f3 Worker "{w.name}": In progress '
+                    f'({msg_count} messages, {cost})'
+                )
             lines.append("")
 
         # Delegation instructions — always present for orchestrator sessions
@@ -2561,7 +2636,7 @@ class ChatScreen(Screen):
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
             ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
             ACTION_PIN, ACTION_UNPIN, ACTION_SPAWN_WORKER, ACTION_MARK_WORKER_COMPLETE,
-            ACTION_ENABLE_ORCHESTRATOR,
+            ACTION_ENABLE_ORCHESTRATOR, ACTION_ARCHIVE_COMPLETED_WORKERS,
         )
 
         def on_result(result: tuple[str, str] | None) -> None:
@@ -2610,6 +2685,18 @@ class ChatScreen(Screen):
                 if session.id == self.session.id:
                     self.session.session_type = "orchestrator"
                 self.notify("Orchestrator mode enabled — Claude can now propose workers", timeout=3)
+            elif action == ACTION_ARCHIVE_COMPLETED_WORKERS:
+                workers = self.store.get_worker_sessions(session_id)
+                archived = 0
+                for w in workers:
+                    if w.worker_status == "complete":
+                        w.archived = True
+                        self.store.update_session(w)
+                        archived += 1
+                if archived:
+                    self.notify(f"Archived {archived} completed worker{'s' if archived != 1 else ''}", timeout=3)
+                else:
+                    self.notify("No completed workers to archive", timeout=2)
             elif action == ACTION_SPAWN_WORKER:
                 self._spawn_worker(session_id)
                 return  # Modal handles refresh

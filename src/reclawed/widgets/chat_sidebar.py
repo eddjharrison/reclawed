@@ -5,8 +5,9 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.events import Click
 from textual.message import Message as TMessage
-from textual.widgets import Input, Static
+from textual.widgets import Input, Label, Static
 
 from reclawed.config import Workspace
 from reclawed.models import Session
@@ -46,6 +47,17 @@ class ChatSidebar(Vertical):
     ChatSidebar #chat-list {
         width: 100%;
         height: 1fr;
+    }
+    ChatSidebar .completed-toggle {
+        width: 100%;
+        height: 1;
+        padding: 0 1;
+        color: $text-disabled;
+        text-style: italic;
+    }
+    ChatSidebar .completed-toggle:hover {
+        color: $text-muted;
+        background: $primary 10%;
     }
     """
 
@@ -124,6 +136,8 @@ class ChatSidebar(Vertical):
         self._active_id: str | None = None
         # Current search query (lowercased)
         self._search_query: str = ""
+        # Track which orchestrators have their completed workers expanded
+        self._expanded_orchestrators: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search chats...", id="sidebar-search")
@@ -183,7 +197,7 @@ class ChatSidebar(Vertical):
         chat_list = self.query_one("#chat-list", VerticalScroll)
         chat_list.remove_children()
 
-        visible = self._filtered_sessions()
+        visible, completed_counts = self._filtered_sessions_collapsed()
 
         if not self._workspaces:
             # No workspaces configured — flat list (100% backward compatible)
@@ -193,6 +207,14 @@ class ChatSidebar(Vertical):
                 chat_list.mount(
                     ChatListItem(session, last_preview=preview, is_active=is_active)
                 )
+                # Insert "(N completed)" toggle after an orchestrator with hidden workers
+                if session.id in completed_counts:
+                    count = completed_counts[session.id]
+                    expanded = session.id in self._expanded_orchestrators
+                    label_text = f"    \u25bc {count} completed" if expanded else f"    \u25b6 {count} completed"
+                    toggle = Label(label_text, classes="completed-toggle")
+                    toggle._orch_id = session.id  # type: ignore[attr-defined]
+                    chat_list.mount(toggle)
             return
 
         # Group sessions by workspace cwd
@@ -226,6 +248,13 @@ class ChatSidebar(Vertical):
                 container.mount(
                     ChatListItem(session, last_preview=preview, is_active=is_active)
                 )
+                if session.id in completed_counts:
+                    count = completed_counts[session.id]
+                    expanded = session.id in self._expanded_orchestrators
+                    label_text = f"    \u25bc {count} completed" if expanded else f"    \u25b6 {count} completed"
+                    toggle = Label(label_text, classes="completed-toggle")
+                    toggle._orch_id = session.id  # type: ignore[attr-defined]
+                    container.mount(toggle)
 
         # Render ungrouped sessions under "Default" section
         if ungrouped:
@@ -244,14 +273,22 @@ class ChatSidebar(Vertical):
                 container.mount(
                     ChatListItem(session, last_preview=preview, is_active=is_active)
                 )
+                if session.id in completed_counts:
+                    count = completed_counts[session.id]
+                    expanded = session.id in self._expanded_orchestrators
+                    label_text = f"    \u25bc {count} completed" if expanded else f"    \u25b6 {count} completed"
+                    toggle = Label(label_text, classes="completed-toggle")
+                    toggle._orch_id = session.id  # type: ignore[attr-defined]
+                    container.mount(toggle)
 
-    def _filtered_sessions(self) -> list[Session]:
-        """Return sessions matching the current search query (case-insensitive)."""
-        sessions = self._order_with_workers(self._sessions)
+    def _filtered_sessions_collapsed(self) -> tuple[list[Session], dict[str, int]]:
+        """Return sessions with completed workers collapsed, plus hidden counts."""
+        sessions, completed_counts = self._order_with_workers_collapsed(self._sessions)
         if not self._search_query:
-            return sessions
+            return sessions, completed_counts
         q = self._search_query
-        return [s for s in sessions if q in s.name.lower()]
+        filtered = [s for s in sessions if q in s.name.lower()]
+        return filtered, completed_counts
 
     @staticmethod
     def _order_with_workers(sessions: list[Session]) -> list[Session]:
@@ -285,6 +322,50 @@ class ChatSidebar(Vertical):
 
         return result
 
+    def _order_with_workers_collapsed(self, sessions: list[Session]) -> tuple[list[Session], dict[str, int]]:
+        """Like _order_with_workers but collapses completed workers.
+
+        Returns (ordered_sessions, completed_counts) where completed_counts
+        maps orchestrator_id -> number of hidden completed workers.
+        Running workers are always shown. Completed workers only shown if
+        the orchestrator is in _expanded_orchestrators.
+        """
+        workers_by_parent: dict[str, list[Session]] = {}
+        non_workers: list[Session] = []
+        for s in sessions:
+            if s.session_type == "worker" and s.parent_session_id:
+                workers_by_parent.setdefault(s.parent_session_id, []).append(s)
+            else:
+                non_workers.append(s)
+
+        if not workers_by_parent:
+            return non_workers, {}
+
+        for parent_id in workers_by_parent:
+            workers_by_parent[parent_id].sort(key=lambda w: w.created_at)
+
+        result: list[Session] = []
+        completed_counts: dict[str, int] = {}
+        for s in non_workers:
+            result.append(s)
+            if s.id in workers_by_parent:
+                workers = workers_by_parent[s.id]
+                running = [w for w in workers if w.worker_status != "complete"]
+                completed = [w for w in workers if w.worker_status == "complete"]
+
+                # Always show running workers
+                result.extend(running)
+
+                if completed:
+                    if s.id in self._expanded_orchestrators:
+                        # Show all completed workers when expanded
+                        result.extend(completed)
+                    else:
+                        # Collapse — just record the count
+                        completed_counts[s.id] = len(completed)
+
+        return result, completed_counts
+
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
@@ -292,6 +373,18 @@ class ChatSidebar(Vertical):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "sidebar-search":
             self._search_query = event.value.strip().lower()
+            self._rebuild_list()
+
+    def on_click(self, event: Click) -> None:
+        """Handle clicks on completed-toggle labels."""
+        target = event.widget
+        if target is not None and hasattr(target, "_orch_id"):
+            event.stop()
+            orch_id = target._orch_id  # type: ignore[attr-defined]
+            if orch_id in self._expanded_orchestrators:
+                self._expanded_orchestrators.discard(orch_id)
+            else:
+                self._expanded_orchestrators.add(orch_id)
             self._rebuild_list()
 
     def on_chat_list_item_clicked(self, event: ChatListItem.Clicked) -> None:

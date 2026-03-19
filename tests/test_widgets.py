@@ -224,7 +224,7 @@ def test_chat_sidebar_filtered_sessions_empty_query():
     sidebar = ChatSidebar(store)
     sidebar._sessions = [Session(name="A"), Session(name="B"), Session(name="C")]
     sidebar._search_query = ""
-    result = sidebar._filtered_sessions()
+    result, _ = sidebar._filtered_sessions_collapsed()
     assert len(result) == 3
     store.close()
 
@@ -243,7 +243,7 @@ def test_chat_sidebar_filtered_sessions_with_query():
         Session(name="alpha lowercase"),
     ]
     sidebar._search_query = "alpha"
-    result = sidebar._filtered_sessions()
+    result, _ = sidebar._filtered_sessions_collapsed()
     assert len(result) == 2
     assert all("alpha" in s.name.lower() for s in result)
     store.close()
@@ -259,7 +259,7 @@ def test_chat_sidebar_filtered_sessions_no_match():
     sidebar = ChatSidebar(store)
     sidebar._sessions = [Session(name="Foo"), Session(name="Bar")]
     sidebar._search_query = "zzz"
-    result = sidebar._filtered_sessions()
+    result, _ = sidebar._filtered_sessions_collapsed()
     assert result == []
     store.close()
 

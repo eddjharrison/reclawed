@@ -21,6 +21,7 @@ ACTION_UNPIN = "unpin"
 ACTION_SPAWN_WORKER = "spawn_worker"
 ACTION_MARK_WORKER_COMPLETE = "mark_worker_complete"
 ACTION_ENABLE_ORCHESTRATOR = "enable_orchestrator"
+ACTION_ARCHIVE_COMPLETED_WORKERS = "archive_completed_workers"
 
 
 class ContextMenu(ModalScreen[tuple[str, str] | None]):
@@ -113,6 +114,10 @@ class ContextMenu(ModalScreen[tuple[str, str] | None]):
         if self._session_type is None:
             actions.append(
                 (ACTION_ENABLE_ORCHESTRATOR, "Enable Orchestrator", "action-enable-orchestrator")
+            )
+        if self._session_type == "orchestrator":
+            actions.append(
+                (ACTION_ARCHIVE_COMPLETED_WORKERS, "Archive Completed Workers", "action-archive-completed")
             )
         if self._session_type != "worker":
             actions.append(
