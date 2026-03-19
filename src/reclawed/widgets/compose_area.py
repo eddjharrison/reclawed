@@ -112,6 +112,17 @@ class ComposeArea(Vertical):
         min-height: 3;
         margin-left: 1;
     }
+    ComposeArea #queue-indicator {
+        width: 100%;
+        height: 1;
+        display: none;
+        background: $warning 20%;
+        color: $text;
+        padding: 0 1;
+    }
+    ComposeArea #queue-indicator.visible {
+        display: block;
+    }
     """
 
     BINDINGS = [
@@ -150,9 +161,10 @@ class ComposeArea(Vertical):
 
     def compose(self) -> ComposeResult:
         yield AttachmentPreview(id="attachment-preview")
+        yield Label("", id="queue-indicator")
         with Horizontal(id="compose-row"):
             yield ComposeInput(id="compose-input")
-            yield _AttachLabel("📁", id="attach-label")
+            yield _AttachLabel("\U0001f4c1", id="attach-label")
             yield Button("Send", id="send-btn", variant="primary")
 
     def on_mount(self) -> None:
@@ -282,3 +294,16 @@ class ComposeArea(Vertical):
         btn = self.query_one("#send-btn", Button)
         ta.disabled = not enabled
         btn.disabled = not enabled
+
+    def set_queue_count(self, count: int) -> None:
+        """Show or hide the queue indicator with the pending message count."""
+        try:
+            label = self.query_one("#queue-indicator", Label)
+        except Exception:
+            return
+        if count > 0:
+            label.update(f"{count} queued")
+            label.add_class("visible")
+        else:
+            label.update("")
+            label.remove_class("visible")

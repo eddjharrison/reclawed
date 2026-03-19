@@ -59,3 +59,12 @@ def test_queue_fifo_order():
     assert queue.popleft().text == "second"
     assert queue.popleft().text == "third"
     assert len(queue) == 0
+
+
+def test_compose_area_has_set_queue_count():
+    """ComposeArea exposes set_queue_count method."""
+    from reclawed.widgets.compose_area import ComposeArea
+
+    area = ComposeArea()
+    assert hasattr(area, "set_queue_count")
+    assert callable(area.set_queue_count)
