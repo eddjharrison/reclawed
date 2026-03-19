@@ -371,7 +371,7 @@ class ChatScreen(Screen):
             if preamble:
                 prompt = preamble + "\n\n" + prompt
         elif self.session.session_type == "orchestrator":
-            preamble = self._build_orchestrator_preamble()
+            preamble = self._build_delegation_instructions()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
 
@@ -1528,7 +1528,7 @@ class ChatScreen(Screen):
             if preamble:
                 prompt = preamble + "\n\n" + prompt
         elif self.session.session_type == "orchestrator":
-            preamble = self._build_orchestrator_preamble()
+            preamble = self._build_delegation_instructions()
             if preamble:
                 prompt = preamble + "\n\n" + prompt
 
@@ -2363,8 +2363,33 @@ class ChatScreen(Screen):
                 self._create_and_start_worker(orchestrator.id, params)
             )
 
+    def _build_delegation_instructions(self) -> str:
+        """Lightweight preamble — delegation syntax only, no worker status.
+
+        Prepended to regular user messages. Teaches Claude the {{WORKER}}
+        syntax without bloating the prompt with worker history.
+        """
+        lines: list[str] = []
+        lines.append("[You are in orchestrator mode — you can delegate tasks to workers.]")
+        lines.append("To propose workers, include lines in this exact format:")
+        lines.append('{{WORKER task="description" model="sonnet" permissions="bypassPermissions"}}')
+        lines.append("Models: sonnet, opus, haiku. Permissions: default, acceptEdits, bypassPermissions.")
+
+        templates = self.config.worker_templates
+        if templates:
+            lines.append("Available templates (use template= to apply):")
+            for tmpl in templates:
+                lines.append(f'  template="{tmpl.id}" — {tmpl.name}')
+
+        return "\n".join(lines)
+
     def _build_orchestrator_preamble(self) -> str:
-        """Build a context preamble showing worker status and delegation instructions."""
+        """Full preamble with worker status — used only for auto-respond.
+
+        When the orchestrator needs to assess worker completions and decide
+        next steps, it needs the full status picture. Regular user messages
+        use _build_delegation_instructions() instead to avoid context bloat.
+        """
         lines: list[str] = []
 
         workers = self.store.get_worker_sessions(self.session.id)
@@ -2372,13 +2397,13 @@ class ChatScreen(Screen):
             running = [w for w in workers if w.worker_status != "complete"]
             completed = [w for w in workers if w.worker_status == "complete"]
 
-            lines.append("[Orchestrator context — you are managing workers:]")
+            lines.append("[Orchestrator context — current worker status:]")
 
             # Trim completed: show count for older ones, detail for recent 3
             if len(completed) > 5:
                 earlier = len(completed) - 3
                 lines.append(f"({earlier} earlier workers completed successfully)")
-                completed = completed[-3:]  # show only last 3
+                completed = completed[-3:]
 
             for w in completed:
                 if w.worker_summary:
@@ -2395,26 +2420,8 @@ class ChatScreen(Screen):
                 )
             lines.append("")
 
-        # Delegation instructions — always present for orchestrator sessions
-        lines.append("[Delegation — you can propose spawning workers:]")
-        lines.append("To delegate parallel tasks, include lines in this exact format:")
-        lines.append('{{WORKER task="description of the task" model="sonnet" permissions="bypassPermissions"}}')
-        lines.append("The user will see buttons to approve spawning. "
-                      "Models: sonnet, opus, haiku. Permissions: default, acceptEdits, bypassPermissions.")
-
-        # List available worker templates so the orchestrator can reference them
-        templates = self.config.worker_templates
-        if templates:
-            lines.append("")
-            lines.append("Available worker templates (use template= to apply one):")
-            for tmpl in templates:
-                lines.append(
-                    f'  template="{tmpl.id}" — {tmpl.name} '
-                    f'(model: {tmpl.model}, permissions: {tmpl.permission_mode})'
-                )
-            lines.append(
-                'Example: {{WORKER task="write tests for auth module" template="test-writer"}}'
-            )
+        # Include delegation instructions in full preamble too
+        lines.append(self._build_delegation_instructions())
 
         return "\n".join(lines)
 
