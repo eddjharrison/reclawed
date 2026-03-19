@@ -7,6 +7,8 @@ import json
 import re
 import time
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from textual import work
@@ -34,6 +36,16 @@ from reclawed.widgets.message_bubble import MessageBubble
 from reclawed.widgets.message_list import MessageList
 from reclawed.widgets.quote_preview import QuotePreview
 from reclawed.widgets.status_bar import StatusBar
+
+
+@dataclass
+class QueuedMessage:
+    """A message waiting to be sent after the current stream completes."""
+
+    text: str
+    attachments: list[str] = field(default_factory=list)
+    reply_to_id: str | None = None
+    reply_context: str | None = None
 
 
 class ChatScreen(Screen):
@@ -120,7 +132,8 @@ class ChatScreen(Screen):
             self.session = sessions[0] if sessions else self._create_new_session()
         self._claude: ClaudeSession | None = None
         self._claude_sessions: dict[str, ClaudeSession] = {}  # pool of live sessions
-        self._sending = False
+        self._message_queues: dict[str, deque[QueuedMessage]] = {}
+        self._is_streaming = False
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
         self._selected_model: str | None = self.session.model
@@ -192,14 +205,6 @@ class ChatScreen(Screen):
         if session_key in self._claude_sessions:
             self._claude = self._claude_sessions[session_key]
             return
-
-        # Reset send state for the new session's UI
-        self._sending = False
-        try:
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.set_enabled(True)
-        except Exception:
-            pass
 
         session = ClaudeSession(
             cli_path=self.config.claude_binary,
@@ -295,9 +300,9 @@ class ChatScreen(Screen):
             await self._handle_edit_submit(event.editing_message_id, event.text)
             return
 
-        if self._sending:
+        if self._is_streaming:
             return
-        self._sending = True
+        self._is_streaming = True
         compose = self.query_one("#compose-area", ComposeArea)
         compose.set_enabled(False)
 
@@ -341,7 +346,7 @@ class ChatScreen(Screen):
         # In "Humans Only" mode, skip Claude unless the user @mentions their Claude.
         if self.session.is_group and self._group_respond_mode == "humans_only":
             if not self._is_mentioned(event.text):
-                self._sending = False
+                self._is_streaming = False
                 compose = self.query_one("#compose-area", ComposeArea)
                 compose.set_enabled(True)
                 compose.query_one("#compose-input").focus()
@@ -624,7 +629,7 @@ class ChatScreen(Screen):
                         # Respond to everything — human and Claude messages
                         should_respond = True
 
-                    if should_respond and not self._sending:
+                    if should_respond and not self._is_streaming:
                         prompt = content
                         preamble = self._build_group_context_preamble()
                         if preamble:
@@ -744,12 +749,12 @@ class ChatScreen(Screen):
         broadcasts it to the relay room — mirroring the flow in
         ``on_compose_area_submitted`` but triggered by an incoming message.
 
-        This method is a no-op if ``_sending`` is already True (concurrency
+        This method is a no-op if ``_is_streaming`` is already True (concurrency
         guard: skip rather than queue when multiple messages arrive quickly).
         """
-        if self._sending:
+        if self._is_streaming:
             return
-        self._sending = True
+        self._is_streaming = True
 
         claude_name = f"{self.config.participant_name}'s Claude"
         assistant_msg = Message(
@@ -1197,7 +1202,7 @@ class ChatScreen(Screen):
                 bubble.update_content(assistant_msg.content)
 
         finally:
-            self._sending = False
+            self._is_streaming = False
             if _is_active():
                 try:
                     compose = self.query_one("#compose-area", ComposeArea)
@@ -1343,7 +1348,7 @@ class ChatScreen(Screen):
         """Edit a user message and regenerate Claude's response."""
         from datetime import datetime, timezone as tz
 
-        if self._sending:
+        if self._is_streaming:
             return
 
         msg = self.store.get_message(message_id)
@@ -1384,7 +1389,7 @@ class ChatScreen(Screen):
             return
 
         # 6. Create new assistant placeholder and stream fresh response
-        self._sending = True
+        self._is_streaming = True
         compose = self.query_one("#compose-area", ComposeArea)
         compose.set_enabled(False)
 
@@ -1805,7 +1810,7 @@ class ChatScreen(Screen):
         self.session = session
         self._selected_model = session.model
         # Reset send state so compose is usable in the new session
-        self._sending = False
+        self._is_streaming = False
         # Restore room mode from session (per-room persistence)
         if session.room_mode and session.room_mode in self.ROOM_MODES:
             self._group_respond_mode = session.room_mode

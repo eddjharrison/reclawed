@@ -95,7 +95,8 @@ def _make_is_mentioned(name: str):
         obj.config = cfg
         obj.session = session
         obj._claude = MagicMock()
-        obj._sending = False
+        obj._is_streaming = False
+        obj._message_queues = {}
         obj._selected_model = None
         obj._relay_client = None
         obj._relay_server = None
@@ -338,7 +339,8 @@ class TestGroupContextPreamble:
         obj.config = cfg
         obj.session = session
         obj._claude = MagicMock()
-        obj._sending = False
+        obj._is_streaming = False
+        obj._message_queues = {}
         obj._selected_model = None
         obj._relay_client = None
         obj._relay_server = None
