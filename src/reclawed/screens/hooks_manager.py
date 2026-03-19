@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Select
+from textual.widgets import Button, Label
 
 from reclawed.claude_settings import (
     ClaudeSettingsManager,
@@ -50,31 +50,31 @@ class HooksManagerScreen(ModalScreen[bool]):
     HooksManagerScreen .hook-item {
         width: 100%;
         height: auto;
-        padding: 0 1;
-        margin: 0 0 1 0;
-        border-bottom: solid $primary 20%;
+        padding: 0 0 1 0;
+        margin: 0;
     }
     HooksManagerScreen .hook-header {
         width: 100%;
-        height: 3;
+        height: 1;
     }
     HooksManagerScreen .hook-event-name {
-        width: 20;
+        width: 22;
         text-style: bold;
-        padding: 1 0 0 0;
     }
-    HooksManagerScreen .hook-scope-select {
-        width: 14;
+    HooksManagerScreen .hook-scope-badge {
+        width: 10;
+        color: $accent;
     }
     HooksManagerScreen .hook-cmd {
         width: 100%;
         height: 1;
         color: $text-muted;
+        padding-left: 2;
     }
-    HooksManagerScreen .hook-meta {
+    HooksManagerScreen .hook-divider {
         width: 100%;
         height: 1;
-        color: $text-disabled;
+        color: $primary 30%;
     }
     HooksManagerScreen #hooks-button-bar {
         width: 100%;
@@ -124,67 +124,38 @@ class HooksManagerScreen(ModalScreen[bool]):
             scroll.mount(Label("No hooks configured. Click Add Hook to create one."))
             return
 
-        scopes = [("project", "project"), ("user", "user"), ("local", "local")]
-
         for i, sh in enumerate(hooks):
             item = Vertical(classes="hook-item")
             scroll.mount(item)
 
-            # Header row: event name + scope select + action buttons
+            # Header row (1 line): event name + scope badge + action buttons
             header = Horizontal(classes="hook-header")
             item.mount(header)
             header.mount(Label(sh.event, classes="hook-event-name"))
-            header.mount(Select(
-                scopes,
-                value=sh.scope,
-                id=f"sel-scope-{i}",
-                classes="hook-scope-select",
-                allow_blank=False,
-            ))
+            header.mount(Label(sh.scope, classes="hook-scope-badge"))
             actions = Horizontal(classes="hook-actions")
             header.mount(actions)
             actions.mount(Button("Edit", id=f"btn-edit-hook-{i}"))
             actions.mount(Button("Del", id=f"btn-del-hook-{i}", variant="default"))
 
-            # Command preview line
+            # Command + meta on one line
             cmd_text = "; ".join(h.command for h in sh.group.hooks)
-            if len(cmd_text) > 70:
-                cmd_text = cmd_text[:67] + "..."
-            item.mount(Label(cmd_text, classes="hook-cmd"))
-
-            # Meta line: timeout + matcher
             meta_parts = []
             if sh.group.hooks and sh.group.hooks[0].timeout:
                 meta_parts.append(f"timeout: {sh.group.hooks[0].timeout}ms")
             if sh.group.matcher:
                 meta_parts.append(f"matcher: {sh.group.matcher}")
-            if meta_parts:
-                item.mount(Label("  ".join(meta_parts), classes="hook-meta"))
+            suffix = "  " + "  ".join(meta_parts) if meta_parts else ""
+            available = 82  # dialog width (90) minus padding and leading spaces
+            combined = cmd_text + suffix
+            if len(combined) > available:
+                # truncate the command portion to fit
+                max_cmd = available - len(suffix) - 3
+                combined = cmd_text[:max_cmd] + "..." + suffix
+            item.mount(Label(combined, classes="hook-cmd"))
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        """Handle scope dropdown change — move hook to new scope."""
-        if not event.select.id or not event.select.id.startswith("sel-scope-"):
-            return
-        idx = int(event.select.id.split("-")[-1])
-        new_scope = str(event.value)
-
-        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
-        hooks = mgr.load_hooks()
-        if not (0 <= idx < len(hooks)):
-            return
-        sh = hooks[idx]
-        if sh.scope == new_scope:
-            return
-
-        # Remove from old scope
-        scope_hooks = [h for h in hooks if h.event == sh.event and h.scope == sh.scope]
-        scope_index = scope_hooks.index(sh)
-        mgr.remove_hook(sh.scope, sh.event, scope_index)
-
-        # Add to new scope
-        mgr.save_hook(new_scope, sh.event, sh.group)
-        self._changed = True
-        self._refresh_list()
+            # Thin divider between items
+            item.mount(Label("-" * 80, classes="hook-divider"))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
