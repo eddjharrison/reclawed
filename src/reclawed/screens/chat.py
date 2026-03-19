@@ -1864,6 +1864,13 @@ class ChatScreen(Screen):
         self._selected_model = session.model
         # Reset send state so compose is usable in the new session
         self._is_streaming = False
+        # Update queue badge for the new session's queue
+        new_queue = self._message_queues.get(session.id)
+        try:
+            compose = self.query_one("#compose-area", ComposeArea)
+            compose.set_queue_count(len(new_queue) if new_queue else 0)
+        except Exception:
+            pass
         # Restore room mode from session (per-room persistence)
         if session.room_mode and session.room_mode in self.ROOM_MODES:
             self._group_respond_mode = session.room_mode
@@ -2178,6 +2185,11 @@ class ChatScreen(Screen):
             "Ctrl+T      Cycle theme\n"
             "Ctrl+E      Export markdown\n"
             "Ctrl+D/C    Quit\n"
+            "\n"
+            "Message Queue\n"
+            "  Messages sent while Claude is\n"
+            "  responding are queued and sent\n"
+            "  in order when the response ends.\n"
             "Esc         Deselect / cancel\n"
             "?           This help\n"
             "\n"
