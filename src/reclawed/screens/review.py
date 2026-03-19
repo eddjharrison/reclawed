@@ -9,7 +9,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Label, RichLog
 
-from textual.worker import work
+from textual import work
 
 from reclawed.git_utils import FileDiff, parse_unified_diff
 from reclawed.review_engine import Annotation, FileReview, review_file, format_review_markdown
