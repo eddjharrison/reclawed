@@ -305,29 +305,21 @@ class ClaudeSession:
     def _build_multimodal_message(
         text: str, attachments: list[str],
     ) -> str:
-        """Build a multimodal prompt string with image file references.
+        """Build a prompt with image file references for Claude to read.
 
-        The Claude Code CLI accepts file paths prefixed with the image
-        reference syntax.  We encode images as base64 data URIs embedded
-        in the prompt text, which the CLI forwards to the API.
-
-        For now, we prepend file references so the CLI's built-in handling
-        can pick them up.  If the SDK adds native image block support in
-        the future, this method should be updated.
+        Instead of embedding base64 data (which bloats the prompt and
+        causes 'prompt too long' errors), we reference the file path.
+        Claude's Read tool can natively view images — it just needs
+        to know the path.
         """
-        from reclawed.utils import get_image_mime
-
-        parts: list[str] = []
+        refs: list[str] = []
         for path in attachments:
             p = Path(path)
             if p.exists() and p.is_file():
-                mime = get_image_mime(p)
-                b64 = base64.standard_b64encode(p.read_bytes()).decode("ascii")
-                # Use data URI format that Claude Code recognizes
-                parts.append(f"![image](<data:{mime};base64,{b64}>)")
+                refs.append(f"[Attached image: {p}]")
 
-        if parts:
-            image_refs = "\n\n".join(parts)
+        if refs:
+            image_refs = "\n".join(refs)
             return f"{image_refs}\n\n{text}"
         return text
 

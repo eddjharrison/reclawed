@@ -77,6 +77,32 @@ def copy_to_clipboard(text: str) -> bool:
     return False
 
 
+def open_file_externally(path: str) -> bool:
+    """Open a file with the OS default application.
+
+    Returns ``True`` on success, ``False`` if the file doesn't exist or the
+    open command failed.
+
+    Platform support:
+      - macOS: ``open``
+      - Windows: ``start``
+      - Linux / other: ``xdg-open``
+    """
+    if not Path(path).exists():
+        return False
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", path])
+        elif system == "Windows":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def detect_question(text: str) -> bool:
     """Detect if the assistant's response ends with a question.
 
@@ -113,6 +139,41 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
             description = m.group(3).strip()
             choices.append((label, description))
     return choices if len(choices) >= 2 else []
+
+
+_WORKER_PROPOSAL_PATTERN = re.compile(
+    r'^\{\{WORKER\s+task="([^"]+)"(?:\s+model="([^"]*)")?(?:\s+permissions="([^"]*)")?(?:\s+template="([^"]*)")?\s*\}\}$',
+    re.MULTILINE,
+)
+
+
+def detect_worker_proposals(text: str) -> list[dict]:
+    """Detect ``{{WORKER ...}}`` spawn proposals in orchestrator response text.
+
+    Uses double curly braces to avoid conflicts with Rich markup (which uses
+    square brackets).
+
+    Returns a list of dicts, e.g.::
+
+        [{"task": "Implement auth", "model": "sonnet", "permission_mode": "bypassPermissions",
+          "template_id": "implementation"}]
+
+    Model defaults to ``"sonnet"``, permission_mode defaults to ``"bypassPermissions"``,
+    and template_id defaults to ``None`` when omitted.
+
+    Optional ``template=`` attribute links the proposal to a named ``WorkerTemplate``.
+    When a template is matched in ``_create_and_start_worker``, the template's
+    ``model`` and ``permission_mode`` override any values specified here.
+    """
+    proposals: list[dict] = []
+    for m in _WORKER_PROPOSAL_PATTERN.finditer(text):
+        proposals.append({
+            "task": m.group(1).strip(),
+            "model": m.group(2) or "sonnet",
+            "permission_mode": m.group(3) or "bypassPermissions",
+            "template_id": m.group(4) or None,
+        })
+    return proposals
 
 
 # ---------------------------------------------------------------------------

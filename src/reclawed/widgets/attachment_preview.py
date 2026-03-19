@@ -13,8 +13,55 @@ from textual.widgets import Label, Static
 from reclawed.utils import format_file_size
 
 
-class AttachmentChip(Static):
-    """Single attachment chip — click to remove."""
+class _ChipRemoveButton(Label):
+    """Tiny [x] button inside an attachment chip."""
+
+    DEFAULT_CSS = """
+    _ChipRemoveButton {
+        width: auto;
+        height: 1;
+        margin: 0 0 0 0;
+        color: $text-muted;
+    }
+    _ChipRemoveButton:hover {
+        color: $error;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, file_path: str, **kwargs) -> None:
+        super().__init__(" [x]", **kwargs)
+        self._file_path = file_path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(AttachmentChip.Removed(self._file_path))
+
+
+class _ChipLabel(Label):
+    """Clickable label inside an attachment chip — opens preview."""
+
+    DEFAULT_CSS = """
+    _ChipLabel {
+        width: auto;
+        height: 1;
+    }
+    _ChipLabel:hover {
+        text-style: underline;
+    }
+    """
+
+    def __init__(self, text: str, file_path: str, **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._file_path = file_path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(AttachmentChip.PreviewRequested(self._file_path))
+
+
+class AttachmentChip(Horizontal):
+    """Single attachment chip — click label to preview, click [x] to remove."""
 
     DEFAULT_CSS = """
     AttachmentChip {
@@ -24,9 +71,6 @@ class AttachmentChip(Static):
         background: $primary 20%;
         color: $text;
     }
-    AttachmentChip:hover {
-        background: $error 30%;
-    }
     """
 
     class Removed(TMessage):
@@ -35,19 +79,25 @@ class AttachmentChip(Static):
             super().__init__()
             self.path = path
 
+    class PreviewRequested(TMessage):
+        """Posted when the user clicks to preview an attachment."""
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
+
     def __init__(self, file_path: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._file_path = file_path
         p = Path(file_path)
         try:
             size = p.stat().st_size
         except OSError:
             size = 0
-        display_text = f" 📁 {p.name} ({format_file_size(size)}) [x] "
-        super().__init__(display_text, **kwargs)
-        self._file_path = file_path
+        self._display_text = f" 📁 {p.name} ({format_file_size(size)})"
 
-    def on_click(self, event: Click) -> None:
-        event.stop()
-        self.post_message(self.Removed(self._file_path))
+    def compose(self) -> ComposeResult:
+        yield _ChipLabel(self._display_text, self._file_path)
+        yield _ChipRemoveButton(self._file_path)
 
 
 class AttachmentPreview(Horizontal):

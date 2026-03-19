@@ -25,6 +25,76 @@ WORKSPACE_COLOR_PALETTE: list[str] = ["cyan", "yellow", "green", "magenta", "blu
 
 
 @dataclass
+class WorkerTemplate:
+    """A reusable template for spawning worker sessions."""
+
+    id: str
+    name: str
+    system_prompt: str
+    model: str = "sonnet"
+    permission_mode: str = "bypassPermissions"
+    allowed_tools: str | None = None
+    builtin: bool = False
+
+
+# Built-in templates always available regardless of user config.
+BUILTIN_TEMPLATES: list[WorkerTemplate] = [
+    WorkerTemplate(
+        id="implementation",
+        name="Implementation Sprint",
+        system_prompt=(
+            "You are an implementation worker. Your job is to implement the described task "
+            "with clean, well-tested code. Focus on correctness and code quality. "
+            "When done, provide a concise summary of: what was implemented, files changed, "
+            "tests added, and any edge cases or issues found."
+        ),
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        builtin=True,
+    ),
+    WorkerTemplate(
+        id="test-writer",
+        name="Test Writer",
+        system_prompt=(
+            "You are a test-writing specialist. Your job is to write comprehensive tests "
+            "for the described code or feature. Focus on coverage, edge cases, and meaningful "
+            "assertions. When done, summarize: tests written, coverage achieved, and any "
+            "bugs or issues discovered during testing."
+        ),
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        builtin=True,
+    ),
+    WorkerTemplate(
+        id="code-reviewer",
+        name="Code Reviewer",
+        system_prompt=(
+            "You are a code reviewer. Your job is to review the described code or changes "
+            "for correctness, performance, security, and maintainability. Provide specific, "
+            "actionable feedback. When done, summarize: key findings, severity levels, "
+            "and recommended changes."
+        ),
+        model="opus",
+        permission_mode="acceptEdits",
+        builtin=True,
+    ),
+    WorkerTemplate(
+        id="doc-writer",
+        name="Documentation Writer",
+        system_prompt=(
+            "You are a documentation specialist. Your job is to write clear, comprehensive "
+            "documentation for the described code, API, or feature. Focus on accuracy, "
+            "clarity, and completeness. When done, summarize: documents written, sections "
+            "covered, and any gaps or ambiguities found."
+        ),
+        model="sonnet",
+        permission_mode="acceptEdits",
+        builtin=True,
+    ),
+]
+
+
+@dataclass
 class Workspace:
     """A named project directory for grouping sessions."""
 
@@ -102,6 +172,10 @@ class Config:
     relay_mode: str = "local"  # "local" (TUI manages daemon) | "remote" (external server)
     relay_url: str | None = None  # remote mode: "wss://relay.company.com"
     relay_token: str | None = None  # remote mode: shared server token
+    # Worker templates — built-ins are always present; custom ones loaded from TOML
+    worker_templates: list[WorkerTemplate] = field(default_factory=list)
+    # Sidebar width in columns — persisted across restarts (clamped 20–80 by resize handle)
+    sidebar_width: int = 35
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -118,6 +192,10 @@ class Config:
         for idx, ws in enumerate(self.workspaces):
             if not ws.color:
                 ws.color = WORKSPACE_COLOR_PALETTE[idx % len(WORKSPACE_COLOR_PALETTE)]
+        # Merge built-in templates: always present, custom ones appended after.
+        builtin_ids = {t.id for t in BUILTIN_TEMPLATES}
+        custom = [t for t in self.worker_templates if not t.builtin and t.id not in builtin_ids]
+        self.worker_templates = list(BUILTIN_TEMPLATES) + custom
 
     @property
     def db_path(self) -> Path:
@@ -153,7 +231,14 @@ class Config:
         lines: list[str] = []
 
         def _toml_str(value: str) -> str:
-            return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            return (
+                '"'
+                + value.replace("\\", "\\\\")
+                         .replace('"', '\\"')
+                         .replace("\n", "\\n")
+                         .replace("\r", "\\r")
+                + '"'
+            )
 
         # Scalar fields
         lines.append(f"data_dir = {_toml_str(str(self.data_dir))}")
@@ -169,6 +254,7 @@ class Config:
         lines.append(f"permission_mode = {_toml_str(self.permission_mode)}")
         lines.append(f"allowed_tools = {_toml_str(self.allowed_tools)}")
         lines.append(f"auto_name_sessions = {'true' if self.auto_name_sessions else 'false'}")
+        lines.append(f"sidebar_width = {self.sidebar_width}")
         lines.append(f"relay_mode = {_toml_str(self.relay_mode)}")
         if self.relay_url:
             lines.append(f"relay_url = {_toml_str(self.relay_url)}")
@@ -188,6 +274,20 @@ class Config:
                 lines.append(f"permission_mode = {_toml_str(ws.permission_mode)}")
             if ws.allowed_tools is not None:
                 lines.append(f"allowed_tools = {_toml_str(ws.allowed_tools)}")
+
+        # Worker templates — persist only custom (non-builtin) templates
+        for tmpl in self.worker_templates:
+            if tmpl.builtin:
+                continue
+            lines.append("")
+            lines.append("[[worker_templates]]")
+            lines.append(f"id = {_toml_str(tmpl.id)}")
+            lines.append(f"name = {_toml_str(tmpl.name)}")
+            lines.append(f"system_prompt = {_toml_str(tmpl.system_prompt)}")
+            lines.append(f"model = {_toml_str(tmpl.model)}")
+            lines.append(f"permission_mode = {_toml_str(tmpl.permission_mode)}")
+            if tmpl.allowed_tools is not None:
+                lines.append(f"allowed_tools = {_toml_str(tmpl.allowed_tools)}")
 
         lines.append("")  # trailing newline
 
@@ -250,12 +350,31 @@ class Config:
             kwargs["allowed_tools"] = str(raw["allowed_tools"])
         if "auto_name_sessions" in raw:
             kwargs["auto_name_sessions"] = bool(raw["auto_name_sessions"])
+        if "sidebar_width" in raw:
+            kwargs["sidebar_width"] = max(20, min(80, int(raw["sidebar_width"])))  # type: ignore[arg-type]
         if "relay_mode" in raw:
             kwargs["relay_mode"] = str(raw["relay_mode"])
         if "relay_url" in raw:
             kwargs["relay_url"] = str(raw["relay_url"])
         if "relay_token" in raw:
             kwargs["relay_token"] = str(raw["relay_token"])
+
+        # Parse [[worker_templates]] array (custom templates only)
+        if "worker_templates" in raw and isinstance(raw["worker_templates"], list):
+            templates: list[WorkerTemplate] = []
+            for t in raw["worker_templates"]:
+                if "id" not in t or "name" not in t:
+                    continue
+                templates.append(WorkerTemplate(
+                    id=str(t["id"]),
+                    name=str(t["name"]),
+                    system_prompt=str(t.get("system_prompt", "")),
+                    model=str(t.get("model", "sonnet")),
+                    permission_mode=str(t.get("permission_mode", "bypassPermissions")),
+                    allowed_tools=str(t["allowed_tools"]) if "allowed_tools" in t else None,
+                    builtin=False,
+                ))
+            kwargs["worker_templates"] = templates
 
         # Parse [[workspaces]] array
         if "workspaces" in raw and isinstance(raw["workspaces"], list):

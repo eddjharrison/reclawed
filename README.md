@@ -98,6 +98,17 @@ path = "~/projects/backend"
 - **Mid-chat permission switching** (`F5`) — cycle default / acceptEdits / bypassPermissions without losing context. Status bar shows current mode. Combine C2C + bypass for autonomous overnight work
 - **Auto-reconnect** — exponential backoff with `sync_response` replay of missed messages
 
+### Orchestrator / Worker Sessions
+- **Orchestrator mode** (`F7`) — promotes a session so Claude can plan and delegate work to parallel workers
+- **Worker spawning** — Claude proposes `{{WORKER task="..." model="..." permissions="..."}}` tags; you see Spawn All / Skip buttons. Or right-click to spawn manually
+- **Autonomous sprints** — in `bypassPermissions` mode, workers auto-spawn without approval. Workers complete, orchestrator auto-responds, spawns follow-up tasks
+- **Sidebar nesting** — workers appear indented under their orchestrator with status icons (`⟳` running, `✓` complete). Completed workers collapsible via clickable toggle
+- **Auto-summary** — Haiku generates a 2-3 sentence summary when workers finish; injected as a notification into the orchestrator chat
+- **Debounced response loop** — when multiple workers finish close together, the orchestrator waits 3 seconds then responds once with the full picture
+- **Concurrent stream protection** — per-session lock prevents two simultaneous SDK calls from corrupting state
+- **Worker templates** — preconfigure worker types (implementation, test-writer, code-reviewer) in `config.toml` with model, permissions, and system prompts
+- **Lifecycle management** — cap of 10 concurrent workers (completed don't count); bulk archive completed workers from context menu
+
 ### Encryption
 - **E2E relay encryption** — AES-256-GCM before messages leave your machine. Key derived from passphrase via PBKDF2-HMAC-SHA256 (100k iterations, room ID as salt)
 - **Local database encryption** — all history encrypted at rest with auto-generated 256-bit key
@@ -200,6 +211,7 @@ In "Full Auto" or "C2C" mode, every participant's Claude generates responses —
 | `F3` | Cycle room mode (Humans Only / Claude Assists / Full Auto / C2C) |
 | `F4` | Settings / Import |
 | `F5` | Cycle permissions (default / acceptEdits / bypassPermissions) |
+| `F7` | Toggle orchestrator mode |
 | `Ctrl+D` | Quit |
 
 **Navigate mode** (`Tab` to enter, `Esc` to return):

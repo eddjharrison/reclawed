@@ -62,6 +62,16 @@ class ChatListItem(Vertical):
     ChatListItem.group .chat-name {
         color: $accent;
     }
+    ChatListItem.worker {
+        padding-left: 3;
+    }
+    ChatListItem.worker .chat-name {
+        color: $text-muted;
+    }
+    ChatListItem.orchestrator .chat-name {
+        color: $warning;
+        text-style: bold;
+    }
     """
 
     class Clicked(TMessage):
@@ -107,6 +117,10 @@ class ChatListItem(Vertical):
             self.add_class("muted")
         if session.is_group:
             self.add_class("group")
+        if session.session_type == "worker":
+            self.add_class("worker")
+        if session.session_type == "orchestrator":
+            self.add_class("orchestrator")
 
     @property
     def session_id(self) -> str:
@@ -122,13 +136,22 @@ class ChatListItem(Vertical):
             preview = preview[:_PREVIEW_MAX - 1] + "…"
         return f"{name}  {ts}\n{preview}"
 
+    @staticmethod
+    def _format_name(session: Session) -> str:
+        """Build the display name with type/status prefixes."""
+        name = session.name
+        if session.session_type == "worker":
+            icon = "\u2713" if session.worker_status == "complete" else "\u27f3"
+            name = f"{icon} [W] {name}"
+        elif session.is_group:
+            name = f"[G] {name}"
+        if session.muted:
+            name = f"(muted) {name}"
+        return name
+
     def compose(self) -> ComposeResult:
         ts = format_relative_time(self._session.updated_at)
-        name = self._session.name
-        if self._session.is_group:
-            name = f"[G] {name}"
-        if self._session.muted:
-            name = f"(muted) {name}"
+        name = self._format_name(self._session)
 
         yield Label(f"{name}  {ts}", classes="chat-name")
 
@@ -170,17 +193,22 @@ class ChatListItem(Vertical):
         else:
             self.remove_class("group")
 
+        if self._session.session_type == "worker":
+            self.add_class("worker")
+        else:
+            self.remove_class("worker")
+        if self._session.session_type == "orchestrator":
+            self.add_class("orchestrator")
+        else:
+            self.remove_class("orchestrator")
+
         # Update label text
         try:
             labels = self.query(Label)
             label_list = list(labels)
             if len(label_list) >= 2:
                 ts = format_relative_time(self._session.updated_at)
-                name = self._session.name
-                if self._session.is_group:
-                    name = f"[G] {name}"
-                if self._session.muted:
-                    name = f"(muted) {name}"
+                name = self._format_name(self._session)
                 label_list[0].update(f"{name}  {ts}")
 
                 preview = self._last_preview.replace("\n", " ")

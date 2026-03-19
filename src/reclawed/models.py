@@ -62,3 +62,8 @@ class Session:
     permission_mode: str | None = None  # "default" | "acceptEdits" | "bypassPermissions"
     last_input_tokens: int = 0  # last known context size for context gauge
     pinned: bool = False  # pinned sessions stick to top of their workspace
+    parent_session_id: str | None = None   # links worker → orchestrator
+    session_type: str | None = None        # "orchestrator" | "worker" | None
+    worker_status: str | None = None       # "running" | "complete" | None
+    worker_summary: str | None = None      # haiku-generated summary
+    worker_template_id: str | None = None  # ID of the WorkerTemplate used to spawn this worker

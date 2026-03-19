@@ -27,6 +27,15 @@ Footer {
     display: none;
 }
 
+#resize-handle {
+    width: 1;
+    height: 100%;
+}
+
+#resize-handle.hidden {
+    display: none;
+}
+
 #chat-panel {
     width: 1fr;
     height: 100%;

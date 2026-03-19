@@ -18,6 +18,10 @@ ACTION_RENAME = "rename"
 ACTION_GENERATE_NAME = "generate_name"
 ACTION_PIN = "pin"
 ACTION_UNPIN = "unpin"
+ACTION_SPAWN_WORKER = "spawn_worker"
+ACTION_MARK_WORKER_COMPLETE = "mark_worker_complete"
+ACTION_ENABLE_ORCHESTRATOR = "enable_orchestrator"
+ACTION_ARCHIVE_COMPLETED_WORKERS = "archive_completed_workers"
 
 
 class ContextMenu(ModalScreen[tuple[str, str] | None]):
@@ -75,11 +79,21 @@ class ContextMenu(ModalScreen[tuple[str, str] | None]):
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, session_id: str, is_muted: bool = False, is_pinned: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        is_muted: bool = False,
+        is_pinned: bool = False,
+        session_type: str | None = None,
+        worker_status: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
         self._is_muted = is_muted
         self._is_pinned = is_pinned
+        self._session_type = session_type
+        self._worker_status = worker_status
 
     def compose(self) -> ComposeResult:
         mute_label = "Unmute" if self._is_muted else "Mute"
@@ -94,8 +108,29 @@ class ContextMenu(ModalScreen[tuple[str, str] | None]):
             (ACTION_ARCHIVE,     "Archive",         "action-archive"),
             (ACTION_RENAME,      "Rename",          "action-rename"),
             (ACTION_GENERATE_NAME, "Generate name",  "action-generate-name"),
-            (ACTION_DELETE,      "Delete",          "action-delete"),
         ]
+
+        # Orchestrator/worker actions
+        if self._session_type is None:
+            actions.append(
+                (ACTION_ENABLE_ORCHESTRATOR, "Enable Orchestrator", "action-enable-orchestrator")
+            )
+        if self._session_type == "orchestrator":
+            actions.append(
+                (ACTION_ARCHIVE_COMPLETED_WORKERS, "Archive Completed Workers", "action-archive-completed")
+            )
+        if self._session_type != "worker":
+            actions.append(
+                (ACTION_SPAWN_WORKER, "Spawn Worker", "action-spawn-worker")
+            )
+        if self._session_type == "worker" and self._worker_status != "complete":
+            actions.append(
+                (ACTION_MARK_WORKER_COMPLETE, "Mark Complete", "action-mark-complete")
+            )
+
+        actions.append(
+            (ACTION_DELETE,      "Delete",          "action-delete"),
+        )
 
         items: list[ListItem] = []
         for action_key, label_text, item_id in actions:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
 from textual.reactive import reactive
@@ -20,6 +21,95 @@ from reclawed.utils import (
 from reclawed.widgets.choice_buttons import ChoiceButtons
 from reclawed.widgets.tool_activity import ToolActivityWidget
 
+# File extensions to detect as clickable file paths
+_FILE_EXT = (
+    r'\.(?:py|md|toml|json|ts|js|jsx|tsx|css|html|htm|yml|yaml|sh|bash|zsh'
+    r'|txt|cfg|ini|sql|rs|go|rb|java|cpp|c|h|cs|php|swift|kt|dart'
+    r'|ex|exs|lua|r|m|scala|clj|hs|ml|fs|elm|nim|zig|v|cr|jl|tf|hcl'
+    r'|proto|graphql|gql|lock|env|vue|svelte|astro|mdx|rst|log)'
+)
+
+# Patterns — ordered by confidence
+_BACKTICK_PATH_RE = re.compile(
+    r'`([^`\n]+' + _FILE_EXT + r'[^`\n]*)`'
+)
+_ABSOLUTE_PATH_RE = re.compile(
+    r'(?<!["\'\w])((?:/[a-zA-Z0-9_.\-@]+)+' + _FILE_EXT + r'(?:/[a-zA-Z0-9_.\-@]*)*)'
+)
+_RELATIVE_PATH_RE = re.compile(
+    r'(?<!["\'\w:/])'               # not preceded by quote, word, colon, or slash
+    r'([a-zA-Z0-9_.\-]+(?:/[a-zA-Z0-9_.\-]+)+' + _FILE_EXT + r')'
+    r'(?!["\'\w])'                  # not followed by quote or word char
+)
+
+# Code-fence block pattern — skip anything between ``` fences
+_CODE_FENCE_RE = re.compile(r'```.*?```', re.DOTALL)
+# Inline code — also skip single-backtick sections (we handle those separately)
+_INLINE_CODE_RE = re.compile(r'`[^`]+`')
+# URL pattern — skip file-like tokens that are actually URLs
+_URL_RE = re.compile(r'https?://')
+
+
+def extract_file_paths(content: str) -> list[str]:
+    """Extract unique file paths from message content.
+
+    Skips code-fence blocks, URLs, and duplicate paths.
+    Returns paths in order of first appearance.
+    """
+    # Remove code-fence blocks before scanning
+    cleaned = _CODE_FENCE_RE.sub('', content)
+
+    seen: set[str] = set()
+    paths: list[str] = []
+
+    def _add(path: str) -> None:
+        path = path.strip()
+        if path and path not in seen and not _URL_RE.search(path):
+            seen.add(path)
+            paths.append(path)
+
+    # 1. Backtick-wrapped paths (high confidence)
+    for m in _BACKTICK_PATH_RE.finditer(cleaned):
+        _add(m.group(1))
+
+    # 2. Absolute paths (high confidence) — scan cleaned text (no fences)
+    no_inline = _INLINE_CODE_RE.sub('', cleaned)
+    for m in _ABSOLUTE_PATH_RE.finditer(no_inline):
+        _add(m.group(1))
+
+    # 3. Relative paths with at least one directory component
+    for m in _RELATIVE_PATH_RE.finditer(no_inline):
+        _add(m.group(1))
+
+    return paths
+
+
+class ClickableFileChip(Label):
+    """A small clickable chip showing a file path detected in message content."""
+
+    DEFAULT_CSS = """
+    ClickableFileChip {
+        color: $accent;
+        text-style: underline;
+        margin: 0 1 0 0;
+    }
+    ClickableFileChip:hover {
+        background: $accent 20%;
+    }
+    """
+
+    def __init__(self, path: str, **kwargs) -> None:
+        # Show shortened display name — last 2 path components at most
+        from pathlib import PurePosixPath
+        parts = PurePosixPath(path).parts
+        display = "/".join(parts[-2:]) if len(parts) > 2 else path
+        super().__init__(f"📄 {display}", **kwargs)
+        self._path = path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(MessageBubble.FileClicked(self._path))
+
 
 class ReplyIndicator(Label):
     """Clickable reply-quote banner that navigates back to the original message."""
@@ -32,6 +122,18 @@ class ReplyIndicator(Label):
         # Stop propagation so the parent MessageBubble.on_click is not also fired.
         event.stop()
         self.post_message(MessageBubble.ReplyClicked(self._reply_to_id))
+
+
+class AttachmentIndicator(Label):
+    """Clickable attachment label in message bubbles — click to preview."""
+
+    def __init__(self, text: str, file_path: str, **kwargs) -> None:
+        super().__init__(text, **kwargs)
+        self._file_path = file_path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(MessageBubble.AttachmentPreviewRequested(self._file_path))
 
 
 class MessageBubble(Vertical):
@@ -115,6 +217,16 @@ class MessageBubble(Vertical):
         margin-bottom: 0;
         border-left: thick $accent;
     }
+    MessageBubble .attachment-indicator:hover {
+        text-style: underline;
+        background: $primary 20%;
+    }
+    MessageBubble .file-chips-row {
+        layout: horizontal;
+        height: auto;
+        padding: 0 0 0 0;
+        margin-top: 0;
+    }
     """
 
     selected: reactive[bool] = reactive(False)
@@ -125,6 +237,12 @@ class MessageBubble(Vertical):
             super().__init__()
             self.message_id = message_id
 
+    class AttachmentPreviewRequested(TMessage):
+        """Posted when user clicks an attachment indicator to preview it."""
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
+
     class ReplyClicked(TMessage):
         """Posted when the reply-indicator banner is clicked.
 
@@ -134,6 +252,15 @@ class MessageBubble(Vertical):
         def __init__(self, reply_to_id: str) -> None:
             super().__init__()
             self.reply_to_id = reply_to_id
+
+    class FileClicked(TMessage):
+        """Posted when a file reference inside a message bubble is clicked.
+
+        ``path`` is the absolute (or workspace-relative) path to the file.
+        """
+        def __init__(self, path: str) -> None:
+            super().__init__()
+            self.path = path
 
     def __init__(self, message: Message, reply_preview: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -192,14 +319,16 @@ class MessageBubble(Vertical):
 
         yield Label(f"{role_label}  {ts}", classes=header_classes)
 
-        # Show attachment indicators if message has images
+        # Show attachment indicators if message has images (clickable to preview)
         attachments = parse_attachments(self._message.attachments)
         for att in attachments:
             filename = att.get("filename", "image")
             size = att.get("size_bytes", 0)
+            file_path = att.get("path", "")
             size_str = format_file_size(size) if size else ""
-            yield Label(
-                f"📁 {filename} ({size_str})",
+            yield AttachmentIndicator(
+                f"📁 {filename} ({size_str}) — click to preview",
+                file_path=file_path,
                 classes="attachment-indicator",
             )
 
@@ -270,7 +399,13 @@ class MessageBubble(Vertical):
         if self._content_widget is not None:
             self._content_widget.display = False
 
-    async def finalize_content(self, content: str) -> None:
+    async def finalize_content(
+        self,
+        content: str,
+        session_type: str | None = None,
+        template_names: dict[str, str] | None = None,
+        permission_mode: str | None = None,
+    ) -> None:
         """Switch from streaming Static back to Markdown for final render."""
         self._stop_thinking()
         self._message.content = content
@@ -280,6 +415,18 @@ class MessageBubble(Vertical):
         if self._content_widget is not None:
             self._content_widget.display = True
             await self._content_widget.update(content)
+
+        # Mount clickable file chips for any file paths detected in content
+        paths = extract_file_paths(content)
+        if paths:
+            # Remove any existing chips row to avoid duplicates on re-render
+            for old in self.query(".file-chips-row"):
+                await old.remove()
+            chips = [ClickableFileChip(p) for p in paths]
+            try:
+                await self.mount(Horizontal(*chips, classes="file-chips-row"))
+            except Exception:
+                pass
 
         # Detect and display interactive elements
         if self._message.role == "assistant":
@@ -294,6 +441,22 @@ class MessageBubble(Vertical):
                 if choices:
                     try:
                         await self.mount(ChoiceButtons(choices))
+                    except Exception:
+                        pass
+
+            # Detect worker spawn proposals (orchestrator sessions only)
+            # Skip widget when bypassPermissions — auto-spawn handles it
+            if session_type == "orchestrator" and permission_mode != "bypassPermissions":
+                from reclawed.utils import detect_worker_proposals
+                from reclawed.widgets.spawn_proposals import SpawnProposalsWidget
+                proposals = detect_worker_proposals(content)
+                if proposals:
+                    try:
+                        await self.mount(SpawnProposalsWidget(
+                            proposals,
+                            self._message.session_id,
+                            template_names=template_names,
+                        ))
                     except Exception:
                         pass
 

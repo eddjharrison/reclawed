@@ -141,6 +141,7 @@ class StatusBar(Static):
         self._context_max: int = 200_000
         self._git_branch: str | None = None
         self._git_status: str | None = None
+        self._orchestrator_mode: bool = False
 
     def update_info(
         self,
@@ -154,6 +155,7 @@ class StatusBar(Static):
         workspace_color: str | None = None,
         permission_mode: str | None = ...,
         cwd: str | None = ...,
+        orchestrator_mode: bool | None = None,
     ) -> None:
         if session_name is not None:
             self._session_name = session_name
@@ -176,6 +178,8 @@ class StatusBar(Static):
         if cwd is not ...:
             self._workspace_cwd = cwd
             self._git_branch, self._git_status = _git_info(cwd)
+        if orchestrator_mode is not None:
+            self._orchestrator_mode = orchestrator_mode
         self._refresh_display()
 
     def set_streaming(
@@ -271,6 +275,9 @@ class StatusBar(Static):
         }
         if self._group_mode is not None:
             parts.append(f"[magenta]{_mode_labels.get(self._group_mode, self._group_mode)}[/magenta]")
+
+        if self._orchestrator_mode:
+            parts.append("[bold yellow]ORCHESTRATOR[/bold yellow]")
 
         if self._permission_mode and self._permission_mode != "default":
             _perm_labels = {
