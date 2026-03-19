@@ -128,7 +128,13 @@ class ChatScreen(Screen):
         self._sending = False
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
-        self._selected_model: str | None = self.session.model
+        # Filter out synthetic/invalid model names from prior error responses.
+        # Filter out synthetic/invalid model names from prior error responses.
+        _model = self.session.model
+        if _model and _model.startswith("<"):
+            self.session.model = None
+            _model = None
+        self._selected_model: str | None = _model
         # Permission mode — per-session, can be switched mid-chat via F5
         self._selected_permission: str = (
             self.session.permission_mode or config.permission_mode
@@ -2580,7 +2586,8 @@ class ChatScreen(Screen):
         # Mark the new session as read
         self.store.mark_session_read(session_id)
         self.session = session
-        self._selected_model = session.model
+        _model = session.model
+        self._selected_model = _model if _model and not _model.startswith("<") else None
         # Reset send state so compose is usable in the new session
         self._sending = False
         # Restore room mode from session (per-room persistence)
