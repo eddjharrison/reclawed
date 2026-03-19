@@ -1212,7 +1212,7 @@ class ChatScreen(Screen):
 
                     if event.cost_usd:
                         stream_session.total_cost_usd += event.cost_usd
-                    if event.model:
+                    if event.model and not event.model.startswith("<"):
                         stream_session.model = event.model
                     stream_session.message_count = len(
                         self.store.get_session_messages(stream_session.id)
@@ -2007,7 +2007,7 @@ class ChatScreen(Screen):
 
                     if event.cost_usd:
                         worker_session.total_cost_usd += event.cost_usd
-                    if event.model:
+                    if event.model and not event.model.startswith("<"):
                         worker_session.model = event.model
                     worker_session.message_count = len(
                         self.store.get_session_messages(worker_session.id)
@@ -2293,7 +2293,7 @@ class ChatScreen(Screen):
 
                     if event.cost_usd:
                         orchestrator.total_cost_usd += event.cost_usd
-                    if event.model:
+                    if event.model and not event.model.startswith("<"):
                         orchestrator.model = event.model
                     orchestrator.message_count = len(
                         self.store.get_session_messages(orchestrator.id)
