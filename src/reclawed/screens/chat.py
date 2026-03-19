@@ -73,6 +73,7 @@ class ChatScreen(Screen):
         Binding("f9", "hooks_manager", "Hooks", show=False, priority=True),
         Binding("ctrl+m", "memory_browser", "Memory", show=True, key_display="^M", priority=True),
         Binding("ctrl+o", "open_file", "Open File", show=True, key_display="^O", priority=True),
+        Binding("ctrl+r", "review_code", "Review", show=True, key_display="^R", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -2981,6 +2982,53 @@ class ChatScreen(Screen):
             FileOpenScreen(cwd=self.session.cwd),
             _on_file_chosen,
         )
+
+    def action_review_code(self) -> None:
+        """Open the code review launcher (Ctrl+R)."""
+        from reclawed.screens.review_launcher import ReviewLauncherScreen
+
+        def _on_launch(result: dict | None) -> None:
+            if result:
+                self._launch_review(result)
+
+        self.app.push_screen(ReviewLauncherScreen(), _on_launch)
+
+    @work(exclusive=True)
+    async def _launch_review(self, config: dict) -> None:
+        """Load diff in a worker thread and open ReviewScreen."""
+        from reclawed.screens.review import ReviewScreen
+        from reclawed.git_utils import git_diff, git_diff_branch, git_diff_pr
+
+        try:
+            mode = config["mode"]
+            cwd = self.session.cwd
+            if mode == "working_tree":
+                diff_text = await git_diff(cwd, staged=config.get("staged", False))
+            elif mode == "branch":
+                diff_text = await git_diff_branch(config["base"], config.get("head", "HEAD"), cwd)
+            elif mode == "pr":
+                diff_text = await git_diff_pr(config["number"], cwd)
+            else:
+                return
+
+            if not diff_text.strip():
+                self.notify("No changes to review", severity="warning", timeout=3)
+                return
+
+            title = {
+                "working_tree": "Working Tree Review",
+                "branch": f"Branch: {config.get('base', '?')}...{config.get('head', 'HEAD')}",
+                "pr": f"PR #{config['number']}",
+            }.get(mode, "Code Review")
+
+            self.app.push_screen(ReviewScreen(
+                diff_text=diff_text,
+                title=title,
+                pr_number=config.get("number"),
+                cwd=cwd,
+            ))
+        except RuntimeError as exc:
+            self.notify(f"Review failed: {exc}", severity="error", timeout=5)
 
     def action_settings(self) -> None:
         from reclawed.screens.settings import SettingsScreen
