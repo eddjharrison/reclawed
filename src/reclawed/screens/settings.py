@@ -99,6 +99,95 @@ class HookEditorScreen(ModalScreen["dict | None"]):
         self.dismiss(None)
 
 
+class McpServerEditorScreen(ModalScreen["dict | None"]):
+    """Modal for adding a new MCP server."""
+
+    DEFAULT_CSS = """
+    McpServerEditorScreen {
+        align: center middle;
+    }
+    McpServerEditorScreen > #mcp-dialog {
+        width: 70;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    McpServerEditorScreen .field-row {
+        width: 100%;
+        height: 3;
+    }
+    McpServerEditorScreen .field-label {
+        width: 15;
+        padding: 1 1 0 0;
+    }
+    McpServerEditorScreen .field-input {
+        width: 1fr;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        types = [("stdio", "stdio"), ("http", "http"), ("sse", "sse")]
+        scopes = [("project", "project"), ("user", "user"), ("local", "local")]
+        with Vertical(id="mcp-dialog"):
+            yield Label("Add MCP Server")
+            with Horizontal(classes="field-row"):
+                yield Label("Name", classes="field-label")
+                yield Input(placeholder="server-name", id="inp-mcp-name", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Type", classes="field-label")
+                yield Select(types, value="stdio", id="sel-mcp-type")
+            with Horizontal(classes="field-row"):
+                yield Label("Command", classes="field-label")
+                yield Input(placeholder="command to run", id="inp-mcp-cmd", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Args", classes="field-label")
+                yield Input(placeholder="space-separated args", id="inp-mcp-args", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("URL", classes="field-label")
+                yield Input(placeholder="http://... (for http/sse)", id="inp-mcp-url", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Scope", classes="field-label")
+                yield Select(scopes, value="project", id="sel-mcp-scope")
+            with Horizontal():
+                yield Button("Save", id="btn-mcp-save", variant="primary")
+                yield Button("Cancel", id="btn-mcp-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-mcp-save":
+            try:
+                name = self.query_one("#inp-mcp-name", Input).value.strip()
+                srv_type = str(self.query_one("#sel-mcp-type", Select).value)
+                scope = str(self.query_one("#sel-mcp-scope", Select).value)
+                if not name:
+                    return
+                config: dict = {}
+                if srv_type == "stdio":
+                    cmd = self.query_one("#inp-mcp-cmd", Input).value.strip()
+                    if not cmd:
+                        return
+                    config["command"] = cmd
+                    args_str = self.query_one("#inp-mcp-args", Input).value.strip()
+                    if args_str:
+                        config["args"] = args_str.split()
+                else:
+                    config["type"] = srv_type
+                    url = self.query_one("#inp-mcp-url", Input).value.strip()
+                    if not url:
+                        return
+                    config["url"] = url
+                self.dismiss({"name": name, "scope": scope, "config": config})
+            except Exception:
+                pass
+        elif event.button.id == "btn-mcp-cancel":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SettingsScreen(ModalScreen[bool]):
     """Tabbed settings editor.
 
@@ -327,6 +416,7 @@ class SettingsScreen(ModalScreen[bool]):
 
     async def on_mount(self) -> None:
         self._populate_hooks_list()
+        self.call_later(self._populate_mcp_list_async)
         self._set_status("Scanning for projects...")
         projects = await asyncio.to_thread(discover_projects)
         self._projects = projects
@@ -371,6 +461,12 @@ class SettingsScreen(ModalScreen[bool]):
         elif event.button.id and event.button.id.startswith("btn-rm-hook-"):
             idx = int(event.button.id.split("-")[-1])
             self._remove_hook(idx)
+        elif event.button.id == "btn-add-mcp":
+            self._show_mcp_editor()
+        elif event.button.id == "btn-refresh-mcp":
+            self.call_later(self._populate_mcp_list_async)
+        elif event.button.id and event.button.id.startswith("btn-mcp-"):
+            self._handle_mcp_action(event.button.id)
 
     def _save_all_settings(self) -> None:
         """Collect all field values and save to config."""
@@ -582,6 +678,114 @@ class SettingsScreen(ModalScreen[bool]):
             self._changed = True
             self._populate_hooks_list()
             self._set_status("Hook removed")
+
+    async def _populate_mcp_list_async(self) -> None:
+        """Async wrapper to populate MCP list with SDK status."""
+        await self._populate_mcp_list()
+
+    async def _populate_mcp_list(self) -> None:
+        """Load MCP servers from files + SDK status and display."""
+        try:
+            mcp_list = self.query_one("#mcp-list", VerticalScroll)
+        except Exception:
+            return
+        mcp_list.remove_children()
+
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        file_servers = {s.name: s for s in mgr.load_mcp_servers()}
+
+        sdk_statuses: dict[str, dict] = {}
+        if self._claude_session:
+            try:
+                resp = await self._claude_session.get_mcp_status()
+                for srv in resp.get("mcpServers", []):
+                    sdk_statuses[srv["name"]] = srv
+            except Exception:
+                pass
+
+        all_names = sorted(set(file_servers) | set(sdk_statuses))
+
+        if not all_names:
+            mcp_list.mount(Label("[dim]No MCP servers configured[/dim]", markup=True))
+            return
+
+        for name in all_names:
+            file_entry = file_servers.get(name)
+            sdk_entry = sdk_statuses.get(name)
+
+            cfg = (file_entry.config if file_entry else
+                   sdk_entry.get("config", {}) if sdk_entry else {})
+            srv_type = cfg.get("type", "stdio")
+
+            status = sdk_entry.get("status", "unknown") if sdk_entry else "unknown"
+            status_class = f"mcp-status-{status}" if status != "unknown" else ""
+
+            scope = file_entry.scope if file_entry else sdk_entry.get("scope", "?") if sdk_entry else "?"
+
+            row = Horizontal(classes="mcp-row")
+            mcp_list.mount(row)
+            row.mount(Label(f"[bold]{name}[/bold]", markup=True))
+            row.mount(Label(srv_type))
+            status_lbl = Label(status)
+            if status_class:
+                status_lbl.add_class(status_class)
+            row.mount(status_lbl)
+            row.mount(Label(scope, classes=f"scope-badge scope-{scope}"))
+
+            if status in ("connected", "pending"):
+                row.mount(Button("Disable", id=f"btn-mcp-disable-{name}"))
+            elif status == "disabled":
+                row.mount(Button("Enable", id=f"btn-mcp-enable-{name}"))
+            if status == "failed":
+                row.mount(Button("Reconnect", id=f"btn-mcp-reconnect-{name}"))
+            if file_entry and scope != "managed":
+                row.mount(Button("Remove", id=f"btn-mcp-remove-{name}-{scope}", variant="error"))
+
+    def _show_mcp_editor(self) -> None:
+        def on_dismiss(result: "dict | None") -> None:
+            if result:
+                mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+                mgr.save_mcp_server(result["scope"], result["name"], result["config"])
+                self._changed = True
+                self.call_later(self._populate_mcp_list_async)
+                self._set_status("MCP server added")
+        self.app.push_screen(McpServerEditorScreen(), on_dismiss)
+
+    def _handle_mcp_action(self, button_id: str) -> None:
+        """Handle MCP enable/disable/reconnect/remove buttons."""
+        parts = button_id.split("-", 3)  # btn-mcp-action-name...
+        if len(parts) < 4:
+            return
+        action = parts[2]
+        rest = parts[3]
+
+        async def _do_action() -> None:
+            if action in ("enable", "disable", "reconnect") and not self._claude_session:
+                self._set_status("No active session for MCP control")
+                return
+            try:
+                if action == "enable":
+                    await self._claude_session.toggle_mcp_server(rest, True)
+                    self._set_status(f"Enabled {rest}")
+                elif action == "disable":
+                    await self._claude_session.toggle_mcp_server(rest, False)
+                    self._set_status(f"Disabled {rest}")
+                elif action == "reconnect":
+                    await self._claude_session.reconnect_mcp_server(rest)
+                    self._set_status(f"Reconnecting {rest}...")
+                elif action == "remove":
+                    name_scope = rest.rsplit("-", 1)
+                    if len(name_scope) == 2:
+                        name, scope = name_scope
+                        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+                        mgr.remove_mcp_server(scope, name)
+                        self._changed = True
+                        self._set_status(f"Removed {name}")
+            except Exception as e:
+                self._set_status(f"Error: {e}")
+            await self._populate_mcp_list()
+
+        self.call_later(_do_action)
 
     def _set_status(self, text: str) -> None:
         try:
