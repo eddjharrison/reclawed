@@ -17,6 +17,7 @@ from textual.widgets import (
     TabbedContent, TabPane,
 )
 
+from reclawed.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry, HOOK_EVENTS
 from reclawed.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate, THEME_MAP, _config_file_path
 from reclawed.importer import (
     DiscoveredProject,
@@ -24,6 +25,187 @@ from reclawed.importer import (
     import_project_sessions,
 )
 from reclawed.store import Store
+
+
+class HookEditorScreen(ModalScreen["dict | None"]):
+    """Modal for adding a new hook."""
+
+    DEFAULT_CSS = """
+    HookEditorScreen {
+        align: center middle;
+    }
+    HookEditorScreen > #hook-dialog {
+        width: 70;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    HookEditorScreen .field-row {
+        width: 100%;
+        height: 3;
+    }
+    HookEditorScreen .field-label {
+        width: 15;
+        padding: 1 1 0 0;
+    }
+    HookEditorScreen .field-input {
+        width: 1fr;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", priority=True)]
+
+    def __init__(
+        self,
+        event: str = "PreToolUse",
+        scope: str = "project",
+        matcher: str = "",
+        command: str = "",
+        timeout: str = "",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._init_event = event
+        self._init_scope = scope
+        self._init_matcher = matcher
+        self._init_command = command
+        self._init_timeout = timeout
+        self._is_edit = bool(command)
+
+    def compose(self) -> ComposeResult:
+        events = [(e, e) for e in HOOK_EVENTS]
+        scopes = [("project", "project"), ("user", "user"), ("local", "local")]
+        title = "Edit Hook" if self._is_edit else "Add Hook"
+        with Vertical(id="hook-dialog"):
+            yield Label(title, id="hook-title")
+            with Horizontal(classes="field-row"):
+                yield Label("Event", classes="field-label")
+                yield Select(events, value=self._init_event, id="sel-hook-event")
+            with Horizontal(classes="field-row"):
+                yield Label("Scope", classes="field-label")
+                yield Select(scopes, value=self._init_scope, id="sel-hook-scope")
+            with Horizontal(classes="field-row"):
+                yield Label("Matcher", classes="field-label")
+                yield Input(value=self._init_matcher, placeholder="optional regex", id="inp-hook-matcher", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Command", classes="field-label")
+                yield Input(value=self._init_command, placeholder="shell command", id="inp-hook-cmd", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Timeout (ms)", classes="field-label")
+                yield Input(value=self._init_timeout, placeholder="optional", id="inp-hook-timeout", classes="field-input")
+            with Horizontal():
+                yield Button("Save", id="btn-hook-save", variant="primary")
+                yield Button("Cancel", id="btn-hook-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-hook-save":
+            try:
+                ev = str(self.query_one("#sel-hook-event", Select).value)
+                scope = str(self.query_one("#sel-hook-scope", Select).value)
+                matcher = self.query_one("#inp-hook-matcher", Input).value.strip() or None
+                cmd = self.query_one("#inp-hook-cmd", Input).value.strip()
+                timeout_str = self.query_one("#inp-hook-timeout", Input).value.strip()
+                timeout = int(timeout_str) if timeout_str else None
+                if not cmd:
+                    return
+                self.dismiss({"event": ev, "scope": scope, "matcher": matcher, "command": cmd, "timeout": timeout})
+            except Exception:
+                pass
+        elif event.button.id == "btn-hook-cancel":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class McpServerEditorScreen(ModalScreen["dict | None"]):
+    """Modal for adding a new MCP server."""
+
+    DEFAULT_CSS = """
+    McpServerEditorScreen {
+        align: center middle;
+    }
+    McpServerEditorScreen > #mcp-dialog {
+        width: 70;
+        height: auto;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    McpServerEditorScreen .field-row {
+        width: 100%;
+        height: 3;
+    }
+    McpServerEditorScreen .field-label {
+        width: 15;
+        padding: 1 1 0 0;
+    }
+    McpServerEditorScreen .field-input {
+        width: 1fr;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", priority=True)]
+
+    def compose(self) -> ComposeResult:
+        types = [("stdio", "stdio"), ("http", "http"), ("sse", "sse")]
+        scopes = [("project", "project"), ("user", "user"), ("local", "local")]
+        with Vertical(id="mcp-dialog"):
+            yield Label("Add MCP Server")
+            with Horizontal(classes="field-row"):
+                yield Label("Name", classes="field-label")
+                yield Input(placeholder="server-name", id="inp-mcp-name", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Type", classes="field-label")
+                yield Select(types, value="stdio", id="sel-mcp-type")
+            with Horizontal(classes="field-row"):
+                yield Label("Command", classes="field-label")
+                yield Input(placeholder="command to run", id="inp-mcp-cmd", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Args", classes="field-label")
+                yield Input(placeholder="space-separated args", id="inp-mcp-args", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("URL", classes="field-label")
+                yield Input(placeholder="http://... (for http/sse)", id="inp-mcp-url", classes="field-input")
+            with Horizontal(classes="field-row"):
+                yield Label("Scope", classes="field-label")
+                yield Select(scopes, value="project", id="sel-mcp-scope")
+            with Horizontal():
+                yield Button("Save", id="btn-mcp-save", variant="primary")
+                yield Button("Cancel", id="btn-mcp-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-mcp-save":
+            try:
+                name = self.query_one("#inp-mcp-name", Input).value.strip()
+                srv_type = str(self.query_one("#sel-mcp-type", Select).value)
+                scope = str(self.query_one("#sel-mcp-scope", Select).value)
+                if not name:
+                    return
+                config: dict = {}
+                if srv_type == "stdio":
+                    cmd = self.query_one("#inp-mcp-cmd", Input).value.strip()
+                    if not cmd:
+                        return
+                    config["command"] = cmd
+                    args_str = self.query_one("#inp-mcp-args", Input).value.strip()
+                    if args_str:
+                        config["args"] = args_str.split()
+                else:
+                    config["type"] = srv_type
+                    url = self.query_one("#inp-mcp-url", Input).value.strip()
+                    if not url:
+                        return
+                    config["url"] = url
+                self.dismiss({"name": name, "scope": scope, "config": config})
+            except Exception:
+                pass
+        elif event.button.id == "btn-mcp-cancel":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SettingsScreen(ModalScreen[bool]):
@@ -177,16 +359,64 @@ class SettingsScreen(ModalScreen[bool]):
     SettingsScreen #button-bar Button {
         margin-left: 1;
     }
+    SettingsScreen > #settings-dialog {
+        width: 95;
+        max-height: 42;
+    }
+    SettingsScreen .scope-badge { width: 9; color: $text-muted; }
+    SettingsScreen .scope-project { color: green; }
+    SettingsScreen .scope-user { color: cyan; }
+    SettingsScreen .scope-local { color: yellow; }
+    SettingsScreen .hook-row {
+        width: 100%;
+        height: auto;
+        max-height: 5;
+        border-left: thick $primary 30%;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    SettingsScreen .hook-header {
+        width: 100%;
+        height: 1;
+    }
+    SettingsScreen .hook-event { width: 20; text-style: bold; }
+    SettingsScreen .hook-detail { width: 1fr; height: 1; color: $text-muted; }
+    SettingsScreen .hook-remove { width: 10; min-width: 10; height: 3; }
+    SettingsScreen #hooks-list { width: 100%; height: auto; max-height: 22; }
+    SettingsScreen #mcp-list { width: 100%; height: auto; max-height: 22; }
+    SettingsScreen .mcp-row {
+        width: 100%;
+        height: 1;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    SettingsScreen .mcp-name { width: 24; text-style: bold; }
+    SettingsScreen .mcp-type { width: 8; color: $text-muted; }
+    SettingsScreen .mcp-status { width: 12; }
+    SettingsScreen .mcp-status-connected { color: green; }
+    SettingsScreen .mcp-status-failed { color: red; }
+    SettingsScreen .mcp-status-disabled { color: $text-disabled; }
+    SettingsScreen .mcp-status-pending { color: yellow; }
+    SettingsScreen .mcp-status-unknown { color: $text-disabled; }
     """
 
     BINDINGS = [
         Binding("escape", "close", "Close", priority=True),
     ]
 
-    def __init__(self, config: Config, store: Store, **kwargs) -> None:
+    def __init__(
+        self,
+        config: Config,
+        store: Store,
+        project_dir: str | None = None,
+        claude_session=None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._config = config
         self._store = store
+        self._project_dir = project_dir
+        self._claude_session = claude_session
         self._projects: list[DiscoveredProject] = []
         self._checked: set[str] = set()
         self._changed = False
@@ -222,6 +452,10 @@ class SettingsScreen(ModalScreen[bool]):
                     yield from self._group_fields()
                 with TabPane("Workspaces", id="tab-workspaces"):
                     yield from self._workspace_fields()
+                with TabPane("Hooks", id="tab-hooks"):
+                    yield from self._hooks_fields()
+                with TabPane("MCP", id="tab-mcp"):
+                    yield from self._mcp_fields()
                 with TabPane("Templates", id="tab-templates"):
                     yield from self._template_fields()
             yield Label(f"Config: {_config_file_path()}", id="config-path")
@@ -321,6 +555,14 @@ class SettingsScreen(ModalScreen[bool]):
             yield Button("Add", id="btn-add")
         yield Button("Import Selected", id="btn-import", variant="primary")
 
+    def _hooks_fields(self) -> ComposeResult:
+        yield Label("", id="hooks-summary")
+        yield Button("Manage Hooks", id="btn-manage-hooks", variant="primary")
+
+    def _mcp_fields(self) -> ComposeResult:
+        yield Label("", id="mcp-summary")
+        yield Button("Manage MCP Servers", id="btn-manage-mcp", variant="primary")
+
     def _template_fields(self) -> ComposeResult:
         yield Label(
             "Built-in templates (🔒) are read-only. Custom templates can be edited or deleted.",
@@ -330,6 +572,8 @@ class SettingsScreen(ModalScreen[bool]):
         yield Button("＋ New Template", id="btn-new-template")
 
     async def on_mount(self) -> None:
+        self._update_hooks_summary()
+        self._update_mcp_summary()
         self._set_status("Scanning for projects...")
         projects = await asyncio.to_thread(discover_projects)
         self._projects = projects
@@ -430,6 +674,10 @@ class SettingsScreen(ModalScreen[bool]):
             self._handle_add_path()
         elif event.button.id == "btn-import":
             self._handle_import()
+        elif event.button.id == "btn-manage-hooks":
+            self._open_hooks_manager()
+        elif event.button.id == "btn-manage-mcp":
+            self._open_mcp_manager()
         elif event.button.id and event.button.id.startswith("btn-ws-edit-"):
             cwd = getattr(event.button, "_project_cwd", None)
             if cwd:
@@ -762,6 +1010,69 @@ class SettingsScreen(ModalScreen[bool]):
         self._config.save()
         self._changed = True
         self._set_status(f"Imported {total_imported} sessions, {len(self._config.workspaces)} workspaces saved")
+
+    def _update_hooks_summary(self) -> None:
+        """Update the hooks tab summary label."""
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        hooks = mgr.load_hooks()
+        try:
+            label = self.query_one("#hooks-summary", Label)
+        except Exception:
+            return
+        if not hooks:
+            label.update("No hooks configured")
+        else:
+            events = sorted({h.event for h in hooks})
+            label.update(
+                f"{len(hooks)} hooks: {', '.join(events)}\n"
+                "Click Manage Hooks to view, edit, add, remove, or change scope."
+            )
+
+    def _open_hooks_manager(self) -> None:
+        from reclawed.screens.hooks_manager import HooksManagerScreen
+
+        def on_dismiss(changed: bool) -> None:
+            if changed:
+                self._changed = True
+                self._update_hooks_summary()
+
+        self.app.push_screen(
+            HooksManagerScreen(project_dir=self._project_dir),
+            on_dismiss,
+        )
+
+    def _update_mcp_summary(self) -> None:
+        """Update the MCP tab summary label."""
+        mgr = ClaudeSettingsManager(project_dir=self._project_dir)
+        servers = mgr.load_mcp_servers()
+        try:
+            label = self.query_one("#mcp-summary", Label)
+        except Exception:
+            return
+        if not servers:
+            label.update("No MCP servers configured")
+        else:
+            names = sorted(s.name for s in servers)
+            label.update(
+                f"{len(servers)} servers: {', '.join(names)}\n"
+                "Click Manage MCP Servers to view status, authenticate, enable/disable, or add servers."
+            )
+
+    def _open_mcp_manager(self) -> None:
+        from reclawed.screens.mcp_manager import McpManagerScreen
+
+        def on_dismiss(changed: bool) -> None:
+            if changed:
+                self._changed = True
+                self._update_mcp_summary()
+
+        self.app.push_screen(
+            McpManagerScreen(
+                project_dir=self._project_dir,
+                claude_session=self._claude_session,
+            ),
+            on_dismiss,
+        )
 
     def _set_status(self, text: str, error: bool = False) -> None:
         try:

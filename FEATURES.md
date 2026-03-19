@@ -81,9 +81,9 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 
 When Claude is busy responding, the user should still be able to compose and queue follow-up messages — and ask quick side questions without derailing the current task.
 
-- [ ] **Message queue** — type and send messages while Claude is still responding. Queued messages are sent in order once the current response completes. Visual indicator showing "2 queued" in the compose area. No more waiting for a response to finish before typing the next thought
+- [x] **Message queue** — type and send messages while Claude is still responding. Queued messages are sent in order once the current response completes. Visual indicator showing "2 queued" in the compose area. No more waiting for a response to finish before typing the next thought
 - [ ] **/btw side questions** — Claude Code's `/btw` command lets you ask a quick question without interrupting the current work. In the TUI this could be: a keyboard shortcut (e.g. `Ctrl+B`) that opens a lightweight side panel or modal, sends the question to a separate haiku instance, shows the answer, and returns focus to the main conversation. The main Claude session continues uninterrupted. Think of it as a quick lookup while Claude is working — "btw what's the syntax for X?" without losing context
-- [ ] **Queue visibility** — show pending messages in the compose area or a small indicator. Allow reordering or cancelling queued messages before they're sent
+- [x] **Queue visibility** — show pending messages in the compose area or a small indicator. Allow reordering or cancelling queued messages before they're sent
 
 ### Design considerations
 
@@ -285,13 +285,13 @@ The TUI should integrate with Claude Code's extensibility features — plugins, 
 
 ### Core ideas
 
-- [ ] **MCP server management** — browse installed MCP servers, enable/disable per workspace, see connection status in status bar. Config lives in `.claude/settings.json` but the TUI should surface it
+- [x] **MCP server management** — browse installed MCP servers, enable/disable per workspace, see connection status in status bar. Config lives in `.claude/settings.json` but the TUI should surface it
 - [ ] **Skills browser** — list available skills (local `.claude/skills/` + global `~/.claude/skills/`), preview what they do, enable/disable per session or workspace
 - [ ] **Plugin marketplace** — browse and install community plugins/skills/MCP servers from a registry. Think VS Code extensions panel but for Claude Code capabilities
 - [ ] **Scope levels** — clear distinction between global (user-wide), project (workspace), and session-level configuration. UI should make it obvious what applies where
 - [ ] **Preconfigured bundles** — curated sets of skills + MCP servers for common project types (e.g. "Python backend" bundle includes python-expert skill, database MCP, test runner). Could ship as templates or be community-contributed
 - [ ] **Auto-detection** — Claude analyzes the project (package.json, pyproject.toml, Dockerfile, etc.) and suggests which skills, MCP servers, and tools would be useful. "This looks like a Next.js project — want to enable the frontend-developer skill and Supabase MCP?"
-- [ ] **Hooks management** — view and edit Claude Code hooks (SessionStart, PreCompact, UserPromptSubmit) from the TUI. Currently requires manual `.claude/settings.json` editing
+- [x] **Hooks management** — view and edit Claude Code hooks (SessionStart, PreCompact, UserPromptSubmit) from the TUI. Currently requires manual `.claude/settings.json` editing
 
 ### Design considerations
 

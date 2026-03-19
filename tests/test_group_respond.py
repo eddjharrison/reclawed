@@ -95,7 +95,8 @@ def _make_is_mentioned(name: str):
         obj.config = cfg
         obj.session = session
         obj._claude = MagicMock()
-        obj._sending = False
+        obj._is_streaming = False
+        obj._message_queues = {}
         obj._selected_model = None
         obj._relay_client = None
         obj._relay_server = None
@@ -268,12 +269,12 @@ class TestStatusBarGroupMode:
     def test_group_mode_and_streaming_both_shown(self):
         bar = self._make_bar()
         bar.update_info(group_mode="claude_assists")
-        bar._streaming_indicator = "thinking..."
+        bar._streaming_indicator = "[bold]42 tok/s[/bold]"
         bar._refresh_display()
         render = bar._last_render
         # Both should be present in the status bar
         assert "Claude Assists" in render
-        assert "thinking..." in render
+        assert "42 tok/s" in render
 
     def test_legacy_modes_display_correctly(self):
         """Old mode names should map to new display labels."""
@@ -339,7 +340,8 @@ class TestGroupContextPreamble:
         obj.config = cfg
         obj.session = session
         obj._claude = MagicMock()
-        obj._sending = False
+        obj._is_streaming = False
+        obj._message_queues = {}
         obj._selected_model = None
         obj._relay_client = None
         obj._relay_server = None

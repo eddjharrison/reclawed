@@ -126,6 +126,27 @@ class ClaudeSession:
             self._client = None
         log.info("ClaudeSession stopped")
 
+    async def get_mcp_status(self) -> dict:
+        """Get live MCP server connection status from the SDK."""
+        await self._ready.wait()
+        if self._client is None:
+            raise RuntimeError("ClaudeSession not connected")
+        return await self._client.get_mcp_status()
+
+    async def toggle_mcp_server(self, server_name: str, enabled: bool) -> None:
+        """Enable or disable an MCP server via the SDK."""
+        await self._ready.wait()
+        if self._client is None:
+            raise RuntimeError("ClaudeSession not connected")
+        await self._client.toggle_mcp_server(server_name, enabled)
+
+    async def reconnect_mcp_server(self, server_name: str) -> None:
+        """Reconnect a failed MCP server via the SDK."""
+        await self._ready.wait()
+        if self._client is None:
+            raise RuntimeError("ClaudeSession not connected")
+        await self._client.reconnect_mcp_server(server_name)
+
     async def send_message(
         self,
         prompt: str,

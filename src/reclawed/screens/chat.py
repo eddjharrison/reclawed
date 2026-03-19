@@ -7,6 +7,8 @@ import json
 import re
 import time
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from textual import work
@@ -29,13 +31,23 @@ from reclawed.relay.client import RelayClient
 from reclawed.store import Store
 from reclawed.utils import copy_to_clipboard
 from reclawed.widgets.chat_sidebar import ChatSidebar
-from reclawed.widgets.compose_area import ComposeArea
+from reclawed.widgets.compose_area import ComposeArea, ComposeInput
 from reclawed.widgets.message_bubble import MessageBubble
 from reclawed.widgets.message_list import MessageList
 from reclawed.widgets.quote_preview import QuotePreview
 from reclawed.widgets.resize_handle import SidebarResizeHandle
 from reclawed.widgets.status_bar import StatusBar
 from reclawed.widgets.tool_activity import ToolActivityWidget
+
+
+@dataclass
+class QueuedMessage:
+    """A message waiting to be sent after the current stream completes."""
+
+    text: str
+    attachments: list[str] = field(default_factory=list)
+    reply_to_id: str | None = None
+    reply_context: str | None = None
 
 
 class ChatScreen(Screen):
@@ -57,6 +69,8 @@ class ChatScreen(Screen):
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
         Binding("f7", "toggle_orchestrator", "Orchestrator", show=True, key_display="F7", priority=True),
+        Binding("f8", "mcp_manager", "MCP", show=False, priority=True),
+        Binding("f9", "hooks_manager", "Hooks", show=False, priority=True),
         Binding("ctrl+m", "memory_browser", "Memory", show=True, key_display="^M", priority=True),
         Binding("ctrl+o", "open_file", "Open File", show=True, key_display="^O", priority=True),
         # These only work in navigate mode (compose not focused)
@@ -125,7 +139,8 @@ class ChatScreen(Screen):
             self.session = sessions[0] if sessions else self._create_new_session()
         self._claude: ClaudeSession | None = None
         self._claude_sessions: dict[str, ClaudeSession] = {}  # pool of live sessions
-        self._sending = False
+        self._message_queues: dict[str, deque[QueuedMessage]] = {}
+        self._is_streaming = False
         # Restore the model stored on the session, or start with no override
         # (None means the CLI will use its own default).
         # Filter out synthetic/invalid model names from prior error responses.
@@ -213,14 +228,6 @@ class ChatScreen(Screen):
         if session_key in self._claude_sessions:
             self._claude = self._claude_sessions[session_key]
             return
-
-        # Reset send state for the new session's UI
-        self._sending = False
-        try:
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.set_enabled(True)
-        except Exception:
-            pass
 
         session = ClaudeSession(
             cli_path=self.config.claude_binary,
@@ -312,36 +319,41 @@ class ChatScreen(Screen):
 
     # --- Message handling ---
 
-    async def on_compose_area_submitted(self, event: ComposeArea.Submitted) -> None:
-        # Handle edit mode
-        if event.editing_message_id:
-            await self._handle_edit_submit(event.editing_message_id, event.text)
-            return
+    def _session_queue(self) -> deque[QueuedMessage]:
+        """Get or create the message queue for the active session."""
+        sid = self.session.id
+        if sid not in self._message_queues:
+            self._message_queues[sid] = deque()
+        return self._message_queues[sid]
 
-        if self._sending:
-            return
-        self._sending = True
-        compose = self.query_one("#compose-area", ComposeArea)
-        compose.set_enabled(False)
+    def _update_queue_display(self, queue: deque[QueuedMessage] | None = None) -> None:
+        """Update the compose area queue display with current queue contents."""
+        if queue is None:
+            queue = self._session_queue()
+        try:
+            compose = self.query_one("#compose-area", ComposeArea)
+            texts = [qm.text for qm in queue] if queue else []
+            compose.set_queue_count(len(queue) if queue else 0, messages=texts)
+        except Exception:
+            pass
 
-        quote_preview = self.query_one("#quote-preview", QuotePreview)
-        reply_to_id = quote_preview.reply_to_id
-        reply_context = None
+    async def _send_message(
+        self,
+        text: str,
+        attachments: list[str] | None = None,
+        reply_to_id: str | None = None,
+        reply_context: str | None = None,
+    ) -> None:
+        """Create user + assistant messages and start streaming.
 
-        if reply_to_id:
-            parent_msg = self.store.get_message(reply_to_id)
-            if parent_msg:
-                reply_context = parent_msg.content[:self.config.max_quote_length]
-            quote_preview.hide()
-
-        # Build attachment metadata if images were attached
+        Called from on_compose_area_submitted and from queue drain.
+        """
         from reclawed.utils import make_attachment_json
-        attachments_json = make_attachment_json(event.attachments) if event.attachments else None
+        attachments_json = make_attachment_json(attachments) if attachments else None
 
-        # Create and display user message
         user_msg = Message(
             role="user",
-            content=event.text,
+            content=text,
             session_id=self.session.id,
             reply_to_id=reply_to_id,
             sender_name=self.config.participant_name if self.session.is_group else None,
@@ -353,25 +365,38 @@ class ChatScreen(Screen):
         msg_list = self.query_one("#message-list", MessageList)
         await msg_list.add_message(user_msg)
 
-        # In group sessions, broadcast the user's message to all participants.
+        # Broadcast in group sessions
         if self.session.is_group and self._relay_client is not None:
             try:
                 self._pending_echo_ids.append(user_msg.id)
-                await self._relay_client.send_message(event.text, sender_type="human")
+                await self._relay_client.send_message(text, sender_type="human")
             except Exception:
-                pass  # Best-effort; don't break the local send flow
+                pass
 
-        # In "Humans Only" mode, skip Claude unless the user @mentions their Claude.
+        # In "Humans Only" mode, skip Claude unless @mentioned
         if self.session.is_group and self._group_respond_mode == "humans_only":
-            if not self._is_mentioned(event.text):
-                self._sending = False
-                compose = self.query_one("#compose-area", ComposeArea)
-                compose.set_enabled(True)
-                compose.query_one("#compose-input").focus()
+            if not self._is_mentioned(text):
+                # Drain queued messages before clearing streaming flag
+                queue = self._message_queues.get(self.session.id)
+                if queue:
+                    next_msg = queue.popleft()
+                    self._update_queue_display(queue)
+                    try:
+                        await self._send_message(
+                            next_msg.text,
+                            attachments=next_msg.attachments,
+                            reply_to_id=next_msg.reply_to_id,
+                            reply_context=next_msg.reply_context,
+                        )
+                    except Exception:
+                        log.exception("Queue drain failed (humans_only)")
+                        self._is_streaming = False
+                    return
+                self._is_streaming = False
                 return
 
         # Build prompt with optional context preamble
-        prompt = event.text
+        prompt = text
         if self.session.is_group:
             preamble = self._build_group_context_preamble()
             if preamble:
@@ -393,11 +418,71 @@ class ChatScreen(Screen):
         self.store.add_message(assistant_msg)
         await msg_list.add_message(assistant_msg)
 
-        # Stream response — pass image attachments to Claude
         self._stream_response(
             prompt, assistant_msg, reply_context,
-            attachments=event.attachments or None,
+            attachments=attachments or None,
         )
+
+    async def on_compose_area_submitted(self, event: ComposeArea.Submitted) -> None:
+        # Handle edit mode
+        if event.editing_message_id:
+            await self._handle_edit_submit(event.editing_message_id, event.text)
+            return
+
+        compose = self.query_one("#compose-area", ComposeArea)
+
+        if self._is_streaming:
+            # Capture reply context before clearing quote preview
+            quote_preview = self.query_one("#quote-preview", QuotePreview)
+            queued_reply_to_id = quote_preview.reply_to_id
+            queued_reply_context = None
+            if queued_reply_to_id:
+                parent = self.store.get_message(queued_reply_to_id)
+                if parent:
+                    queued_reply_context = parent.content[:self.config.max_quote_length]
+                quote_preview.hide()
+
+            queue = self._session_queue()
+            queue.append(QueuedMessage(
+                text=event.text,
+                attachments=list(event.attachments),
+                reply_to_id=queued_reply_to_id,
+                reply_context=queued_reply_context,
+            ))
+            self._update_queue_display(queue)
+            return
+
+        self._is_streaming = True
+
+        quote_preview = self.query_one("#quote-preview", QuotePreview)
+        reply_to_id = quote_preview.reply_to_id
+        reply_context = None
+        if reply_to_id:
+            parent_msg = self.store.get_message(reply_to_id)
+            if parent_msg:
+                reply_context = parent_msg.content[:self.config.max_quote_length]
+            quote_preview.hide()
+
+        await self._send_message(
+            event.text,
+            attachments=list(event.attachments),
+            reply_to_id=reply_to_id,
+            reply_context=reply_context,
+        )
+
+    def on_compose_area_edit_queue_triggered(self, event: ComposeArea.EditQueueTriggered) -> None:
+        """Pop the last queued message back into compose for editing."""
+        event.stop()
+        queue = self._session_queue()
+        if not queue:
+            return
+        # Pop the last message (most recent queued)
+        last = queue.pop()
+        self._update_queue_display(queue)
+        compose = self.query_one("#compose-area", ComposeArea)
+        ta = compose.query_one("#compose-input", ComposeInput)
+        ta.load_text(last.text)
+        ta.focus()
 
     async def on_compose_area_paste_image_triggered(self, event: ComposeArea.PasteImageTriggered) -> None:
         """Handle Alt+V — grab image from clipboard and attach it."""
@@ -678,7 +763,7 @@ class ChatScreen(Screen):
                         # Respond to everything — human and Claude messages
                         should_respond = True
 
-                    if should_respond and not self._sending:
+                    if should_respond and not self._is_streaming:
                         prompt = content
                         preamble = self._build_group_context_preamble()
                         if preamble:
@@ -812,12 +897,12 @@ class ChatScreen(Screen):
         broadcasts it to the relay room — mirroring the flow in
         ``on_compose_area_submitted`` but triggered by an incoming message.
 
-        This method is a no-op if ``_sending`` is already True (concurrency
+        This method is a no-op if ``_is_streaming`` is already True (concurrency
         guard: skip rather than queue when multiple messages arrive quickly).
         """
-        if self._sending:
+        if self._is_streaming:
             return
-        self._sending = True
+        self._is_streaming = True
 
         claude_name = f"{self.config.participant_name}'s Claude"
         assistant_msg = Message(
@@ -1320,6 +1405,38 @@ class ChatScreen(Screen):
 
             self.set_timer(3.0, _clear_streaming_indicator)
 
+            # Drain next queued message — check BEFORE clearing _is_streaming
+            # to prevent a user submit from racing into _send_message directly.
+            queue = self._message_queues.get(stream_session.id)
+            if queue and _is_active():
+                next_msg = queue.popleft()
+                self._update_queue_display(queue)
+                try:
+                    compose = self.query_one("#compose-area", ComposeArea)
+                    compose.query_one("#compose-input").focus()
+                except Exception:
+                    pass
+                # _is_streaming stays True — new worker takes over.
+                # Wrap in try/except so _is_streaming is always reset on failure.
+                try:
+                    await self._send_message(
+                        next_msg.text,
+                        attachments=next_msg.attachments,
+                        reply_to_id=next_msg.reply_to_id,
+                        reply_context=next_msg.reply_context,
+                    )
+                except Exception:
+                    log.exception("Queue drain failed")
+                    self._is_streaming = False
+            else:
+                self._is_streaming = False
+                if _is_active():
+                    try:
+                        compose = self.query_one("#compose-area", ComposeArea)
+                        compose.query_one("#compose-input").focus()
+                    except Exception:
+                        pass
+
     # --- Selection & interaction ---
 
     @property
@@ -1483,7 +1600,7 @@ class ChatScreen(Screen):
         """Edit a user message and regenerate Claude's response."""
         from datetime import datetime, timezone as tz
 
-        if self._sending:
+        if self._is_streaming:
             return
 
         msg = self.store.get_message(message_id)
@@ -1524,9 +1641,7 @@ class ChatScreen(Screen):
             return
 
         # 6. Create new assistant placeholder and stream fresh response
-        self._sending = True
-        compose = self.query_one("#compose-area", ComposeArea)
-        compose.set_enabled(False)
+        self._is_streaming = True
 
         prompt = new_content
         if self.session.is_group:
@@ -2589,7 +2704,9 @@ class ChatScreen(Screen):
         _model = session.model
         self._selected_model = _model if _model and not _model.startswith("<") else None
         # Reset send state so compose is usable in the new session
-        self._sending = False
+        self._is_streaming = False
+        # Update queue display for the new session's queue
+        self._update_queue_display(self._message_queues.get(session.id))
         # Restore room mode from session (per-room persistence)
         if session.room_mode and session.room_mode in self.ROOM_MODES:
             self._group_respond_mode = session.room_mode
@@ -2857,8 +2974,30 @@ class ChatScreen(Screen):
                 sidebar.refresh_sessions(active_session_id=self.session.id)
 
         self.app.push_screen(
-            SettingsScreen(self.config, self.store),
+            SettingsScreen(
+                self.config,
+                self.store,
+                project_dir=self.session.cwd,
+                claude_session=self._claude,
+            ),
             on_settings_dismissed,
+        )
+
+    def action_hooks_manager(self) -> None:
+        from reclawed.screens.hooks_manager import HooksManagerScreen
+        self.app.push_screen(
+            HooksManagerScreen(project_dir=self.session.cwd),
+            lambda changed: None,
+        )
+
+    def action_mcp_manager(self) -> None:
+        from reclawed.screens.mcp_manager import McpManagerScreen
+        self.app.push_screen(
+            McpManagerScreen(
+                project_dir=self.session.cwd,
+                claude_session=self._claude,
+            ),
+            lambda changed: None,
         )
 
     def action_change_display_name(self) -> None:
@@ -2968,6 +3107,11 @@ class ChatScreen(Screen):
             "Ctrl+T      Cycle theme\n"
             "Ctrl+E      Export markdown\n"
             "Ctrl+D/C    Quit\n"
+            "\n"
+            "Message Queue\n"
+            "  Messages sent while Claude is\n"
+            "  responding are queued and sent\n"
+            "  in order when the response ends.\n"
             "Esc         Deselect / cancel\n"
             "?           This help\n"
             "\n"

@@ -8,7 +8,10 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import Label, Markdown, Static
+
+_THINKING_FRAMES = [".  ", ".. ", "...", " ..", "  .", "   "]
 
 from reclawed.models import Message
 from reclawed.utils import (
@@ -266,6 +269,8 @@ class MessageBubble(Vertical):
         self._content_widget: Markdown | None = None
         self._stream_widget: Static | None = None  # fast text display during streaming
         self._delivery_label: Label | None = None
+        self._thinking_timer: Timer | None = None
+        self._thinking_frame: int = 0
         self.add_class(message.role)
 
     @property
@@ -353,6 +358,31 @@ class MessageBubble(Vertical):
             self._delivery_label = Label("", classes="delivery-status", id="delivery-status")
             yield self._delivery_label
 
+    def on_mount(self) -> None:
+        """Start thinking animation if this is a placeholder bubble."""
+        if self._message.content == "..." and self._message.role == "assistant":
+            self._start_thinking()
+
+    def _start_thinking(self) -> None:
+        if self._thinking_timer is None:
+            self._thinking_frame = 0
+            if self._content_widget is not None:
+                self._content_widget.display = False
+            if self._stream_widget is not None:
+                self._stream_widget.display = True
+                self._stream_widget.update(_THINKING_FRAMES[0])
+            self._thinking_timer = self.set_interval(0.3, self._advance_thinking)
+
+    def _advance_thinking(self) -> None:
+        self._thinking_frame = (self._thinking_frame + 1) % len(_THINKING_FRAMES)
+        if self._stream_widget is not None:
+            self._stream_widget.update(_THINKING_FRAMES[self._thinking_frame])
+
+    def _stop_thinking(self) -> None:
+        if self._thinking_timer is not None:
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+
     def update_content(self, content: str) -> None:
         """Update the message content during streaming.
 
@@ -360,6 +390,7 @@ class MessageBubble(Vertical):
         No widget mounting/removal — just show/hide + text update.
         Call ``finalize_content()`` when streaming ends to render as Markdown.
         """
+        self._stop_thinking()
         self._message.content = content
         # Show the fast Static, hide the slow Markdown
         if self._stream_widget is not None:
@@ -376,6 +407,7 @@ class MessageBubble(Vertical):
         permission_mode: str | None = None,
     ) -> None:
         """Switch from streaming Static back to Markdown for final render."""
+        self._stop_thinking()
         self._message.content = content
         # Hide streaming widget, show Markdown with final content
         if self._stream_widget is not None:
