@@ -58,6 +58,7 @@ class ChatScreen(Screen):
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
         Binding("f7", "toggle_orchestrator", "Orchestrator", show=True, key_display="F7", priority=True),
         Binding("ctrl+m", "memory_browser", "Memory", show=True, key_display="^M", priority=True),
+        Binding("ctrl+o", "open_file", "Open File", show=True, key_display="^O", priority=True),
         # These only work in navigate mode (compose not focused)
         Binding("tab", "toggle_focus", "Navigate/Type", show=True, key_display="Tab"),
         Binding("up", "select_prev", "Prev msg", show=False),
@@ -2817,6 +2818,20 @@ class ChatScreen(Screen):
         from reclawed.screens.memory import MemoryScreen
 
         self.app.push_screen(MemoryScreen(cwd=self.session.cwd))
+
+    def action_open_file(self) -> None:
+        """Open the quick file opener (Ctrl+O) and display the chosen file."""
+        from reclawed.screens.file_open import FileOpenScreen
+        from reclawed.screens.document import DocumentScreen
+
+        def _on_file_chosen(path: str | None) -> None:
+            if path:
+                self.app.push_screen(DocumentScreen(path=path, mode="view"))
+
+        self.app.push_screen(
+            FileOpenScreen(cwd=self.session.cwd),
+            _on_file_chosen,
+        )
 
     def action_settings(self) -> None:
         from reclawed.screens.settings import SettingsScreen

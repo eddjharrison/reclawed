@@ -359,3 +359,95 @@ class TestOpenFileLogic:
         file_diffs: dict = {}
         assert path not in file_diffs
         assert not Path(path).exists()
+
+
+# ---------------------------------------------------------------------------
+# extract_file_paths — content scanning for inline file references
+# ---------------------------------------------------------------------------
+
+
+class TestExtractFilePaths:
+    """Tests for extract_file_paths() in message_bubble.py."""
+
+    def _run(self, content: str) -> list[str]:
+        from reclawed.widgets.message_bubble import extract_file_paths
+        return extract_file_paths(content)
+
+    def test_backtick_relative_path(self):
+        """Backtick-wrapped relative path is detected."""
+        paths = self._run("I edited `src/config.py` and it works now.")
+        assert "src/config.py" in paths
+
+    def test_backtick_absolute_path(self):
+        """Backtick-wrapped absolute path is detected."""
+        paths = self._run("Check `/Users/ed/project/README.md` for details.")
+        assert "/Users/ed/project/README.md" in paths
+
+    def test_absolute_path_inline(self):
+        """Absolute path in plain text is detected."""
+        paths = self._run("The file /home/user/project/src/app.py was modified.")
+        assert "/home/user/project/src/app.py" in paths
+
+    def test_relative_path_with_directory(self):
+        """Relative path with a directory component is detected."""
+        paths = self._run("See src/utils/helper.ts for the implementation.")
+        assert "src/utils/helper.ts" in paths
+
+    def test_skips_code_fence_content(self):
+        """Paths inside code fences are not returned as chips."""
+        content = "Here is code:\n```python\nimport src/fake.py\npath = 'src/other.py'\n```\nDone."
+        paths = self._run(content)
+        # Paths inside fences should be skipped
+        assert "src/fake.py" not in paths
+        assert "src/other.py" not in paths
+
+    def test_skips_urls(self):
+        """HTTP URLs are not returned even if they contain file-like paths."""
+        paths = self._run("See https://example.com/docs/guide.md for info.")
+        assert not any("https://" in p for p in paths)
+
+    def test_no_duplicates(self):
+        """Same path mentioned twice appears only once."""
+        paths = self._run("Edit `src/config.py` then re-read `src/config.py`.")
+        assert paths.count("src/config.py") == 1
+
+    def test_empty_content(self):
+        """Empty string returns no paths."""
+        assert self._run("") == []
+
+    def test_plain_prose_no_paths(self):
+        """Plain prose without any file paths returns empty list."""
+        assert self._run("Hello world, this is a message with no file references.") == []
+
+    def test_multiple_paths(self):
+        """Multiple distinct paths are all returned."""
+        content = "I changed `src/a.py` and `src/b.py` and also tests/test_a.py."
+        paths = self._run(content)
+        assert "src/a.py" in paths
+        assert "src/b.py" in paths
+        assert "tests/test_a.py" in paths
+
+    def test_markdown_only_extension(self):
+        """Standalone .md file in backticks is detected."""
+        paths = self._run("Check `README_draft.md` for the latest draft.")
+        assert "README_draft.md" in paths
+
+    def test_order_preserved(self):
+        """Paths appear in order of first mention."""
+        paths = self._run("First `src/a.py` then `src/b.py`.")
+        a_idx = paths.index("src/a.py")
+        b_idx = paths.index("src/b.py")
+        assert a_idx < b_idx
+
+    def test_clickable_file_chip_instantiation(self):
+        """ClickableFileChip can be instantiated with a path."""
+        from reclawed.widgets.message_bubble import ClickableFileChip
+        chip = ClickableFileChip("src/config.py")
+        assert chip._path == "src/config.py"
+
+    def test_clickable_file_chip_short_display(self):
+        """ClickableFileChip shows last 2 path components for long paths."""
+        from reclawed.widgets.message_bubble import ClickableFileChip
+        chip = ClickableFileChip("/Users/ed/deep/nested/src/config.py")
+        assert chip._path == "/Users/ed/deep/nested/src/config.py"
+        # Display should be shortened (last 2 parts: src/config.py)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.events import Click
 from textual.message import Message as TMessage
 from textual.reactive import reactive
@@ -16,6 +17,95 @@ from reclawed.utils import (
 )
 from reclawed.widgets.choice_buttons import ChoiceButtons
 from reclawed.widgets.tool_activity import ToolActivityWidget
+
+# File extensions to detect as clickable file paths
+_FILE_EXT = (
+    r'\.(?:py|md|toml|json|ts|js|jsx|tsx|css|html|htm|yml|yaml|sh|bash|zsh'
+    r'|txt|cfg|ini|sql|rs|go|rb|java|cpp|c|h|cs|php|swift|kt|dart'
+    r'|ex|exs|lua|r|m|scala|clj|hs|ml|fs|elm|nim|zig|v|cr|jl|tf|hcl'
+    r'|proto|graphql|gql|lock|env|vue|svelte|astro|mdx|rst|log)'
+)
+
+# Patterns — ordered by confidence
+_BACKTICK_PATH_RE = re.compile(
+    r'`([^`\n]+' + _FILE_EXT + r'[^`\n]*)`'
+)
+_ABSOLUTE_PATH_RE = re.compile(
+    r'(?<!["\'\w])((?:/[a-zA-Z0-9_.\-@]+)+' + _FILE_EXT + r'(?:/[a-zA-Z0-9_.\-@]*)*)'
+)
+_RELATIVE_PATH_RE = re.compile(
+    r'(?<!["\'\w:/])'               # not preceded by quote, word, colon, or slash
+    r'([a-zA-Z0-9_.\-]+(?:/[a-zA-Z0-9_.\-]+)+' + _FILE_EXT + r')'
+    r'(?!["\'\w])'                  # not followed by quote or word char
+)
+
+# Code-fence block pattern — skip anything between ``` fences
+_CODE_FENCE_RE = re.compile(r'```.*?```', re.DOTALL)
+# Inline code — also skip single-backtick sections (we handle those separately)
+_INLINE_CODE_RE = re.compile(r'`[^`]+`')
+# URL pattern — skip file-like tokens that are actually URLs
+_URL_RE = re.compile(r'https?://')
+
+
+def extract_file_paths(content: str) -> list[str]:
+    """Extract unique file paths from message content.
+
+    Skips code-fence blocks, URLs, and duplicate paths.
+    Returns paths in order of first appearance.
+    """
+    # Remove code-fence blocks before scanning
+    cleaned = _CODE_FENCE_RE.sub('', content)
+
+    seen: set[str] = set()
+    paths: list[str] = []
+
+    def _add(path: str) -> None:
+        path = path.strip()
+        if path and path not in seen and not _URL_RE.search(path):
+            seen.add(path)
+            paths.append(path)
+
+    # 1. Backtick-wrapped paths (high confidence)
+    for m in _BACKTICK_PATH_RE.finditer(cleaned):
+        _add(m.group(1))
+
+    # 2. Absolute paths (high confidence) — scan cleaned text (no fences)
+    no_inline = _INLINE_CODE_RE.sub('', cleaned)
+    for m in _ABSOLUTE_PATH_RE.finditer(no_inline):
+        _add(m.group(1))
+
+    # 3. Relative paths with at least one directory component
+    for m in _RELATIVE_PATH_RE.finditer(no_inline):
+        _add(m.group(1))
+
+    return paths
+
+
+class ClickableFileChip(Label):
+    """A small clickable chip showing a file path detected in message content."""
+
+    DEFAULT_CSS = """
+    ClickableFileChip {
+        color: $accent;
+        text-style: underline;
+        margin: 0 1 0 0;
+    }
+    ClickableFileChip:hover {
+        background: $accent 20%;
+    }
+    """
+
+    def __init__(self, path: str, **kwargs) -> None:
+        # Show shortened display name — last 2 path components at most
+        from pathlib import PurePosixPath
+        parts = PurePosixPath(path).parts
+        display = "/".join(parts[-2:]) if len(parts) > 2 else path
+        super().__init__(f"📄 {display}", **kwargs)
+        self._path = path
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(MessageBubble.FileClicked(self._path))
 
 
 class ReplyIndicator(Label):
@@ -127,6 +217,12 @@ class MessageBubble(Vertical):
     MessageBubble .attachment-indicator:hover {
         text-style: underline;
         background: $primary 20%;
+    }
+    MessageBubble .file-chips-row {
+        layout: horizontal;
+        height: auto;
+        padding: 0 0 0 0;
+        margin-top: 0;
     }
     """
 
@@ -287,6 +383,18 @@ class MessageBubble(Vertical):
         if self._content_widget is not None:
             self._content_widget.display = True
             await self._content_widget.update(content)
+
+        # Mount clickable file chips for any file paths detected in content
+        paths = extract_file_paths(content)
+        if paths:
+            # Remove any existing chips row to avoid duplicates on re-render
+            for old in self.query(".file-chips-row"):
+                await old.remove()
+            chips = [ClickableFileChip(p) for p in paths]
+            try:
+                await self.mount(Horizontal(*chips, classes="file-chips-row"))
+            except Exception:
+                pass
 
         # Detect and display interactive elements
         if self._message.role == "assistant":
