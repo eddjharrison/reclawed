@@ -153,13 +153,21 @@ class DocumentScreen(ModalScreen[bool]):
         color: $text-muted;
         padding: 0 2;
     }
+
+    /* ── shortcut hints bar ─────────────────────────────── */
+    DocumentScreen #doc-shortcuts {
+        width: 100%;
+        height: 1;
+        background: $surface;
+        padding: 0 1;
+    }
     """
 
     BINDINGS = [
         Binding("escape", "close", "Close", priority=True),
-        Binding("e", "toggle_edit", "Edit", show=True),
-        Binding("ctrl+s", "save", "Save", show=True),
-        Binding("ctrl+f", "search", "Search", show=True),
+        Binding("ctrl+e", "toggle_edit", "Edit", show=True, priority=True),
+        Binding("ctrl+s", "save", "Save", show=True, priority=True),
+        Binding("ctrl+f", "search", "Search", show=True, priority=True),
         Binding("n", "next_hunk", "Next hunk", show=False),
         Binding("p", "prev_hunk", "Prev hunk", show=False),
     ]
@@ -245,6 +253,7 @@ class DocumentScreen(ModalScreen[bool]):
                     )
 
             yield Label(self._status_text(), id="doc-status")
+            yield Label(self._shortcuts_text(), id="doc-shortcuts", markup=True)
 
     def on_mount(self) -> None:
         if self._mode == "diff":
@@ -289,15 +298,38 @@ class DocumentScreen(ModalScreen[bool]):
         except Exception:
             pass
 
+    def _shortcuts_text(self) -> str:
+        """Return context-aware shortcut hints for the current mode."""
+        key = "[bold]{}[/bold]"
+        sep = "  "
+        hints: list[str] = [f"{key.format('Esc')} Close"]
+
+        if self._mode == "view":
+            hints.append(f"{key.format('Ctrl+E')} Edit")
+            hints.append(f"{key.format('Ctrl+F')} Search")
+        elif self._mode == "edit":
+            hints.append(f"{key.format('Ctrl+S')} Save")
+            hints.append(f"{key.format('Ctrl+E')} View")
+            hints.append(f"{key.format('Ctrl+F')} Search")
+        elif self._mode == "diff":
+            hints.append(f"{key.format('n')} Next hunk")
+            hints.append(f"{key.format('p')} Prev hunk")
+
+        return sep.join(hints)
+
     def _refresh_status(self) -> None:
         try:
             self.query_one("#doc-status", Label).update(self._status_text())
         except Exception:
             pass
+        try:
+            self.query_one("#doc-shortcuts", Label).update(self._shortcuts_text())
+        except Exception:
+            pass
 
     # ── actions ────────────────────────────────────────────────────────────
 
-    async def action_close(self) -> None:
+    def action_close(self) -> None:
         """Close the screen, optionally hiding the search bar first."""
         # If search bar is open, close it instead of the whole screen.
         try:
@@ -315,14 +347,19 @@ class DocumentScreen(ModalScreen[bool]):
         # Warn before closing with unsaved changes.
         if self._dirty:
             from reclawed.widgets.confirm_screen import ConfirmScreen  # local import avoids cycle
-            confirmed = await self.app.push_screen_wait(
+
+            def _on_confirm(confirmed: bool) -> None:
+                if confirmed:
+                    self.dismiss(self._saved)
+
+            self.app.push_screen(
                 ConfirmScreen(
                     "Unsaved Changes",
                     "You have unsaved changes. Close anyway?",
-                )
+                ),
+                _on_confirm,
             )
-            if not confirmed:
-                return
+            return
 
         self.dismiss(self._saved)
 

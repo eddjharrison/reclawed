@@ -30,7 +30,7 @@ class FileOpenScreen(ModalScreen[str | None]):
         align: center middle;
     }
 
-    FileOpenScreen > #fo-dialog {
+    FileOpenScreen > Vertical#fo-dialog {
         width: 80;
         height: auto;
         max-height: 22;
@@ -100,6 +100,8 @@ class FileOpenScreen(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
+        Binding("enter", "submit_path", "Open", show=False, priority=True),
     ]
 
     def __init__(self, cwd: str | None = None, **kwargs) -> None:
@@ -112,7 +114,7 @@ class FileOpenScreen(ModalScreen[str | None]):
     # ── compose ────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        with Static(id="fo-dialog"):
+        with Vertical(id="fo-dialog"):
             yield Label("Open File", id="fo-title")
             yield Label(
                 "Enter a file path — Tab to autocomplete, Enter to open",
@@ -178,26 +180,26 @@ class FileOpenScreen(ModalScreen[str | None]):
         self._refresh_suggestions(event.value)
 
     def on_key(self, event: Key) -> None:
-        if event.key == "tab":
-            event.stop()
-            self._accept_suggestion()
-        elif event.key == "down":
-            lv = self.query_one("#fo-list", ListView)
-            suggestion_box = self.query_one("#fo-suggestions", Vertical)
-            if "visible" in suggestion_box.classes and lv._nodes:
+        inp = self.query_one("#fo-path-input", Input)
+        lv = self.query_one("#fo-list", ListView)
+        suggestion_box = self.query_one("#fo-suggestions", Vertical)
+        has_suggestions = "visible" in suggestion_box.classes and len(lv.children) > 0
+
+        if event.key == "down":
+            # Only intercept to transfer focus from input → list.
+            # Once the list has focus, let ListView handle navigation.
+            if inp.has_focus and has_suggestions:
                 event.stop()
+                event.prevent_default()
                 lv.focus()
                 lv.index = 0
         elif event.key == "up":
-            lv = self.query_one("#fo-list", ListView)
-            suggestion_box = self.query_one("#fo-suggestions", Vertical)
-            if "visible" in suggestion_box.classes and lv.has_focus:
+            # Only intercept to transfer focus from list → input at top.
+            # Otherwise let ListView handle navigation natively.
+            if lv.has_focus and has_suggestions and lv.index == 0:
                 event.stop()
-                # If at top of list, return focus to input
-                if lv.index == 0:
-                    self.query_one("#fo-path-input", Input).focus()
-                else:
-                    lv.index = max(0, (lv.index or 1) - 1)
+                event.prevent_default()
+                inp.focus()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Accept a suggestion when user clicks or presses Enter on it."""
@@ -215,9 +217,9 @@ class FileOpenScreen(ModalScreen[str | None]):
             self._accept_highlighted_item(lv.highlighted_child)
         else:
             # Accept the first suggestion
-            nodes = list(lv._nodes)
-            if nodes:
-                self._accept_list_item(nodes[0])
+            children = list(lv.children)
+            if children:
+                self._accept_list_item(children[0])
 
     def _accept_highlighted_item(self, item: "ListItem") -> None:
         self._accept_list_item(item)
@@ -225,8 +227,9 @@ class FileOpenScreen(ModalScreen[str | None]):
     def _accept_list_item(self, item: "ListItem") -> None:
         try:
             label = item.query_one(Label)
-            path_str = str(label.renderable)
+            path_str = str(label.content)
         except Exception:
+            self.log.error("Failed to extract path from list item", exc_info=True)
             return
         inp = self.query_one("#fo-path-input", Input)
         inp.value = path_str
@@ -234,11 +237,6 @@ class FileOpenScreen(ModalScreen[str | None]):
         inp.focus()
         # Refresh suggestions for the newly-accepted path
         self._refresh_suggestions(path_str)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "fo-path-input":
-            return
-        self._try_open()
 
     def _try_open(self) -> None:
         """Validate the entered path and dismiss with it if valid."""
@@ -265,6 +263,21 @@ class FileOpenScreen(ModalScreen[str | None]):
         self.dismiss(str(p.resolve()))
 
     # ── actions ────────────────────────────────────────────────────────────
+
+    def action_autocomplete(self) -> None:
+        """Accept the highlighted (or first) suggestion into the input."""
+        self._accept_suggestion()
+
+    def action_submit_path(self) -> None:
+        """Handle Enter — open file if input focused, accept suggestion if list focused."""
+        inp = self.query_one("#fo-path-input", Input)
+        lv = self.query_one("#fo-list", ListView)
+        if lv.has_focus and lv.highlighted_child is not None:
+            # Accept the highlighted suggestion into the input
+            self._accept_highlighted_item(lv.highlighted_child)
+        else:
+            # Input has focus (or nothing specific) — try to open the path
+            self._try_open()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
