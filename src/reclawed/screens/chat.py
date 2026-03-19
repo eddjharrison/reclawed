@@ -1239,15 +1239,6 @@ class ChatScreen(Screen):
                 bubble.update_content(assistant_msg.content)
 
         finally:
-            self._is_streaming = False
-            if _is_active():
-                try:
-                    compose = self.query_one("#compose-area", ComposeArea)
-                    compose.set_enabled(True)
-                    compose.query_one("#compose-input").focus()
-                except Exception:
-                    pass
-
             # Keep the final tok/s visible for 3 seconds, then revert.
             def _clear_streaming_indicator() -> None:
                 if _is_active():
@@ -1256,6 +1247,33 @@ class ChatScreen(Screen):
                 self._refresh_sidebar()
 
             self.set_timer(3.0, _clear_streaming_indicator)
+
+            # Drain next queued message — check BEFORE clearing _is_streaming
+            # to prevent a user submit from racing into _send_message directly.
+            queue = self._message_queues.get(stream_session.id)
+            if queue and _is_active():
+                next_msg = queue.popleft()
+                try:
+                    compose = self.query_one("#compose-area", ComposeArea)
+                    compose.set_queue_count(len(queue))
+                    compose.query_one("#compose-input").focus()
+                except Exception:
+                    pass
+                # _is_streaming stays True — new worker takes over
+                await self._send_message(
+                    next_msg.text,
+                    attachments=next_msg.attachments,
+                    reply_to_id=next_msg.reply_to_id,
+                    reply_context=next_msg.reply_context,
+                )
+            else:
+                self._is_streaming = False
+                if _is_active():
+                    try:
+                        compose = self.query_one("#compose-area", ComposeArea)
+                        compose.query_one("#compose-input").focus()
+                    except Exception:
+                        pass
 
     # --- Selection & interaction ---
 
