@@ -13,7 +13,7 @@ def test_numbered_choices():
 
 
 def test_lettered_choices():
-    text = "Options:\na. Keep it simple\nb. Add more features"
+    text = "Which do you prefer?\na. Keep it simple\nb. Add more features"
     choices = detect_choices(text)
     assert len(choices) == 2
     assert choices[0] == ("a", "Keep it simple")
@@ -21,7 +21,7 @@ def test_lettered_choices():
 
 
 def test_lettered_with_parenthesis():
-    text = "a) Option one\nb) Option two"
+    text = "Choose one:\na) Option one\nb) Option two"
     choices = detect_choices(text)
     assert len(choices) == 2
 
@@ -46,3 +46,21 @@ def test_mixed_content():
 
 def test_empty_text():
     assert detect_choices("") == []
+
+
+def test_plain_numbered_list_not_detected():
+    """Regular numbered lists without a decision signal should NOT show buttons."""
+    text = "The fix adds two handlers:\n\n1. App regains terminal focus\n2. Screen resumes from a modal"
+    assert detect_choices(text) == []
+
+
+def test_too_many_items_not_detected():
+    """More than 6 items is likely a list, not choices."""
+    text = "Which do you prefer?\n" + "\n".join(f"{i}. Item {i}" for i in range(1, 9))
+    assert detect_choices(text) == []
+
+
+def test_question_signal_triggers_detection():
+    text = "Would you like me to:\n1. Refactor the code\n2. Add tests\n3. Write docs"
+    choices = detect_choices(text)
+    assert len(choices) == 3

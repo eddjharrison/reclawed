@@ -121,6 +121,14 @@ def detect_question(text: str) -> bool:
 
 _CHOICE_PATTERN = re.compile(r"^(?:(\d+)\.|([a-zA-Z])[\.\)])[\s]+(.+)$")
 
+# Phrases that signal numbered items are actual choices, not just a list.
+_CHOICE_SIGNALS = re.compile(
+    r"(?:which|choose|pick|select|prefer|option|would you|want me to|"
+    r"approach|alternative|here are .* options|here are .* choices|"
+    r"should [iI]|shall [iI]|do you want)\b",
+    re.IGNORECASE,
+)
+
 
 def detect_choices(text: str) -> list[tuple[str, str]]:
     """Detect numbered or lettered choices in text.
@@ -129,7 +137,10 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
 
         [("1", "Use React"), ("2", "Use Vue"), ("3", "Use Svelte")]
 
-    Only returns results when 2+ sequential choices are found.
+    Only returns results when 2-6 sequential choices are found AND
+    the surrounding text contains a decision/question signal (e.g.
+    "Which would you prefer?", "Here are 3 options:").  This avoids
+    false positives from regular numbered/lettered lists.
     """
     choices: list[tuple[str, str]] = []
     for line in text.splitlines():
@@ -138,7 +149,19 @@ def detect_choices(text: str) -> list[tuple[str, str]]:
             label = m.group(1) or m.group(2)
             description = m.group(3).strip()
             choices.append((label, description))
-    return choices if len(choices) >= 2 else []
+
+    if len(choices) < 2 or len(choices) > 6:
+        return []
+
+    # Require a decision-like signal in the non-choice text
+    non_choice_text = "\n".join(
+        line for line in text.splitlines()
+        if not _CHOICE_PATTERN.match(line.strip())
+    )
+    if not _CHOICE_SIGNALS.search(non_choice_text):
+        return []
+
+    return choices
 
 
 _WORKER_PROPOSAL_PATTERN = re.compile(

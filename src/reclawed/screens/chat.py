@@ -286,6 +286,20 @@ class ChatScreen(Screen):
             if s.is_group and s.relay_url and s.id != self.session.id:
                 asyncio.create_task(self._background_reconnect_group(s))
 
+    def on_app_focus(self, event: "AppFocus") -> None:  # noqa: F821
+        """Refresh message list when the terminal regains focus."""
+        try:
+            self.query_one("#message-list", MessageList).refresh()
+        except Exception:
+            pass
+
+    def on_screen_resume(self) -> None:
+        """Refresh message list when returning from a modal screen."""
+        try:
+            self.query_one("#message-list", MessageList).refresh()
+        except Exception:
+            pass
+
     async def _load_session_messages(self) -> None:
         msg_list = self.query_one("#message-list", MessageList)
         messages = self.store.get_session_messages(self.session.id)
@@ -1481,6 +1495,10 @@ class ChatScreen(Screen):
         from reclawed.screens.document import DocumentScreen
 
         p = Path(path)
+        # Resolve relative paths against the session's workspace cwd
+        if not p.is_absolute():
+            p = Path(self.session.cwd) / p
+
         if path in self._file_diffs:
             before, after = self._file_diffs[path]
             self.app.push_screen(
