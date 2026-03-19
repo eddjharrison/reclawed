@@ -635,9 +635,10 @@ class SettingsScreen(ModalScreen[bool]):
             label.update("No hooks configured")
         else:
             events = sorted({h.event for h in hooks})
-            label.update(f"{len(hooks)} hooks: {', '.join(events)}
-
-Click Manage Hooks to view, edit, add, remove, or change scope.")
+            label.update(
+                f"{len(hooks)} hooks: {', '.join(events)}\n"
+                "Click Manage Hooks to view, edit, add, remove, or change scope."
+            )
 
     def _open_hooks_manager(self) -> None:
         from reclawed.screens.hooks_manager import HooksManagerScreen
@@ -664,9 +665,10 @@ Click Manage Hooks to view, edit, add, remove, or change scope.")
             label.update("No MCP servers configured")
         else:
             names = sorted(s.name for s in servers)
-            label.update(f"{len(servers)} servers: {', '.join(names)}
-
-Click Manage MCP Servers to view status, authenticate, enable/disable, or add servers.")
+            label.update(
+                f"{len(servers)} servers: {', '.join(names)}\n"
+                "Click Manage MCP Servers to view status, authenticate, enable/disable, or add servers."
+            )
 
     def _open_mcp_manager(self) -> None:
         from reclawed.screens.mcp_manager import McpManagerScreen
