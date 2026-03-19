@@ -376,6 +376,22 @@ class ChatScreen(Screen):
         # In "Humans Only" mode, skip Claude unless @mentioned
         if self.session.is_group and self._group_respond_mode == "humans_only":
             if not self._is_mentioned(text):
+                # Drain queued messages before clearing streaming flag
+                queue = self._message_queues.get(self.session.id)
+                if queue:
+                    next_msg = queue.popleft()
+                    self._update_queue_display(queue)
+                    try:
+                        await self._send_message(
+                            next_msg.text,
+                            attachments=next_msg.attachments,
+                            reply_to_id=next_msg.reply_to_id,
+                            reply_context=next_msg.reply_context,
+                        )
+                    except Exception:
+                        log.exception("Queue drain failed (humans_only)")
+                        self._is_streaming = False
+                    return
                 self._is_streaming = False
                 return
 
@@ -1400,13 +1416,18 @@ class ChatScreen(Screen):
                     compose.query_one("#compose-input").focus()
                 except Exception:
                     pass
-                # _is_streaming stays True — new worker takes over
-                await self._send_message(
-                    next_msg.text,
-                    attachments=next_msg.attachments,
-                    reply_to_id=next_msg.reply_to_id,
-                    reply_context=next_msg.reply_context,
-                )
+                # _is_streaming stays True — new worker takes over.
+                # Wrap in try/except so _is_streaming is always reset on failure.
+                try:
+                    await self._send_message(
+                        next_msg.text,
+                        attachments=next_msg.attachments,
+                        reply_to_id=next_msg.reply_to_id,
+                        reply_context=next_msg.reply_context,
+                    )
+                except Exception:
+                    log.exception("Queue drain failed")
+                    self._is_streaming = False
             else:
                 self._is_streaming = False
                 if _is_active():

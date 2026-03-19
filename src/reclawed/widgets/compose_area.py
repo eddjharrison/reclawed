@@ -65,12 +65,20 @@ class ComposeInput(TextArea):
             event.stop()
             self.post_message(self.AttachFileRequested())
         elif event.key == "up":
-            # If cursor is on the first line, request queue edit
+            # If cursor is on the first line, the input is empty, AND there
+            # are actually messages queued, intercept Up to pop the queue for
+            # editing.  If the queue is empty we leave the event alone so the
+            # cursor (or any other handler) can behave normally.
             row, _col = self.cursor_location
-            if row == 0:
-                event.prevent_default()
-                event.stop()
-                self.post_message(self.EditQueueRequested())
+            if row == 0 and not self.text.strip():
+                parent = self.parent  # ComposeArea
+                has_queue = (
+                    hasattr(parent, "_queue_count") and parent._queue_count > 0
+                )
+                if has_queue:
+                    event.prevent_default()
+                    event.stop()
+                    self.post_message(self.EditQueueRequested())
 
 
 class _AttachLabel(Label):
@@ -186,6 +194,7 @@ class ComposeArea(Vertical):
         super().__init__(**kwargs)
         self._editing_message_id: str | None = None
         self._participants: list[str] = []  # participant names for @mention
+        self._queue_count: int = 0  # kept in sync by set_queue_count()
 
     def compose(self) -> ComposeResult:
         yield AttachmentPreview(id="attachment-preview")
@@ -342,6 +351,7 @@ class ComposeArea(Vertical):
         except Exception:
             return
 
+        self._queue_count = count
         if count > 0 and messages:
             # Rebuild the queue item labels
             queue_list.remove_children()

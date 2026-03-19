@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -12,10 +10,8 @@ from textual.widgets import Button, Label
 
 from reclawed.claude_settings import ClaudeSettingsManager
 
-
-def _safe_id(name: str) -> str:
-    """Sanitize a server name for use as a Textual widget ID."""
-    return re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+# Valid MCP action button prefixes — actions use btn-mcp-{action}-{index}
+_MCP_ACTIONS = {"auth", "enable", "disable", "reconnect", "remove"}
 
 
 class McpManagerScreen(ModalScreen[bool]):
@@ -281,6 +277,8 @@ class McpManagerScreen(ModalScreen[bool]):
         if len(parts) < 4:
             return
         action = parts[2]
+        if action not in _MCP_ACTIONS:
+            return
         try:
             idx = int(parts[3])
         except ValueError:
