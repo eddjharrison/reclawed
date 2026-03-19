@@ -39,6 +39,11 @@ class ReclawedCommands(Provider):
             command=self._open_file,
             help="Open any file in the document viewer",
         )
+        yield DiscoveryHit(
+            display="Code Review (Ctrl+R)",
+            command=self._review_code,
+            help="Review git diffs — working tree, branch compare, or PR",
+        )
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -56,6 +61,8 @@ class ReclawedCommands(Provider):
              "View and edit Claude's per-project memory files"),
             ("Open File... (Ctrl+O)", self._open_file,
              "Open any file in the document viewer"),
+            ("Code Review (Ctrl+R)", self._review_code,
+             "Review git diffs — working tree, branch compare, or PR"),
         ]
 
         for display, callback, help_text in commands:
@@ -97,3 +104,9 @@ class ReclawedCommands(Provider):
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_open_file()
+
+    async def _review_code(self) -> None:
+        from reclawed.screens.chat import ChatScreen
+        screen = self.app.screen
+        if isinstance(screen, ChatScreen):
+            screen.action_review_code()
