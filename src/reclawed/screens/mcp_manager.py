@@ -60,18 +60,18 @@ class McpManagerScreen(ModalScreen[bool]):
         height: 1;
     }
     McpManagerScreen .mcp-name {
-        width: 22;
+        width: 24;
         text-style: bold;
     }
     McpManagerScreen .mcp-type {
-        width: 10;
+        width: 16;
         color: $text-muted;
     }
     McpManagerScreen .mcp-status {
         width: 14;
     }
     McpManagerScreen .mcp-scope {
-        width: 12;
+        width: 10;
     }
     McpManagerScreen .scope-project { color: green; }
     McpManagerScreen .scope-user { color: cyan; }
