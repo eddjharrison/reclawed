@@ -225,6 +225,12 @@ class HooksManagerScreen(ModalScreen[bool]):
         hooks = mgr.load_hooks()
         if not (0 <= idx < len(hooks)):
             return
+        sh = hooks[idx]
+
+        # Pre-populate editor with existing values
+        existing_cmd = sh.group.hooks[0].command if sh.group.hooks else ""
+        existing_timeout = str(sh.group.hooks[0].timeout) if sh.group.hooks and sh.group.hooks[0].timeout else ""
+        existing_matcher = sh.group.matcher or ""
 
         def on_dismiss(result: dict | None) -> None:
             if result:
@@ -250,7 +256,16 @@ class HooksManagerScreen(ModalScreen[bool]):
                 self._changed = True
                 self._refresh_list()
 
-        self.app.push_screen(HookEditorScreen(), on_dismiss)
+        self.app.push_screen(
+            HookEditorScreen(
+                event=sh.event,
+                scope=sh.scope,
+                matcher=existing_matcher,
+                command=existing_cmd,
+                timeout=existing_timeout,
+            ),
+            on_dismiss,
+        )
 
     def _delete_hook(self, idx: int) -> None:
         from reclawed.widgets.confirm_screen import ConfirmScreen

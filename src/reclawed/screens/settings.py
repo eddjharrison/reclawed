@@ -54,26 +54,44 @@ class HookEditorScreen(ModalScreen["dict | None"]):
 
     BINDINGS = [Binding("escape", "cancel", priority=True)]
 
+    def __init__(
+        self,
+        event: str = "PreToolUse",
+        scope: str = "project",
+        matcher: str = "",
+        command: str = "",
+        timeout: str = "",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._init_event = event
+        self._init_scope = scope
+        self._init_matcher = matcher
+        self._init_command = command
+        self._init_timeout = timeout
+        self._is_edit = bool(command)
+
     def compose(self) -> ComposeResult:
         events = [(e, e) for e in HOOK_EVENTS]
         scopes = [("project", "project"), ("user", "user"), ("local", "local")]
+        title = "Edit Hook" if self._is_edit else "Add Hook"
         with Vertical(id="hook-dialog"):
-            yield Label("Add Hook", id="hook-title")
+            yield Label(title, id="hook-title")
             with Horizontal(classes="field-row"):
                 yield Label("Event", classes="field-label")
-                yield Select(events, value="PreToolUse", id="sel-hook-event")
+                yield Select(events, value=self._init_event, id="sel-hook-event")
             with Horizontal(classes="field-row"):
                 yield Label("Scope", classes="field-label")
-                yield Select(scopes, value="project", id="sel-hook-scope")
+                yield Select(scopes, value=self._init_scope, id="sel-hook-scope")
             with Horizontal(classes="field-row"):
                 yield Label("Matcher", classes="field-label")
-                yield Input(placeholder="optional regex", id="inp-hook-matcher", classes="field-input")
+                yield Input(value=self._init_matcher, placeholder="optional regex", id="inp-hook-matcher", classes="field-input")
             with Horizontal(classes="field-row"):
                 yield Label("Command", classes="field-label")
-                yield Input(placeholder="shell command", id="inp-hook-cmd", classes="field-input")
+                yield Input(value=self._init_command, placeholder="shell command", id="inp-hook-cmd", classes="field-input")
             with Horizontal(classes="field-row"):
                 yield Label("Timeout (ms)", classes="field-label")
-                yield Input(placeholder="optional", id="inp-hook-timeout", classes="field-input")
+                yield Input(value=self._init_timeout, placeholder="optional", id="inp-hook-timeout", classes="field-input")
             with Horizontal():
                 yield Button("Save", id="btn-hook-save", variant="primary")
                 yield Button("Cancel", id="btn-hook-cancel")

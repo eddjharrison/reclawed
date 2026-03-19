@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -9,6 +11,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
 from reclawed.claude_settings import ClaudeSettingsManager
+
+
+def _safe_id(name: str) -> str:
+    """Sanitize a server name for use as a Textual widget ID."""
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", name)
 
 
 class McpManagerScreen(ModalScreen[bool]):
@@ -129,6 +136,7 @@ class McpManagerScreen(ModalScreen[bool]):
         self._project_dir = project_dir
         self._claude_session = claude_session
         self._changed = False
+        self._server_list: list[dict] = []  # [{name, scope, status, file_entry?}]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="mcp-dialog"):
@@ -172,7 +180,8 @@ class McpManagerScreen(ModalScreen[bool]):
             scroll.mount(Label("No MCP servers configured. Click Add Server to create one."))
             return
 
-        for name in all_names:
+        self._server_list = []
+        for i, name in enumerate(all_names):
             file_entry = file_servers.get(name)
             sdk_entry = sdk_statuses.get(name)
 
@@ -182,22 +191,24 @@ class McpManagerScreen(ModalScreen[bool]):
             status = sdk_entry.get("status", "unknown") if sdk_entry else "unknown"
             scope = file_entry.scope if file_entry else sdk_entry.get("scope", "?") if sdk_entry else "?"
 
+            self._server_list.append({
+                "name": name, "scope": scope, "status": status,
+                "has_file": file_entry is not None,
+            })
+
             item = Vertical(classes="mcp-item")
             scroll.mount(item)
 
-            # Header line: name | type | status | scope
             header = Horizontal(classes="mcp-header")
             item.mount(header)
             header.mount(Label(name, classes="mcp-name"))
             header.mount(Label(srv_type, classes="mcp-type"))
 
-            # Status with colour class
             status_display = status.replace("-", " ")
             status_lbl = Label(status_display, classes=f"mcp-status status-{status}")
             header.mount(status_lbl)
             header.mount(Label(scope, classes=f"mcp-scope scope-{scope}"))
 
-            # Detail line: command or URL
             if srv_type == "stdio":
                 cmd = cfg.get("command", "")
                 args = " ".join(cfg.get("args", []))
@@ -210,7 +221,6 @@ class McpManagerScreen(ModalScreen[bool]):
                 detail = detail[:72] + "..."
             item.mount(Label(detail, classes="mcp-detail"))
 
-            # Tools line (only when connected and tools present)
             if sdk_entry and sdk_entry.get("tools"):
                 tool_names = [t.get("name", "?") for t in sdk_entry["tools"]]
                 tools_text = ", ".join(tool_names)
@@ -218,24 +228,22 @@ class McpManagerScreen(ModalScreen[bool]):
                     tools_text = tools_text[:72] + "..."
                 item.mount(Label(f"tools: {tools_text}", classes="mcp-tools"))
 
-            # Error line (only when failed)
             if sdk_entry and sdk_entry.get("error"):
                 item.mount(Label(f"error: {sdk_entry['error']}", classes="mcp-error"))
 
-            # Action buttons
             actions = Horizontal(classes="mcp-actions")
             item.mount(actions)
 
             if status == "needs-auth":
-                actions.mount(Button("Authenticate", id=f"btn-mcp-auth-{name}", variant="primary"))
+                actions.mount(Button("Authenticate", id=f"btn-mcp-auth-{i}", variant="primary"))
             if status in ("connected", "pending"):
-                actions.mount(Button("Disable", id=f"btn-mcp-disable-{name}"))
+                actions.mount(Button("Disable", id=f"btn-mcp-disable-{i}"))
             elif status == "disabled":
-                actions.mount(Button("Enable", id=f"btn-mcp-enable-{name}", variant="success"))
+                actions.mount(Button("Enable", id=f"btn-mcp-enable-{i}", variant="success"))
             if status == "failed":
-                actions.mount(Button("Reconnect", id=f"btn-mcp-reconnect-{name}", variant="warning"))
+                actions.mount(Button("Reconnect", id=f"btn-mcp-reconnect-{i}", variant="warning"))
             if file_entry and scope not in ("managed", "claudeai"):
-                actions.mount(Button("Remove", id=f"btn-mcp-remove-{name}-{scope}"))
+                actions.mount(Button("Remove", id=f"btn-mcp-remove-{i}"))
 
     def _set_status(self, text: str) -> None:
         try:
@@ -268,49 +276,50 @@ class McpManagerScreen(ModalScreen[bool]):
         self.app.push_screen(McpServerEditorScreen(), on_dismiss)
 
     def _handle_action(self, bid: str) -> None:
-        # Parse: btn-mcp-{action}-{rest...}
+        # Parse: btn-mcp-{action}-{index}
         parts = bid.split("-", 3)
         if len(parts) < 4:
             return
         action = parts[2]
-        rest = parts[3]
+        try:
+            idx = int(parts[3])
+        except ValueError:
+            return
+        if idx < 0 or idx >= len(self._server_list):
+            return
+        info = self._server_list[idx]
+        name = info["name"]
+        scope = info["scope"]
 
         async def _do() -> None:
             try:
                 if action == "auth":
-                    # Authenticate triggers OAuth flow via reconnect
                     if self._claude_session:
-                        await self._claude_session.reconnect_mcp_server(rest)
-                        self._set_status(f"Authenticating {rest}... check browser")
+                        await self._claude_session.reconnect_mcp_server(name)
+                        self._set_status(f"Authenticating {name}... check browser")
                     else:
                         self._set_status("No active session")
                 elif action == "enable":
                     if self._claude_session:
-                        await self._claude_session.toggle_mcp_server(rest, True)
-                        self._set_status(f"Enabled {rest}")
+                        await self._claude_session.toggle_mcp_server(name, True)
+                        self._set_status(f"Enabled {name}")
                     else:
                         self._set_status("No active session")
                 elif action == "disable":
                     if self._claude_session:
-                        await self._claude_session.toggle_mcp_server(rest, False)
-                        self._set_status(f"Disabled {rest}")
+                        await self._claude_session.toggle_mcp_server(name, False)
+                        self._set_status(f"Disabled {name}")
                     else:
                         self._set_status("No active session")
                 elif action == "reconnect":
                     if self._claude_session:
-                        await self._claude_session.reconnect_mcp_server(rest)
-                        self._set_status(f"Reconnecting {rest}...")
+                        await self._claude_session.reconnect_mcp_server(name)
+                        self._set_status(f"Reconnecting {name}...")
                     else:
                         self._set_status("No active session")
                 elif action == "remove":
-                    # rest is "{name}-{scope}" — split from the right
-                    name_scope = rest.rsplit("-", 1)
-                    if len(name_scope) == 2:
-                        name, scope = name_scope
-                        self._confirm_remove(name, scope)
+                    self._confirm_remove(name, scope)
                     return
-
-                # Refresh list after non-remove actions
                 await self._refresh_list()
             except Exception as e:
                 self._set_status(f"Error: {e}")
