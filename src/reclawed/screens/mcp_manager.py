@@ -295,8 +295,13 @@ class McpManagerScreen(ModalScreen[bool]):
             try:
                 if action == "auth":
                     if self._claude_session:
-                        await self._claude_session.reconnect_mcp_server(name)
-                        self._set_status(f"Authenticating {name}... check browser")
+                        try:
+                            await self._claude_session.toggle_mcp_server(name, True)
+                            self._set_status(f"Auth triggered for {name} — check browser")
+                        except Exception:
+                            self._set_status(
+                                f"Auth requires CLI: run 'claude mcp auth' in terminal"
+                            )
                     else:
                         self._set_status("No active session")
                 elif action == "enable":
