@@ -19,6 +19,9 @@ class ComposeInput(TextArea):
     class SendRequested(TMessage):
         """Posted when user presses Enter (without modifiers)."""
 
+    class EditQueueRequested(TMessage):
+        """Posted when user presses Up to edit the last queued message."""
+
     class MentionRequested(TMessage):
         """Posted when user types @ to trigger mention autocomplete."""
 
@@ -61,6 +64,13 @@ class ComposeInput(TextArea):
             event.prevent_default()
             event.stop()
             self.post_message(self.AttachFileRequested())
+        elif event.key == "up":
+            # If cursor is on the first line, request queue edit
+            row, _col = self.cursor_location
+            if row == 0:
+                event.prevent_default()
+                event.stop()
+                self.post_message(self.EditQueueRequested())
 
 
 class _AttachLabel(Label):
@@ -169,6 +179,9 @@ class ComposeArea(Vertical):
     class PasteImageTriggered(TMessage):
         """Posted when the user wants to paste an image from clipboard."""
 
+    class EditQueueTriggered(TMessage):
+        """Posted when the user presses Up to edit the last queued message."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._editing_message_id: str | None = None
@@ -210,6 +223,11 @@ class ComposeArea(Vertical):
     def on_text_area_changed(self, event) -> None:
         """Post TypingStarted on any text change."""
         self.post_message(self.TypingStarted())
+
+    def on_compose_input_edit_queue_requested(self, event: ComposeInput.EditQueueRequested) -> None:
+        """Forward queue edit request to ChatScreen."""
+        event.stop()
+        self.post_message(self.EditQueueTriggered())
 
     def on_compose_input_mention_requested(self, event: ComposeInput.MentionRequested) -> None:
         """Forward mention request to ChatScreen."""

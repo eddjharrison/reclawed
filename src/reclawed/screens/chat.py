@@ -31,7 +31,7 @@ from reclawed.relay.client import RelayClient
 from reclawed.store import Store
 from reclawed.utils import copy_to_clipboard
 from reclawed.widgets.chat_sidebar import ChatSidebar
-from reclawed.widgets.compose_area import ComposeArea
+from reclawed.widgets.compose_area import ComposeArea, ComposeInput
 from reclawed.widgets.message_bubble import MessageBubble
 from reclawed.widgets.message_list import MessageList
 from reclawed.widgets.quote_preview import QuotePreview
@@ -424,6 +424,20 @@ class ChatScreen(Screen):
             reply_to_id=reply_to_id,
             reply_context=reply_context,
         )
+
+    def on_compose_area_edit_queue_triggered(self, event: ComposeArea.EditQueueTriggered) -> None:
+        """Pop the last queued message back into compose for editing."""
+        event.stop()
+        queue = self._session_queue()
+        if not queue:
+            return
+        # Pop the last message (most recent queued)
+        last = queue.pop()
+        self._update_queue_display(queue)
+        compose = self.query_one("#compose-area", ComposeArea)
+        ta = compose.query_one("#compose-input", ComposeInput)
+        ta.load_text(last.text)
+        ta.focus()
 
     async def on_compose_area_paste_image_triggered(self, event: ComposeArea.PasteImageTriggered) -> None:
         """Handle Alt+V — grab image from clipboard and attach it."""
