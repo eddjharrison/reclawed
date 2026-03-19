@@ -55,15 +55,17 @@ class HooksManagerScreen(ModalScreen[bool]):
     }
     HooksManagerScreen .hook-header {
         width: 100%;
-        height: 1;
+        height: 3;
     }
     HooksManagerScreen .hook-event-name {
         width: 22;
         text-style: bold;
+        padding: 1 0 0 0;
     }
     HooksManagerScreen .hook-scope-badge {
         width: 10;
         color: $accent;
+        padding: 1 0 0 0;
     }
     HooksManagerScreen .hook-cmd {
         width: 100%;
