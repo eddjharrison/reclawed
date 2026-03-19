@@ -112,15 +112,30 @@ class ComposeArea(Vertical):
         min-height: 3;
         margin-left: 1;
     }
-    ComposeArea #queue-indicator {
+    ComposeArea #queue-list {
+        width: 100%;
+        height: auto;
+        max-height: 6;
+        display: none;
+    }
+    ComposeArea #queue-list.visible {
+        display: block;
+    }
+    ComposeArea .queue-item {
+        width: 100%;
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    ComposeArea #queue-hint {
         width: 100%;
         height: 1;
         display: none;
-        background: $warning 20%;
-        color: $text;
+        color: $text-disabled;
         padding: 0 1;
     }
-    ComposeArea #queue-indicator.visible {
+    ComposeArea #queue-hint.visible {
         display: block;
     }
     """
@@ -161,7 +176,8 @@ class ComposeArea(Vertical):
 
     def compose(self) -> ComposeResult:
         yield AttachmentPreview(id="attachment-preview")
-        yield Label("", id="queue-indicator")
+        yield Vertical(id="queue-list")
+        yield Label("", id="queue-hint")
         with Horizontal(id="compose-row"):
             yield ComposeInput(id="compose-input")
             yield _AttachLabel("\U0001f4c1", id="attach-label")
@@ -295,15 +311,30 @@ class ComposeArea(Vertical):
         ta.disabled = not enabled
         btn.disabled = not enabled
 
-    def set_queue_count(self, count: int) -> None:
-        """Show or hide the queue indicator with the pending message count."""
+    def set_queue_count(self, count: int, messages: list[str] | None = None) -> None:
+        """Show or hide the queued message list with preview text.
+
+        Args:
+            count: Number of queued messages.
+            messages: List of message text previews to display inline.
+        """
         try:
-            label = self.query_one("#queue-indicator", Label)
+            queue_list = self.query_one("#queue-list", Vertical)
+            hint = self.query_one("#queue-hint", Label)
         except Exception:
             return
-        if count > 0:
-            label.update(f"{count} queued")
-            label.add_class("visible")
+
+        if count > 0 and messages:
+            # Rebuild the queue item labels
+            queue_list.remove_children()
+            for text in messages:
+                preview = text[:80].replace("\n", " ")
+                queue_list.mount(Label(f"> {preview}", classes="queue-item"))
+            queue_list.add_class("visible")
+            hint.update("Press up to edit queued messages")
+            hint.add_class("visible")
         else:
-            label.update("")
-            label.remove_class("visible")
+            queue_list.remove_children()
+            queue_list.remove_class("visible")
+            hint.update("")
+            hint.remove_class("visible")

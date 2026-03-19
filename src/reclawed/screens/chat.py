@@ -301,6 +301,17 @@ class ChatScreen(Screen):
             self._message_queues[sid] = deque()
         return self._message_queues[sid]
 
+    def _update_queue_display(self, queue: deque[QueuedMessage] | None = None) -> None:
+        """Update the compose area queue display with current queue contents."""
+        if queue is None:
+            queue = self._session_queue()
+        try:
+            compose = self.query_one("#compose-area", ComposeArea)
+            texts = [qm.text for qm in queue] if queue else []
+            compose.set_queue_count(len(queue) if queue else 0, messages=texts)
+        except Exception:
+            pass
+
     async def _send_message(
         self,
         text: str,
@@ -393,7 +404,7 @@ class ChatScreen(Screen):
                 reply_to_id=queued_reply_to_id,
                 reply_context=queued_reply_context,
             ))
-            compose.set_queue_count(len(queue))
+            self._update_queue_display(queue)
             return
 
         self._is_streaming = True
@@ -1253,9 +1264,9 @@ class ChatScreen(Screen):
             queue = self._message_queues.get(stream_session.id)
             if queue and _is_active():
                 next_msg = queue.popleft()
+                self._update_queue_display(queue)
                 try:
                     compose = self.query_one("#compose-area", ComposeArea)
-                    compose.set_queue_count(len(queue))
                     compose.query_one("#compose-input").focus()
                 except Exception:
                     pass
@@ -1864,13 +1875,8 @@ class ChatScreen(Screen):
         self._selected_model = session.model
         # Reset send state so compose is usable in the new session
         self._is_streaming = False
-        # Update queue badge for the new session's queue
-        new_queue = self._message_queues.get(session.id)
-        try:
-            compose = self.query_one("#compose-area", ComposeArea)
-            compose.set_queue_count(len(new_queue) if new_queue else 0)
-        except Exception:
-            pass
+        # Update queue display for the new session's queue
+        self._update_queue_display(self._message_queues.get(session.id))
         # Restore room mode from session (per-room persistence)
         if session.room_mode and session.room_mode in self.ROOM_MODES:
             self._group_respond_mode = session.room_mode
