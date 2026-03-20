@@ -131,6 +131,7 @@ class ReviewScreen(ModalScreen[dict | None]):
             log.write(Text("No files in diff.", style="dim"))
 
     # ── header / status helpers ────────────────────────────────────────────
+    # TODO: Add file-level summary stats in header
 
     def _header_text(self) -> str:
         n_files = len(self._files)

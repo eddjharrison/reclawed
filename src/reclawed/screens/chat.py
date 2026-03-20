@@ -2991,7 +2991,7 @@ class ChatScreen(Screen):
             if result:
                 self._launch_review(result)
 
-        self.app.push_screen(ReviewLauncherScreen(), _on_launch)
+        self.app.push_screen(ReviewLauncherScreen(cwd=self.session.cwd), _on_launch)
 
     @work(exclusive=True)
     async def _launch_review(self, config: dict) -> None:
@@ -3001,7 +3001,7 @@ class ChatScreen(Screen):
 
         try:
             mode = config["mode"]
-            cwd = self.session.cwd
+            cwd = self.session.cwd or "."
             if mode == "working_tree":
                 diff_text = await git_diff(cwd, staged=config.get("staged", False))
             elif mode == "branch":
@@ -3015,11 +3015,14 @@ class ChatScreen(Screen):
                 self.notify("No changes to review", severity="warning", timeout=3)
                 return
 
-            title = {
-                "working_tree": "Working Tree Review",
-                "branch": f"Branch: {config.get('base', '?')}...{config.get('head', 'HEAD')}",
-                "pr": f"PR #{config['number']}",
-            }.get(mode, "Code Review")
+            if mode == "working_tree":
+                title = "Working Tree Review"
+            elif mode == "branch":
+                title = f"Branch: {config.get('base', '?')}...{config.get('head', 'HEAD')}"
+            elif mode == "pr":
+                title = f"PR #{config['number']}"
+            else:
+                title = "Code Review"
 
             self.app.push_screen(ReviewScreen(
                 diff_text=diff_text,
@@ -3027,8 +3030,8 @@ class ChatScreen(Screen):
                 pr_number=config.get("number"),
                 cwd=cwd,
             ))
-        except RuntimeError as exc:
-            self.notify(f"Review failed: {exc}", severity="error", timeout=5)
+        except Exception as exc:
+            self.notify(f"Review failed: {exc}", severity="error", timeout=10)
 
     def action_settings(self) -> None:
         from reclawed.screens.settings import SettingsScreen

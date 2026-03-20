@@ -83,20 +83,19 @@ async def _run_git(args: list[str], cwd: str) -> str:
 # Diff retrieval
 # ---------------------------------------------------------------------------
 
-async def git_diff(cwd: str, staged: bool = False) -> str:
+async def git_diff(cwd: str, staged: bool | None = False) -> str:
     """Return raw unified diff.
 
-    If *staged* is True, returns ``git diff --cached``.
-    Otherwise returns ``git diff`` (unstaged changes).
-    If neither yields output, falls back to ``git diff HEAD``.
+    If *staged* is ``True``, returns ``git diff --cached`` (staged only).
+    If *staged* is ``False``, returns ``git diff`` (unstaged only).
+    If *staged* is ``None``, returns all changes vs HEAD (staged + unstaged).
     """
+    if staged is None:
+        # All changes — compare working tree against HEAD
+        return await _run_git(["git", "diff", "HEAD"], cwd)
     if staged:
         return await _run_git(["git", "diff", "--cached"], cwd)
-
-    result = await _run_git(["git", "diff"], cwd)
-    if not result.strip():
-        result = await _run_git(["git", "diff", "HEAD"], cwd)
-    return result
+    return await _run_git(["git", "diff"], cwd)
 
 
 async def git_diff_branch(base: str, head: str = "HEAD", cwd: str = ".") -> str:
@@ -276,6 +275,36 @@ async def git_current_branch(cwd: str) -> str:
 
 
 async def git_branches(cwd: str) -> list[str]:
-    """Return a list of local branch names."""
-    raw = await _run_git(["git", "branch", "--format=%(refname:short)"], cwd)
-    return [b for b in raw.strip().splitlines() if b.strip()]
+    """Return a deduplicated list of local + remote branch names.
+
+    Remote branches are included with the ``origin/`` prefix stripped so
+    they're easy to type.  Local branches appear first, then any remote-
+    only branches that aren't already listed.
+    """
+    raw_local = await _run_git(
+        ["git", "branch", "--format=%(refname:short)"], cwd,
+    )
+    local = [b.strip() for b in raw_local.strip().splitlines() if b.strip()]
+
+    try:
+        raw_remote = await _run_git(
+            ["git", "branch", "-r", "--format=%(refname:short)"], cwd,
+        )
+        remote = []
+        for b in raw_remote.strip().splitlines():
+            b = b.strip()
+            if not b or "/" not in b:
+                continue  # skip bare remote name (e.g. "origin" from HEAD)
+            # Strip first remote prefix (e.g. "origin/main" → "main")
+            short = b.split("/", 1)[1]
+            remote.append(short)
+    except RuntimeError:
+        remote = []
+
+    # Deduplicate preserving order: local first, then remote-only
+    seen = set(local)
+    for r in remote:
+        if r not in seen:
+            local.append(r)
+            seen.add(r)
+    return local

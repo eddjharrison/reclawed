@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
+from textual.suggester import SuggestFromList
 from textual.widgets import Button, Input, Label, RadioButton, RadioSet
 
 
@@ -56,6 +59,11 @@ class ReviewLauncherScreen(ModalScreen[dict | None]):
         Binding("escape", "cancel", "Cancel", priority=True),
     ]
 
+    def __init__(self, cwd: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._cwd = cwd or "."
+        self._branch_suggester = SuggestFromList([], case_sensitive=False)
+
     def compose(self) -> ComposeResult:
         with Vertical(id="launcher-outer"):
             yield Label("\u2318 CODE REVIEW", id="launcher-title")
@@ -80,14 +88,38 @@ class ReviewLauncherScreen(ModalScreen[dict | None]):
 
             # Branch Compare options
             with Vertical(id="body-branch", classes="mode-body"):
-                yield Input(placeholder="Base branch (e.g. main)", id="branch-base")
-                yield Input(placeholder="Head (default: HEAD)", id="branch-head", value="HEAD")
+                yield Input(
+                    placeholder="Base branch (e.g. main)",
+                    id="branch-base",
+                    suggester=self._branch_suggester,
+                )
+                yield Input(
+                    placeholder="Head (default: HEAD)",
+                    id="branch-head",
+                    value="HEAD",
+                    suggester=self._branch_suggester,
+                )
                 yield Button("Review", variant="primary", id="btn-branch")
 
             # PR options
             with Vertical(id="body-pr", classes="mode-body"):
                 yield Input(placeholder="PR number", id="pr-number")
                 yield Button("Review", variant="primary", id="btn-pr")
+
+    async def on_mount(self) -> None:
+        """Fetch git branches for autocomplete."""
+        try:
+            from reclawed.git_utils import git_branches
+            branches = await git_branches(self._cwd)
+            # Also include common refs
+            branches = list(dict.fromkeys(branches + ["HEAD", "main", "master"]))
+            self._branch_suggester._suggestions = branches
+            self._branch_suggester._for_comparison = [
+                b.casefold() for b in branches
+            ]
+            self._branch_suggester.cache.clear()
+        except Exception:
+            pass  # fail silently — autocomplete just won't work
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.radio_set.id != "mode-picker":
