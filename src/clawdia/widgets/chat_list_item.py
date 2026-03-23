@@ -8,8 +8,8 @@ from textual.events import Click, Key
 from textual.message import Message as TMessage
 from textual.widgets import Input, Label
 
-from reclawed.models import Session
-from reclawed.utils import format_relative_time
+from clawdia.models import Session
+from clawdia.utils import format_relative_time
 
 
 _PREVIEW_MAX = 40
@@ -138,11 +138,26 @@ class ChatListItem(Vertical):
 
     @staticmethod
     def _format_name(session: Session) -> str:
-        """Build the display name with type/status prefixes."""
+        """Build the display name with type/status prefixes and CI badges."""
         name = session.name
         if session.session_type == "worker":
-            icon = "\u2713" if session.worker_status == "complete" else "\u27f3"
+            # CI status takes priority over worker status for the icon
+            if session.ci_status == "pass":
+                icon = "\u2705"     # green check
+            elif session.ci_status == "fail":
+                icon = "\u274c"     # red X
+            elif session.ci_status == "fixing":
+                icon = "\U0001f527"  # wrench
+            elif session.ci_status == "pending":
+                icon = "\u23f3"     # hourglass
+            elif session.worker_status == "complete":
+                icon = "\u2713"     # checkmark
+            else:
+                icon = "\u27f3"     # spinning
             name = f"{icon} [W] {name}"
+            # Show PR number if created
+            if session.worker_pr_number:
+                name += f" PR#{session.worker_pr_number}"
         elif session.is_group:
             name = f"[G] {name}"
         if session.muted:
