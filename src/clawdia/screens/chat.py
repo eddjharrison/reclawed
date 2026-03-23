@@ -326,6 +326,18 @@ class ChatScreen(Screen):
 
             if reactions.ci_failed == "auto":
                 await self._ci_fix_worker(worker, event.logs)
+            elif reactions.ci_failed == "ask" and worker.parent_session_id:
+                from clawdia.widgets.reaction_prompt import ci_failed_prompt
+                prompt_widget = ci_failed_prompt(
+                    worker_session_id=worker.id,
+                    worker_name=worker.name,
+                    pr_number=worker.worker_pr_number or 0,
+                    attempt=worker.ci_retries_used,
+                    event_data={"logs": event.logs},
+                )
+                msg_list = self.query_one("#message-list", MessageList)
+                await msg_list.mount(prompt_widget)
+                msg_list.scroll_end(animate=False)
             elif reactions.ci_failed == "notify" and worker.parent_session_id:
                 pr_num = worker.worker_pr_number or "?"
                 attempt = worker.ci_retries_used
@@ -354,6 +366,18 @@ class ChatScreen(Screen):
 
             if reactions.changes_requested == "auto":
                 await self._route_comments_to_worker(worker, event.comments)
+            elif reactions.changes_requested == "ask" and worker.parent_session_id:
+                from clawdia.widgets.reaction_prompt import changes_requested_prompt
+                prompt_widget = changes_requested_prompt(
+                    worker_session_id=worker.id,
+                    worker_name=worker.name,
+                    pr_number=worker.worker_pr_number or 0,
+                    comment_count=len(event.comments),
+                    event_data={"comments": event.comments},
+                )
+                msg_list = self.query_one("#message-list", MessageList)
+                await msg_list.mount(prompt_widget)
+                msg_list.scroll_end(animate=False)
             elif reactions.changes_requested == "notify" and worker.parent_session_id:
                 n = len(event.comments)
                 pr_num = worker.worker_pr_number or "?"
@@ -2078,6 +2102,47 @@ class ChatScreen(Screen):
             asyncio.create_task(
                 self._create_and_start_worker(event.orchestrator_session_id, params)
             )
+
+    async def on_reaction_prompt_widget_action_chosen(self, event) -> None:
+        """Handle user response to a reaction prompt."""
+        from clawdia.widgets.reaction_prompt import ReactionPromptWidget
+        worker = self.store.get_session(event.worker_session_id)
+        if not worker:
+            return
+
+        if event.event_type == "ci_failed":
+            if event.action == "fix":
+                logs = event.event_data.get("logs", "")
+                await self._ci_fix_worker(worker, logs)
+            elif event.action == "complete":
+                self._stop_ci_watcher(worker.id)
+                worker.worker_status = "complete"
+                self.store.update_session(worker)
+                self._refresh_sidebar()
+        elif event.event_type == "changes_requested":
+            if event.action == "route":
+                comments = event.event_data.get("comments", [])
+                await self._route_comments_to_worker(worker, comments)
+        elif event.event_type == "approved_and_green":
+            if event.action == "notify" and worker.parent_session_id:
+                pr_num = worker.worker_pr_number or "?"
+                self._inject_orchestrator_notification(
+                    worker.parent_session_id,
+                    f"\u2705 PR #{pr_num} approved and CI passing — ready to merge",
+                )
+        elif event.event_type == "worker_timeout":
+            if event.action == "complete":
+                worker.worker_status = "complete"
+                self.store.update_session(worker)
+                self._generate_worker_summary(worker.id)
+            elif event.action == "kill":
+                self._stop_ci_watcher(worker.id)
+                claude = self._claude_sessions.pop(worker.id, None)
+                if claude:
+                    asyncio.create_task(claude.stop())
+                worker.worker_status = "complete"
+                self.store.update_session(worker)
+            self._refresh_sidebar()
 
     def on_compose_area_mention_triggered(self, event: ComposeArea.MentionTriggered) -> None:
         """Show @mention participant picker."""
