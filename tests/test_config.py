@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from reclawed.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate
+from clawdia.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate
 
 
 def test_workspace_expanded_path(tmp_path):
@@ -515,3 +515,56 @@ def test_config_no_custom_templates_by_default(tmp_path):
     cfg = Config.load(config_path=config_file)
     custom = [t for t in cfg.worker_templates if not t.builtin]
     assert custom == []
+
+
+# ---------------------------------------------------------------------------
+# Named tunnel config fields
+# ---------------------------------------------------------------------------
+
+
+def test_config_tunnel_fields_default_none():
+    """Default config has no tunnel fields set."""
+    cfg = Config()
+    assert cfg.tunnel_name is None
+    assert cfg.tunnel_uuid is None
+    assert cfg.tunnel_hostname is None
+
+
+def test_config_tunnel_fields_roundtrip(tmp_path):
+    """Tunnel fields survive save/load."""
+    cfg = Config(
+        tunnel_name="clawdia-relay",
+        tunnel_uuid="abc-123-def",
+        tunnel_hostname="relay.example.com",
+    )
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    loaded = Config.load(config_path=config_file)
+    assert loaded.tunnel_name == "clawdia-relay"
+    assert loaded.tunnel_uuid == "abc-123-def"
+    assert loaded.tunnel_hostname == "relay.example.com"
+
+
+def test_config_tunnel_fields_not_written_when_none(tmp_path):
+    """Tunnel fields are omitted from TOML when None."""
+    cfg = Config()
+    config_file = tmp_path / "config.toml"
+    cfg.save(config_path=config_file)
+    content = config_file.read_text()
+    assert "tunnel_name" not in content
+    assert "tunnel_uuid" not in content
+    assert "tunnel_hostname" not in content
+
+
+def test_config_load_tunnel_fields(tmp_path):
+    """Tunnel fields are loaded from TOML."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        'tunnel_name = "my-tunnel"\n'
+        'tunnel_uuid = "uuid-123"\n'
+        'tunnel_hostname = "relay.test.com"\n'
+    )
+    cfg = Config.load(config_path=config_file)
+    assert cfg.tunnel_name == "my-tunnel"
+    assert cfg.tunnel_uuid == "uuid-123"
+    assert cfg.tunnel_hostname == "relay.test.com"

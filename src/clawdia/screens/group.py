@@ -7,10 +7,11 @@ import socket
 import uuid
 from urllib.parse import parse_qs, urlparse
 
-from reclawed.config import Config
-from reclawed.crypto import generate_passphrase
-from reclawed.relay.daemon import ensure_daemon
-from reclawed.utils import copy_to_clipboard
+from clawdia.config import Config
+from clawdia.crypto import generate_passphrase
+from clawdia.relay.daemon import ensure_daemon
+from clawdia.relay.tunnel import get_tunnel_url
+from clawdia.utils import copy_to_clipboard
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -191,10 +192,10 @@ class CreateGroupScreen(ModalScreen[dict | None]):
 
     async def _setup_local_mode(self, status, hint, conn_label) -> None:
         """Local mode: ensure daemon is running, then set up tunnel."""
-        # Step 1: Ensure the relay daemon is running
+        # Step 1: Ensure the relay daemon is running (+ named tunnel if configured)
         try:
             daemon_info = await asyncio.to_thread(
-                ensure_daemon, self._config.data_dir, self._port,
+                ensure_daemon, self._config.data_dir, self._port, self._config,
             )
             self._token = daemon_info["token"]
             status.update("Relay daemon running. Setting up tunnel...")
@@ -203,7 +204,20 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             self.query_one("#btn-start", Button).disabled = True
             return
 
-        # Step 2: Try to start cloudflare tunnel for automatic NAT traversal
+        # Step 2a: Use named tunnel if configured (stable URL)
+        named_url = get_tunnel_url(self._config)
+        if named_url:
+            self._tunnel_url = named_url
+            self._conn_string = (
+                f"{named_url}/room/{self._room_id}?token={self._token}"
+                f"&key={self._passphrase}"
+            )
+            status.update("Relay daemon running with named tunnel.")
+            hint.update(f"Permanent URL — {self._config.tunnel_hostname}")
+            conn_label.update(self._conn_string)
+            return
+
+        # Step 2b: Fall back to quick tunnel for automatic NAT traversal
         tunnel_url, self._tunnel_proc = await _start_cloudflare_tunnel(self._port)
 
         if tunnel_url:
@@ -352,7 +366,7 @@ class InviteToChatScreen(ModalScreen[dict | None]):
         else:
             try:
                 daemon_info = await asyncio.to_thread(
-                    ensure_daemon, self._config.data_dir, self._port,
+                    ensure_daemon, self._config.data_dir, self._port, self._config,
                 )
                 self._token = daemon_info["token"]
                 status.update("Relay ready. Setting up tunnel...")
@@ -361,22 +375,33 @@ class InviteToChatScreen(ModalScreen[dict | None]):
                 self.query_one("#btn-start", Button).disabled = True
                 return
 
-            tunnel_url, self._tunnel_proc = await _start_cloudflare_tunnel(self._port)
-            if tunnel_url:
+            # Use named tunnel if configured (stable URL)
+            named_url = get_tunnel_url(self._config)
+            if named_url:
                 self._conn_string = (
-                    f"{tunnel_url}/room/{self._room_id}?token={self._token}"
+                    f"{named_url}/room/{self._room_id}?token={self._token}"
                     f"&key={self._passphrase}"
                 )
                 status.update("Ready! Share this link to invite participants.")
-                hint.update("Public URL — anyone with this link can join.")
+                hint.update(f"Permanent URL — {self._config.tunnel_hostname}")
             else:
-                hostname = _get_lan_hostname()
-                self._conn_string = (
-                    f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
-                    f"&key={self._passphrase}"
-                )
-                status.update("Ready (LAN only).")
-                hint.update("Install cloudflared for public tunnel URLs.")
+                # Fall back to quick tunnel
+                tunnel_url, self._tunnel_proc = await _start_cloudflare_tunnel(self._port)
+                if tunnel_url:
+                    self._conn_string = (
+                        f"{tunnel_url}/room/{self._room_id}?token={self._token}"
+                        f"&key={self._passphrase}"
+                    )
+                    status.update("Ready! Share this link to invite participants.")
+                    hint.update("Public URL — anyone with this link can join.")
+                else:
+                    hostname = _get_lan_hostname()
+                    self._conn_string = (
+                        f"ws://{hostname}:{self._port}/room/{self._room_id}?token={self._token}"
+                        f"&key={self._passphrase}"
+                    )
+                    status.update("Ready (LAN only).")
+                    hint.update("Install cloudflared for public tunnel URLs.")
 
         conn_label.update(self._conn_string)
 

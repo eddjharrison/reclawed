@@ -115,7 +115,7 @@ def start_daemon(
     log = _log_path(data_dir)
 
     cmd = [
-        sys.executable, "-m", "reclawed.relay.server",
+        sys.executable, "-m", "clawdia.relay.server",
         "--host", "0.0.0.0",
         "--port", str(port),
         "--token", token,
@@ -167,12 +167,19 @@ def start_daemon(
 def stop_daemon(data_dir: Path) -> bool:
     """Stop the relay daemon. Returns True if stopped (or wasn't running).
 
+    Also stops the co-managed named tunnel process if one is running.
     The info file is preserved (only PID removed) so the token can be
     reused on next ``ensure_daemon()`` call.
     """
     info = get_daemon_info(data_dir)
     if info is None:
         return True
+
+    # Stop named tunnel first (if running)
+    tunnel_pid = info.get("tunnel_pid")
+    if tunnel_pid and _pid_alive(tunnel_pid):
+        from clawdia.relay.tunnel import stop_named_tunnel
+        stop_named_tunnel(tunnel_pid)
 
     pid = info.get("pid")
     if not pid or not _pid_alive(pid):
@@ -223,18 +230,26 @@ def stop_daemon(data_dir: Path) -> bool:
     return False
 
 
-def ensure_daemon(data_dir: Path, port: int = 8765) -> dict:
+def ensure_daemon(data_dir: Path, port: int = 8765, config=None) -> dict:
     """Ensure the relay daemon is running. Start it if not.
 
     On first call, generates a random token and persists it in the
     info file.  On subsequent calls (including after daemon restarts),
     the token is reused from the info file.
 
+    When *config* has named tunnel settings (``tunnel_hostname``),
+    the tunnel process is co-managed alongside the relay server.
+
     Returns the daemon info dict.
     """
     # Check if daemon is already running and responsive
     info = get_daemon_info(data_dir)
     if info and _pid_alive(info.get("pid", 0)) and _port_responsive(info.get("port", 0)):
+        # Relay is up — ensure tunnel is also running if configured
+        if config and getattr(config, "tunnel_hostname", None):
+            from clawdia.relay.tunnel import ensure_tunnel
+            ensure_tunnel(data_dir, config, info)
+            _write_daemon_info(data_dir, info)
         return info
 
     # Reuse existing token if we have one from a previous run
@@ -245,4 +260,12 @@ def ensure_daemon(data_dir: Path, port: int = 8765) -> dict:
         import uuid
         token = uuid.uuid4().hex[:16]
 
-    return start_daemon(port=port, token=token, data_dir=data_dir)
+    info = start_daemon(port=port, token=token, data_dir=data_dir)
+
+    # Co-start named tunnel if configured
+    if config and getattr(config, "tunnel_hostname", None):
+        from clawdia.relay.tunnel import ensure_tunnel
+        ensure_tunnel(data_dir, config, info)
+        _write_daemon_info(data_dir, info)
+
+    return info

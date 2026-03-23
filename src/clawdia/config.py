@@ -1,4 +1,4 @@
-"""Configuration for Re:Clawed."""
+"""Configuration for Clawdia."""
 
 from __future__ import annotations
 
@@ -115,33 +115,33 @@ class Workspace:
 def _default_data_dir() -> Path:
     system = platform.system()
     if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "reclawed"
+        return Path.home() / "Library" / "Application Support" / "clawdia"
     elif system == "Windows":
-        return Path.home() / "AppData" / "Local" / "reclawed"
+        return Path.home() / "AppData" / "Local" / "clawdia"
     else:
-        return Path.home() / ".local" / "share" / "reclawed"
+        return Path.home() / ".local" / "share" / "clawdia"
 
 
 def _config_file_path() -> Path:
     """Return the canonical config file location, varying by platform.
 
-    - macOS:   ~/Library/Application Support/reclawed/config.toml
-    - Windows: %APPDATA%/reclawed/config.toml  (falls back to ~/AppData/Roaming)
-    - Linux:   ~/.config/reclawed/config.toml  (respects $XDG_CONFIG_HOME)
+    - macOS:   ~/Library/Application Support/clawdia/config.toml
+    - Windows: %APPDATA%/clawdia/config.toml  (falls back to ~/AppData/Roaming)
+    - Linux:   ~/.config/clawdia/config.toml  (respects $XDG_CONFIG_HOME)
     """
     system = platform.system()
     if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "reclawed" / "config.toml"
+        return Path.home() / "Library" / "Application Support" / "clawdia" / "config.toml"
     elif system == "Windows":
         import os
         appdata = os.environ.get("APPDATA")
         base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-        return base / "reclawed" / "config.toml"
+        return base / "clawdia" / "config.toml"
     else:
         import os
         xdg = os.environ.get("XDG_CONFIG_HOME")
         base = Path(xdg) if xdg else Path.home() / ".config"
-        return base / "reclawed" / "config.toml"
+        return base / "clawdia" / "config.toml"
 
 
 @dataclass
@@ -176,6 +176,10 @@ class Config:
     worker_templates: list[WorkerTemplate] = field(default_factory=list)
     # Sidebar width in columns — persisted across restarts (clamped 20–80 by resize handle)
     sidebar_width: int = 35
+    # Named Cloudflare tunnel (stable group chat URL)
+    tunnel_name: str | None = None        # e.g. "clawdia-relay"
+    tunnel_uuid: str | None = None        # UUID from cloudflared tunnel create
+    tunnel_hostname: str | None = None    # e.g. "relay.yourdomain.com"
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -260,6 +264,12 @@ class Config:
             lines.append(f"relay_url = {_toml_str(self.relay_url)}")
         if self.relay_token:
             lines.append(f"relay_token = {_toml_str(self.relay_token)}")
+        if self.tunnel_name:
+            lines.append(f"tunnel_name = {_toml_str(self.tunnel_name)}")
+        if self.tunnel_uuid:
+            lines.append(f"tunnel_uuid = {_toml_str(self.tunnel_uuid)}")
+        if self.tunnel_hostname:
+            lines.append(f"tunnel_hostname = {_toml_str(self.tunnel_hostname)}")
 
         # Workspaces
         for ws in self.workspaces:
@@ -293,7 +303,7 @@ class Config:
 
         # Atomic write: temp file then rename
         fd, tmp = tempfile.mkstemp(
-            dir=path.parent, suffix=".toml.tmp", prefix=".reclawed-"
+            dir=path.parent, suffix=".toml.tmp", prefix=".clawdia-"
         )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -358,6 +368,12 @@ class Config:
             kwargs["relay_url"] = str(raw["relay_url"])
         if "relay_token" in raw:
             kwargs["relay_token"] = str(raw["relay_token"])
+        if "tunnel_name" in raw:
+            kwargs["tunnel_name"] = str(raw["tunnel_name"])
+        if "tunnel_uuid" in raw:
+            kwargs["tunnel_uuid"] = str(raw["tunnel_uuid"])
+        if "tunnel_hostname" in raw:
+            kwargs["tunnel_hostname"] = str(raw["tunnel_hostname"])
 
         # Parse [[worker_templates]] array (custom templates only)
         if "worker_templates" in raw and isinstance(raw["worker_templates"], list):
