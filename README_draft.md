@@ -28,12 +28,6 @@ orchestrator/worker delegation, and multi-project workspaces. No API key needed.
 
 ---
 
-> You're 200 messages deep in a Claude Code session — context, momentum, a shared understanding of the codebase. You close the terminal.
->
-> It's gone.
-
----
-
 ## Why It Exists
 
 The Claude Code CLI is stateless at the UX layer. Every terminal session is an island:
@@ -49,45 +43,71 @@ The Claude Code CLI is stateless at the UX layer. Every terminal session is an i
 
 ---
 
+## See It In Action
+
+### 🤝 Encrypted Group Chat — Two devs, two Claudes, one room
+![Group Chat Demo](docs/demos/group-chat.gif)
+> `Ctrl+G` to create · share a connection string · everyone's Claude joins · E2E encrypted · runs for weeks
+
+---
+
+### 🏗️ Orchestrator spawns Workers in parallel
+![Orchestrator Workers Demo](docs/demos/orchestrator-workers.gif)
+> Claude proposes tasks → you approve → workers spin up in parallel → summaries flow back automatically
+
+---
+
+### 🖥️ Multi-project workspaces — all your codebases, one sidebar
+![Workspaces Demo](docs/demos/workspaces.gif)
+> Import from Claude Code · switch projects instantly · per-workspace model, permissions, and tools
+
+---
+
+### 🤖 C2C Mode — Claudes talk to each other, overnight
+![C2C Mode Demo](docs/demos/c2c-mode.gif)
+> `F3` → C2C + `F5` → bypassPermissions · go to sleep · wake up to finished work
+
+---
+
 ## Features at a Glance
 
-### Chat
+### 💬 Chat
 | | |
 |---|---|
-| **Persistent sessions** | Full memory across restarts, powered by Agent SDK |
-| **Live streaming** | Token-by-token with markdown rendering + tok/s counter |
-| **Concurrent sessions** | Switch between chats; background ones show unread badges |
-| **Edit & regenerate** | `e` to edit any message; Claude re-generates from there |
-| **Reply / Quote** | Threaded replies (`r`), quote into compose (`q`) |
-| **Bookmarks** | Pin messages (`b`), `Ctrl+P` to view pinned |
-| **Search** | `/` to search within a session |
-| **Cost tracking** | Running session cost in the status bar |
-| **Export** | `Ctrl+E` to markdown on your Desktop |
+| 🔄 **Persistent sessions** | Full memory across restarts, powered by Agent SDK |
+| ⚡ **Live streaming** | Token-by-token with markdown rendering + tok/s counter |
+| 📚 **Concurrent sessions** | Switch between chats; background ones show unread badges |
+| ✏️ **Edit & regenerate** | `e` to edit any message; Claude re-generates from there |
+| 💬 **Reply / Quote** | Threaded replies (`r`), quote into compose (`q`) |
+| 📌 **Bookmarks** | Pin messages (`b`), `Ctrl+P` to view pinned |
+| 🔍 **Search** | `/` to search within a session |
+| 💰 **Cost tracking** | Running session cost in the status bar |
+| 📤 **Export** | `Ctrl+E` → markdown on your Desktop |
 
-### Workspaces
+### 🖥️ Workspaces
 | | |
 |---|---|
-| **Multi-project** | Each workspace points Claude at the right codebase |
-| **Session import** | Auto-discover from `~/.claude/projects/` with one click |
-| **Color-coded badges** | Auto-assigned colors per workspace in the status bar |
-| **Per-workspace config** | Different model, permissions, tools per project |
-| **Resizable sidebar** | Drag to resize; width persists across restarts |
-| **Session refresh** | Re-import latest sessions from Claude Code any time |
+| 📁 **Multi-project** | Each workspace points Claude at the right codebase |
+| 🔌 **Session import** | Auto-discover from `~/.claude/projects/` with one click |
+| 🎨 **Color-coded badges** | Auto-assigned colors per workspace in the status bar |
+| ⚙️ **Per-workspace config** | Different model, permissions, tools per project |
+| ↔️ **Resizable sidebar** | Drag to resize; width persists across restarts |
+| 🔄 **Session refresh** | Re-import latest sessions from Claude Code any time |
 
-### Group Chat
+### 🔐 Group Chat
 | | |
 |---|---|
-| **Persistent relay** | Daemon survives restarts; messages buffer in SQLite offline |
-| **E2E encryption** | AES-256-GCM — relay never sees plaintext |
-| **Remote relay mode** | Team VPS with stable URL — just configure and go |
-| **Invite mid-chat** | `Ctrl+I` upgrades any 1:1 session into a group room — Claude keeps full context, no restart needed |
-| **Create or join** | `Ctrl+G` to start a new room or paste a connection string to join an existing one |
-| **Typing indicators** | "Alice is typing..." with debounce and auto-expire |
-| **Read receipts** | Sent / read delivery status |
-| **@mention routing** | Direct messages to specific Claudes or humans |
-| **Auto-reconnect** | Exponential backoff — missed messages replayed on reconnect |
+| 📡 **Persistent relay** | Daemon survives restarts; messages buffer in SQLite offline |
+| 🔒 **E2E encryption** | AES-256-GCM · relay never sees plaintext |
+| 🌐 **Remote relay mode** | Team VPS with stable URL · just configure and go |
+| 📲 **Invite mid-chat** | `Ctrl+I` upgrades any 1:1 session into a group room — Claude keeps full context, no restart needed |
+| 🆕 **Create or join** | `Ctrl+G` → start a new room or paste a connection string to join an existing one |
+| 💬 **Typing indicators** | "Alice is typing..." with debounce and auto-expire |
+| ✅ **Read receipts** | Sent / read delivery status |
+| 🏷️ **@mention routing** | Direct messages to specific Claudes or humans |
+| 🔄 **Auto-reconnect** | Exponential backoff · missed messages replayed on reconnect |
 
-### Room Modes (`F3`)
+### 🎛️ Room Modes (`F3`)
 | Mode | What happens |
 |------|-------------|
 | **Humans Only** | Claude silent unless @mentioned |
@@ -95,27 +115,27 @@ The Claude Code CLI is stateless at the UX layer. Every terminal session is an i
 | **Full Auto** | All Claudes respond to all humans |
 | **C2C** | Claudes respond to each other autonomously |
 
-### Orchestrator / Workers
+### 🏗️ Orchestrator / Workers
 | | |
 |---|---|
-| **Nested session tree** | Workers shown as children under orchestrator in sidebar |
-| **Parallel workers** | Spawn multiple workers simultaneously; each runs independently |
-| **Worker templates** | 4 built-in (Implementation Sprint, Test Writer, Code Reviewer, Doc Writer) + create your own from Settings |
-| **Custom templates** | Define reusable worker types with tailored system prompts, model, and permission level |
-| **Claude-initiated** | Claude proposes worker spawns (with optional `template=`); you approve with one click |
-| **Auto-summaries** | Workers report back: commit hashes, changes, edge cases found |
-| **Per-worker permissions** | Worker runs `bypassPermissions`; orchestrator stays in `acceptEdits` |
+| 🌳 **Nested session tree** | Workers shown as children under orchestrator in sidebar |
+| 🚀 **Parallel workers** | Spawn multiple workers simultaneously; each runs independently |
+| 📋 **Worker templates** | 4 built-in (Implementation Sprint · Test Writer · Code Reviewer · Doc Writer) + create your own from Settings |
+| ⚙️ **Custom templates** | Define reusable worker types with tailored system prompts, model, and permission level |
+| 🤖 **Claude-initiated** | Claude proposes worker spawns (with optional `template=`); you approve with one click |
+| 📝 **Auto-summaries** | Workers report back: commit hashes, changes, edge cases found |
+| 🔑 **Per-worker permissions** | Worker runs `bypassPermissions`; orchestrator stays in `acceptEdits` |
 
-### Appearance & UX
+### 🎨 Appearance & UX
 | | |
 |---|---|
-| **Model picker** | `F2` cycles sonnet / opus / haiku — persisted per session |
-| **Themes** | dark / light / dracula / monokai — `Ctrl+T` |
-| **Context gauge** | Battery-style indicator; green to yellow to red as context fills |
-| **Mid-session permissions** | `F5` cycles permission mode live — start cautious, switch to `bypassPermissions` when you're ready |
-| **Image attachments** | `Alt+V` paste from clipboard, `Alt+A` file picker — cross-platform |
-| **Question detection** | Claude's questions highlighted with accent border |
-| **Choice buttons** | Numbered options rendered as clickable buttons |
+| 🧠 **Model picker** | `F2` cycles sonnet / opus / haiku · persisted per session |
+| 🎨 **Themes** | dark / light / dracula / monokai · `Ctrl+T` |
+| 🔋 **Context gauge** | Battery-style indicator; green → yellow → red as context fills |
+| 🔐 **Mid-session permissions** | `F5` cycles permission mode live — start cautious, switch to `bypassPermissions` when you're ready to let Claude loose |
+| 🖼️ **Image attachments** | `Alt+V` paste from clipboard · `Alt+A` file picker · cross-platform |
+| ❓ **Question detection** | Claude's questions highlighted with accent border |
+| 🔘 **Choice buttons** | Numbered options rendered as clickable buttons |
 
 ---
 
@@ -125,7 +145,7 @@ You and a colleague are trying to close out a feature. You've both been using Cl
 
 You press `Ctrl+G` and create a group room. Clawdia starts a persistent relay daemon in the background and — if you have `cloudflared` installed — opens a public tunnel automatically. You copy the connection string, send it over.
 
-They paste it in with `Ctrl+G` > Join. Done.
+They paste it in with `Ctrl+G` → Join. Done.
 
 Here's what's happening under the hood: each of you has your own Claude, running locally on your own machine, with access only to your own files. The relay in the middle is just an encrypted pipe — it never sees plaintext. Your Claude can read and edit your code. Their Claude can read and edit theirs. Neither touches the other's filesystem.
 
@@ -162,18 +182,24 @@ It's a group chat where everyone brought their own assistant. They can talk to e
 <summary><strong>Architecture</strong></summary>
 
 ```
-                    Textual TUI
-  ChatScreen --- Sidebar --- Settings --- Modals
-                       |
-                 Session Layer
-  ClaudeSession (Agent SDK) x N concurrent sessions
-  Background streaming - Unread badges - Cost track
-           |                         |
-   SQLite Store              Relay Infrastructure
-  Sessions - Messages       WebSocket daemon/server
-  Local AES-256 enc        AES-256-GCM E2E encrypt
-  Migrations on init        SQLite message buffer
-                            Cloudflare tunnel opt.
+┌─────────────────────────────────────────────────────┐
+│                    Textual TUI                       │
+│  ChatScreen ─── Sidebar ─── Settings ─── Modals     │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│                 Session Layer                        │
+│  ClaudeSession (Agent SDK) × N concurrent sessions  │
+│  Background streaming · Unread badges · Cost track  │
+└──────────┬─────────────────────────┬────────────────┘
+           │                         │
+┌──────────▼──────────┐   ┌──────────▼──────────────┐
+│   SQLite Store       │   │   Relay Infrastructure   │
+│  Sessions · Messages │   │  WebSocket daemon/server  │
+│  Local AES-256 enc  │   │  AES-256-GCM E2E encrypt │
+│  Migrations on init  │   │  SQLite message buffer   │
+└─────────────────────┘   │  Cloudflare tunnel opt.  │
+                           └──────────────────────────┘
 ```
 
 **Sessions are objects, not processes.** Each `ClaudeSession` is an Agent SDK session instance. Multiple can run concurrently; the event loop streams tokens from all of them. Switching between sessions in the sidebar doesn't kill anything — background sessions keep streaming, badge their unread count, and are immediately available.
@@ -186,13 +212,13 @@ It's a group chat where everyone brought their own assistant. They can talk to e
 
 ```
 src/clawdia/
-  screens/       # Textual screens (chat, settings, spawn_worker, group_chat)
-  widgets/       # Reusable TUI components (message_bubble, sidebar, resize_handle, ...)
-  config.py      # Config dataclass + TOML load/save, WorkerTemplate, BUILTIN_TEMPLATES
-  models.py      # Session, Message, Workspace dataclasses
-  store.py       # SQLite store with migrations
-  utils.py       # Worker proposal parsing, markdown helpers
-  relay/         # WebSocket relay server + client + daemon management
+├── screens/       # Textual screens (chat, settings, spawn_worker, group_chat)
+├── widgets/       # Reusable TUI components (message_bubble, sidebar, resize_handle, …)
+├── config.py      # Config dataclass + TOML load/save, WorkerTemplate, BUILTIN_TEMPLATES
+├── models.py      # Session, Message, Workspace dataclasses
+├── store.py       # SQLite store with migrations
+├── utils.py       # Worker proposal parsing, markdown helpers
+└── relay/         # WebSocket relay server + client + daemon management
 ```
 
 </details>
