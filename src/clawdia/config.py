@@ -94,6 +94,21 @@ BUILTIN_TEMPLATES: list[WorkerTemplate] = [
 ]
 
 
+VALID_REACTION_MODES = {"auto", "ask", "notify", "ignore"}
+
+
+@dataclass
+class OrchestratorReactions:
+    """Configurable reaction policies for orchestrator events."""
+
+    ci_failed: str = "auto"             # "auto" | "ask" | "notify" | "ignore"
+    changes_requested: str = "ask"
+    approved_and_green: str = "notify"
+    worker_timeout: str = "ask"
+    ci_max_retries: int = 2
+    worker_timeout_minutes: int = 30
+
+
 @dataclass
 class Workspace:
     """A named project directory for grouping sessions."""
@@ -105,6 +120,11 @@ class Workspace:
     model: str | None = None
     permission_mode: str | None = None
     allowed_tools: str | None = None
+    # Orchestrator v2 per-workspace overrides
+    worktree_isolation: bool | None = None
+    auto_create_pr: bool | None = None
+    pr_base_branch: str | None = None
+    reactions: OrchestratorReactions | None = None
 
     @property
     def expanded_path(self) -> str:
@@ -180,6 +200,10 @@ class Config:
     tunnel_name: str | None = None        # e.g. "clawdia-relay"
     tunnel_uuid: str | None = None        # UUID from cloudflared tunnel create
     tunnel_hostname: str | None = None    # e.g. "relay.yourdomain.com"
+    # Orchestrator v2
+    worktree_isolation: bool = True       # global default: enable worktree isolation for workers
+    auto_create_pr: bool = False          # auto-create PR when worker completes
+    reactions: OrchestratorReactions = field(default_factory=OrchestratorReactions)
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -220,6 +244,13 @@ class Config:
             if ws.expanded_path == resolved:
                 return ws
         return None
+
+    def reactions_for_cwd(self, cwd: str | None) -> OrchestratorReactions:
+        """Return reactions config for the given cwd (workspace override or global)."""
+        ws = self.workspace_for_cwd(cwd)
+        if ws and ws.reactions:
+            return ws.reactions
+        return self.reactions
 
     def save(self, config_path: Path | None = None) -> None:
         """Write config to a TOML file.
@@ -270,6 +301,27 @@ class Config:
             lines.append(f"tunnel_uuid = {_toml_str(self.tunnel_uuid)}")
         if self.tunnel_hostname:
             lines.append(f"tunnel_hostname = {_toml_str(self.tunnel_hostname)}")
+        # Orchestrator v2
+        if not self.worktree_isolation:  # only write if non-default (default is True)
+            lines.append("worktree_isolation = false")
+        if self.auto_create_pr:
+            lines.append("auto_create_pr = true")
+        # Reactions (global defaults — only write non-default values)
+        r = self.reactions
+        default_r = OrchestratorReactions()
+        if (r.ci_failed != default_r.ci_failed or r.changes_requested != default_r.changes_requested
+                or r.approved_and_green != default_r.approved_and_green
+                or r.worker_timeout != default_r.worker_timeout
+                or r.ci_max_retries != default_r.ci_max_retries
+                or r.worker_timeout_minutes != default_r.worker_timeout_minutes):
+            lines.append("")
+            lines.append("[reactions]")
+            lines.append(f"ci_failed = {_toml_str(r.ci_failed)}")
+            lines.append(f"changes_requested = {_toml_str(r.changes_requested)}")
+            lines.append(f"approved_and_green = {_toml_str(r.approved_and_green)}")
+            lines.append(f"worker_timeout = {_toml_str(r.worker_timeout)}")
+            lines.append(f"ci_max_retries = {r.ci_max_retries}")
+            lines.append(f"worker_timeout_minutes = {r.worker_timeout_minutes}")
 
         # Workspaces
         for ws in self.workspaces:
@@ -284,6 +336,12 @@ class Config:
                 lines.append(f"permission_mode = {_toml_str(ws.permission_mode)}")
             if ws.allowed_tools is not None:
                 lines.append(f"allowed_tools = {_toml_str(ws.allowed_tools)}")
+            if ws.worktree_isolation is not None:
+                lines.append(f"worktree_isolation = {'true' if ws.worktree_isolation else 'false'}")
+            if ws.auto_create_pr is not None:
+                lines.append(f"auto_create_pr = {'true' if ws.auto_create_pr else 'false'}")
+            if ws.pr_base_branch is not None:
+                lines.append(f"pr_base_branch = {_toml_str(ws.pr_base_branch)}")
 
         # Worker templates — persist only custom (non-builtin) templates
         for tmpl in self.worker_templates:
@@ -374,6 +432,21 @@ class Config:
             kwargs["tunnel_uuid"] = str(raw["tunnel_uuid"])
         if "tunnel_hostname" in raw:
             kwargs["tunnel_hostname"] = str(raw["tunnel_hostname"])
+        # Orchestrator v2
+        if "worktree_isolation" in raw:
+            kwargs["worktree_isolation"] = bool(raw["worktree_isolation"])
+        if "auto_create_pr" in raw:
+            kwargs["auto_create_pr"] = bool(raw["auto_create_pr"])
+        if "reactions" in raw and isinstance(raw["reactions"], dict):
+            rd = raw["reactions"]
+            kwargs["reactions"] = OrchestratorReactions(
+                ci_failed=str(rd.get("ci_failed", "auto")),
+                changes_requested=str(rd.get("changes_requested", "ask")),
+                approved_and_green=str(rd.get("approved_and_green", "notify")),
+                worker_timeout=str(rd.get("worker_timeout", "ask")),
+                ci_max_retries=int(rd.get("ci_max_retries", 2)),
+                worker_timeout_minutes=int(rd.get("worker_timeout_minutes", 30)),
+            )
 
         # Parse [[worker_templates]] array (custom templates only)
         if "worker_templates" in raw and isinstance(raw["worker_templates"], list):
@@ -398,6 +471,18 @@ class Config:
             for w in raw["workspaces"]:
                 if "name" not in w or "path" not in w:
                     continue
+                # Parse per-workspace reactions override
+                ws_reactions = None
+                if "reactions" in w and isinstance(w["reactions"], dict):
+                    wr = w["reactions"]
+                    ws_reactions = OrchestratorReactions(
+                        ci_failed=str(wr.get("ci_failed", "auto")),
+                        changes_requested=str(wr.get("changes_requested", "ask")),
+                        approved_and_green=str(wr.get("approved_and_green", "notify")),
+                        worker_timeout=str(wr.get("worker_timeout", "ask")),
+                        ci_max_retries=int(wr.get("ci_max_retries", 2)),
+                        worker_timeout_minutes=int(wr.get("worker_timeout_minutes", 30)),
+                    )
                 workspaces.append(Workspace(
                     name=str(w["name"]),
                     path=str(w["path"]),
@@ -405,6 +490,10 @@ class Config:
                     model=str(w["model"]) if "model" in w else None,
                     permission_mode=str(w["permission_mode"]) if "permission_mode" in w else None,
                     allowed_tools=str(w["allowed_tools"]) if "allowed_tools" in w else None,
+                    worktree_isolation=bool(w["worktree_isolation"]) if "worktree_isolation" in w else None,
+                    auto_create_pr=bool(w["auto_create_pr"]) if "auto_create_pr" in w else None,
+                    pr_base_branch=str(w["pr_base_branch"]) if "pr_base_branch" in w else None,
+                    reactions=ws_reactions,
                 ))
             kwargs["workspaces"] = workspaces
 

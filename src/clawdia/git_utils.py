@@ -1,4 +1,4 @@
-"""Git integration utilities for Re:Clawed code review."""
+"""Git integration utilities for Clawdia code review."""
 
 from __future__ import annotations
 
@@ -308,3 +308,287 @@ async def git_branches(cwd: str) -> list[str]:
             local.append(r)
             seen.add(r)
     return local
+
+
+# ---------------------------------------------------------------------------
+# Worktree management (Orchestrator v2)
+# ---------------------------------------------------------------------------
+
+
+async def is_git_repo(cwd: str) -> bool:
+    """Check if the given directory is inside a git repository."""
+    try:
+        await _run_git(["git", "rev-parse", "--is-inside-work-tree"], cwd)
+        return True
+    except RuntimeError:
+        return False
+
+
+async def git_repo_root(cwd: str) -> str:
+    """Return the root of the git repository containing *cwd*."""
+    return (await _run_git(["git", "rev-parse", "--show-toplevel"], cwd)).strip()
+
+
+async def git_create_branch(cwd: str, branch_name: str, start_point: str = "HEAD") -> None:
+    """Create a new branch at *start_point* without checking it out."""
+    await _run_git(["git", "branch", branch_name, start_point], cwd)
+
+
+async def git_add_worktree(cwd: str, worktree_path: str, branch: str) -> str:
+    """Create a git worktree at *worktree_path* on the given branch.
+
+    Returns the absolute path of the created worktree.
+    """
+    Path(worktree_path).parent.mkdir(parents=True, exist_ok=True)
+    await _run_git(["git", "worktree", "add", worktree_path, branch], cwd)
+    return str(Path(worktree_path).resolve())
+
+
+async def git_remove_worktree(cwd: str, worktree_path: str, force: bool = False) -> None:
+    """Remove a worktree. Uses --force for dirty worktrees."""
+    args = ["git", "worktree", "remove", worktree_path]
+    if force:
+        args.append("--force")
+    await _run_git(args, cwd)
+
+
+async def git_list_worktrees(cwd: str) -> list[dict]:
+    """List all worktrees for the repo. Returns list of {path, branch, head}."""
+    output = await _run_git(["git", "worktree", "list", "--porcelain"], cwd)
+    worktrees: list[dict] = []
+    current: dict = {}
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            if current:
+                worktrees.append(current)
+            current = {"path": line[9:]}
+        elif line.startswith("HEAD "):
+            current["head"] = line[5:]
+        elif line.startswith("branch "):
+            # "branch refs/heads/main" → "main"
+            ref = line[7:]
+            current["branch"] = ref.removeprefix("refs/heads/")
+        elif line == "bare":
+            current["bare"] = True
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+
+async def git_prune_worktrees(cwd: str) -> None:
+    """Remove stale worktree administrative files."""
+    await _run_git(["git", "worktree", "prune"], cwd)
+
+
+async def git_delete_branch(cwd: str, branch: str, force: bool = False) -> None:
+    """Delete a local branch."""
+    flag = "-D" if force else "-d"
+    await _run_git(["git", "branch", flag, branch], cwd)
+
+
+def make_task_slug(task: str, max_len: int = 30) -> str:
+    """Convert a task description into a branch-safe slug.
+
+    Example: "Implement JWT auth system" -> "implement-jwt-auth-system"
+    """
+    slug = task.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
+    if len(slug) > max_len:
+        slug = slug[:max_len].rsplit("-", 1)[0]
+    return slug or "task"
+
+
+# ---------------------------------------------------------------------------
+# PR creation (Orchestrator v2)
+# ---------------------------------------------------------------------------
+
+
+async def git_create_pr(
+    cwd: str,
+    title: str,
+    body: str,
+    base: str = "main",
+) -> dict:
+    """Stage, commit, push, and create a PR from the current branch.
+
+    Returns ``{"number": int, "url": str, "title": str}``.
+    """
+    # Stage all changes
+    await _run_git(["git", "add", "-A"], cwd)
+
+    # Commit (may fail if nothing to commit — that's ok, push anyway)
+    try:
+        await _run_git(["git", "commit", "-m", f"Worker: {title}"], cwd)
+    except RuntimeError:
+        pass  # nothing to commit
+
+    # Push the branch
+    branch = (await git_current_branch(cwd)).strip()
+    await _run_git(["git", "push", "-u", "origin", branch], cwd)
+
+    # Create PR
+    output = await _run_git(
+        ["gh", "pr", "create", "--title", title, "--body", body, "--base", base],
+        cwd,
+    )
+
+    # Parse PR URL from output (last line is typically the URL)
+    pr_url = output.strip().splitlines()[-1].strip()
+    pr_number = int(pr_url.rstrip("/").split("/")[-1]) if "/pull/" in pr_url else 0
+
+    return {"number": pr_number, "url": pr_url, "title": title}
+
+
+# ---------------------------------------------------------------------------
+# CI status checking (Orchestrator v2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CICheck:
+    """A single CI check run result."""
+
+    name: str
+    status: str  # "pass" | "fail" | "pending"
+    url: str = ""
+
+
+@dataclass
+class CIStatus:
+    """Aggregate CI status for a PR."""
+
+    overall: str  # "pass" | "fail" | "pending"
+    checks: list[CICheck] = field(default_factory=list)
+    pr_number: int = 0
+
+    @property
+    def failed_checks(self) -> list[CICheck]:
+        return [c for c in self.checks if c.status == "fail"]
+
+
+async def git_pr_checks(pr_number: int, cwd: str = ".") -> CIStatus:
+    """Get CI check status for a PR."""
+    import json as _json
+
+    try:
+        output = await _run_git(
+            ["gh", "pr", "checks", str(pr_number), "--json", "name,state,detailsUrl"],
+            cwd,
+        )
+        raw = _json.loads(output)
+    except (RuntimeError, _json.JSONDecodeError):
+        return CIStatus(overall="pending", pr_number=pr_number)
+
+    checks: list[CICheck] = []
+    for c in raw:
+        state = str(c.get("state", "")).upper()
+        if state == "SUCCESS":
+            status = "pass"
+        elif state == "FAILURE":
+            status = "fail"
+        else:
+            status = "pending"
+        checks.append(CICheck(
+            name=str(c.get("name", "")),
+            status=status,
+            url=str(c.get("detailsUrl", "")),
+        ))
+
+    if not checks:
+        overall = "pending"
+    elif any(c.status == "fail" for c in checks):
+        overall = "fail"
+    elif all(c.status == "pass" for c in checks):
+        overall = "pass"
+    else:
+        overall = "pending"
+
+    return CIStatus(overall=overall, checks=checks, pr_number=pr_number)
+
+
+async def git_pr_check_logs(pr_number: int, cwd: str = ".") -> str:
+    """Get failure logs for a PR's failing checks.
+
+    Uses ``gh run view --log-failed`` on the most recent failing run.
+    """
+    import json as _json
+
+    try:
+        # Get the failing run ID
+        output = await _run_git(
+            ["gh", "pr", "checks", str(pr_number), "--json", "name,state,event,link"],
+            cwd,
+        )
+        raw = _json.loads(output)
+        # Find a failing check's run URL
+        for c in raw:
+            if str(c.get("state", "")).upper() == "FAILURE":
+                link = str(c.get("link", ""))
+                if "/runs/" in link:
+                    run_id = link.split("/runs/")[-1].split("/")[0].split("?")[0]
+                    try:
+                        logs = await _run_git(
+                            ["gh", "run", "view", run_id, "--log-failed"],
+                            cwd,
+                        )
+                        return logs[:5000]  # truncate to reasonable size
+                    except RuntimeError:
+                        pass
+    except (RuntimeError, _json.JSONDecodeError):
+        pass
+
+    return "(Could not retrieve CI failure logs)"
+
+
+async def git_pr_review_comments(
+    pr_number: int,
+    cwd: str = ".",
+    since: str | None = None,
+) -> list[dict]:
+    """Get review comments on a PR.
+
+    Returns list of ``{"author": str, "body": str, "path": str, "created_at": str}``.
+    """
+    import json as _json
+
+    try:
+        output = await _run_git(
+            ["gh", "pr", "view", str(pr_number), "--json", "reviewRequests,reviews,comments"],
+            cwd,
+        )
+        raw = _json.loads(output)
+    except (RuntimeError, _json.JSONDecodeError):
+        return []
+
+    comments: list[dict] = []
+
+    # Extract review comments
+    for review in raw.get("reviews", []):
+        body = review.get("body", "").strip()
+        if body:
+            created = review.get("submittedAt", "")
+            if since and created <= since:
+                continue
+            comments.append({
+                "author": review.get("author", {}).get("login", "unknown"),
+                "body": body,
+                "path": "",
+                "created_at": created,
+            })
+
+    # Extract inline comments
+    for comment in raw.get("comments", []):
+        body = comment.get("body", "").strip()
+        if body:
+            created = comment.get("createdAt", "")
+            if since and created <= since:
+                continue
+            comments.append({
+                "author": comment.get("author", {}).get("login", "unknown"),
+                "body": body,
+                "path": comment.get("path", ""),
+                "created_at": created,
+            })
+
+    return comments

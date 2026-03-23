@@ -6,8 +6,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reclawed.crypto import decrypt_content, encrypt_content, is_encrypted
-from reclawed.models import Message, Session
+from clawdia.crypto import decrypt_content, encrypt_content, is_encrypted
+from clawdia.models import Message, Session
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -103,6 +103,14 @@ class Store:
             "ALTER TABLE sessions ADD COLUMN worker_summary TEXT",
             # Worker template tracking
             "ALTER TABLE sessions ADD COLUMN worker_template_id TEXT",
+            # Orchestrator v2: worktree isolation
+            "ALTER TABLE sessions ADD COLUMN worker_branch TEXT",
+            "ALTER TABLE sessions ADD COLUMN worktree_path TEXT",
+            "ALTER TABLE sessions ADD COLUMN worker_pr_number INTEGER",
+            "ALTER TABLE sessions ADD COLUMN worker_pr_url TEXT",
+            # Orchestrator v2: CI feedback loop
+            "ALTER TABLE sessions ADD COLUMN ci_status TEXT",
+            "ALTER TABLE sessions ADD COLUMN ci_retries_used INTEGER NOT NULL DEFAULT 0",
         ]
         for sql in migrations:
             try:
@@ -123,8 +131,10 @@ class Store:
             "total_cost_usd, message_count, muted, archived, unread_count, "
             "is_group, relay_url, room_id, participant_id, relay_token, encryption_passphrase, "
             "cwd, room_mode, permission_mode, last_input_tokens, pinned, "
-            "parent_session_id, session_type, worker_status, worker_summary, worker_template_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "parent_session_id, session_type, worker_status, worker_summary, worker_template_id, "
+            "worker_branch, worktree_path, worker_pr_number, worker_pr_url, "
+            "ci_status, ci_retries_used) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session.id, session.claude_session_id, session.name,
              _fmt_dt(session.created_at), _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
@@ -133,7 +143,9 @@ class Store:
              session.relay_token, session.encryption_passphrase, session.cwd,
              session.room_mode, session.permission_mode, session.last_input_tokens,
              int(session.pinned), session.parent_session_id, session.session_type,
-             session.worker_status, session.worker_summary, session.worker_template_id),
+             session.worker_status, session.worker_summary, session.worker_template_id,
+             session.worker_branch, session.worktree_path, session.worker_pr_number,
+             session.worker_pr_url, session.ci_status, session.ci_retries_used),
         )
         self._conn.commit()
         return session
@@ -163,7 +175,9 @@ class Store:
             "is_group=?, relay_url=?, room_id=?, participant_id=?, relay_token=?, "
             "encryption_passphrase=?, cwd=?, room_mode=?, permission_mode=?, "
             "last_input_tokens=?, pinned=?, parent_session_id=?, session_type=?, "
-            "worker_status=?, worker_summary=?, worker_template_id=? WHERE id=?",
+            "worker_status=?, worker_summary=?, worker_template_id=?, "
+            "worker_branch=?, worktree_path=?, worker_pr_number=?, worker_pr_url=?, "
+            "ci_status=?, ci_retries_used=? WHERE id=?",
             (session.claude_session_id, session.name, _fmt_dt(session.updated_at),
              session.model, session.total_cost_usd, session.message_count,
              int(session.muted), int(session.archived), session.unread_count,
@@ -172,7 +186,9 @@ class Store:
              session.room_mode, session.permission_mode,
              session.last_input_tokens, int(session.pinned),
              session.parent_session_id, session.session_type,
-             session.worker_status, session.worker_summary, session.worker_template_id, session.id),
+             session.worker_status, session.worker_summary, session.worker_template_id,
+             session.worker_branch, session.worktree_path, session.worker_pr_number,
+             session.worker_pr_url, session.ci_status, session.ci_retries_used, session.id),
         )
         self._conn.commit()
 
@@ -468,4 +484,10 @@ class Store:
             worker_status=row["worker_status"] if "worker_status" in keys else None,
             worker_summary=row["worker_summary"] if "worker_summary" in keys else None,
             worker_template_id=row["worker_template_id"] if "worker_template_id" in keys else None,
+            worker_branch=row["worker_branch"] if "worker_branch" in keys else None,
+            worktree_path=row["worktree_path"] if "worktree_path" in keys else None,
+            worker_pr_number=row["worker_pr_number"] if "worker_pr_number" in keys else None,
+            worker_pr_url=row["worker_pr_url"] if "worker_pr_url" in keys else None,
+            ci_status=row["ci_status"] if "ci_status" in keys else None,
+            ci_retries_used=row["ci_retries_used"] if "ci_retries_used" in keys else 0,
         )

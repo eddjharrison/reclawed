@@ -284,7 +284,7 @@ def grab_clipboard_image() -> Path | None:
 
 def _grab_clipboard_image_windows() -> Path | None:
     """Windows: Use PowerShell to grab clipboard image."""
-    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    tmp = Path(tempfile.gettempdir()) / "clawdia_clipboard.png"
     # PowerShell script to save clipboard image
     ps_script = f"""
 Add-Type -AssemblyName System.Windows.Forms
@@ -311,7 +311,7 @@ if ($img -ne $null) {{
 
 def _grab_clipboard_image_macos() -> Path | None:
     """macOS: Use pngpaste or osascript to grab clipboard image."""
-    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    tmp = Path(tempfile.gettempdir()) / "clawdia_clipboard.png"
     # Try pngpaste first (homebrew: brew install pngpaste)
     try:
         subprocess.run(["pngpaste", str(tmp)], check=True, capture_output=True, timeout=5)
@@ -347,7 +347,7 @@ def _grab_clipboard_image_macos() -> Path | None:
 
 def _grab_clipboard_image_linux() -> Path | None:
     """Linux: Use xclip to grab clipboard image."""
-    tmp = Path(tempfile.gettempdir()) / "reclawed_clipboard.png"
+    tmp = Path(tempfile.gettempdir()) / "clawdia_clipboard.png"
     try:
         result = subprocess.run(
             ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
@@ -382,3 +382,21 @@ def format_file_size(size_bytes: int) -> str:
         return f"{size_bytes / 1024:.1f}KB"
     else:
         return f"{size_bytes / (1024 * 1024):.1f}MB"
+
+
+# ---------------------------------------------------------------------------
+# PR detection (Orchestrator v2)
+# ---------------------------------------------------------------------------
+
+_PR_URL_PATTERN = re.compile(r'https://github\.com/[^/]+/[^/]+/pull/(\d+)')
+
+
+def detect_pr_number(text: str) -> int | None:
+    """Detect a PR number from worker output text (GitHub URLs or gh pr create output).
+
+    Returns the PR number or None if not found.
+    """
+    match = _PR_URL_PATTERN.search(text)
+    if match:
+        return int(match.group(1))
+    return None

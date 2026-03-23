@@ -67,3 +67,11 @@ class Session:
     worker_status: str | None = None       # "running" | "complete" | None
     worker_summary: str | None = None      # haiku-generated summary
     worker_template_id: str | None = None  # ID of the WorkerTemplate used to spawn this worker
+    # Worktree isolation (Orchestrator v2)
+    worker_branch: str | None = None       # git branch for this worker's worktree
+    worktree_path: str | None = None       # absolute filesystem path to the worktree
+    worker_pr_number: int | None = None    # PR number created from worker's branch
+    worker_pr_url: str | None = None       # full URL to the PR
+    # CI feedback loop (Orchestrator v2)
+    ci_status: str | None = None           # "pending" | "pass" | "fail" | "fixing" | None
+    ci_retries_used: int = 0
