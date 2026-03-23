@@ -187,6 +187,8 @@ class ChatScreen(Screen):
         self._pending_file_snapshots: dict[str, tuple[str, str]] = {}
         # Completed diffs: file_path -> (before, after) for DocumentScreen diff view
         self._file_diffs: dict[str, tuple[str, str]] = {}
+        # CI watchers: worker_session_id -> asyncio.Task (Orchestrator v2)
+        self._ci_watchers: dict[str, asyncio.Task] = {}
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
@@ -260,6 +262,193 @@ class ChatScreen(Screen):
         except Exception as exc:
             log.warning("Worktree cleanup failed for session %s: %s", session.id, exc)
 
+    def _start_ci_watcher(self, worker_session: Session) -> None:
+        """Start a CI watcher for a worker's PR."""
+        if not worker_session.worker_pr_number or not worker_session.worktree_path:
+            return
+        if worker_session.id in self._ci_watchers:
+            return  # already watching
+
+        from clawdia.ci_watcher import CIWatcherState, run_ci_watcher
+
+        orch_cwd = self._effective_workspace_cwd(worker_session)
+        reactions = self.config.reactions_for_cwd(orch_cwd)
+
+        state = CIWatcherState(
+            worker_session_id=worker_session.id,
+            pr_number=worker_session.worker_pr_number,
+            cwd=worker_session.worktree_path,
+            retries_remaining=reactions.ci_max_retries,
+        )
+
+        async def _on_ci_event(event):
+            await self._handle_ci_event(event)
+
+        task = asyncio.create_task(run_ci_watcher(state, _on_ci_event))
+        self._ci_watchers[worker_session.id] = task
+
+    def _stop_ci_watcher(self, worker_session_id: str) -> None:
+        """Stop a CI watcher if running."""
+        task = self._ci_watchers.pop(worker_session_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _handle_ci_event(self, event) -> None:
+        """Handle events from CI watchers — dispatch through reactions system."""
+        from clawdia.ci_watcher import CIPassEvent, CIFailEvent, CICommentEvent, CIRetryExhaustedEvent
+
+        worker = self.store.get_session(event.worker_session_id)
+        if not worker:
+            return
+
+        if isinstance(event, CIPassEvent):
+            worker.ci_status = "pass"
+            self.store.update_session(worker)
+            self._stop_ci_watcher(worker.id)
+            # Notify orchestrator
+            if worker.parent_session_id:
+                pr_num = worker.worker_pr_number or "?"
+                notification = (
+                    f"\u2705 Worker \"{worker.name}\" CI passed "
+                    f"— PR #{pr_num} ready for review"
+                )
+                self._inject_orchestrator_notification(worker.parent_session_id, notification)
+            self._refresh_sidebar()
+
+        elif isinstance(event, CIFailEvent):
+            worker.ci_status = "fail"
+            worker.ci_retries_used += 1
+            self.store.update_session(worker)
+            self._refresh_sidebar()
+
+            orch_cwd = self._effective_workspace_cwd(worker)
+            reactions = self.config.reactions_for_cwd(orch_cwd)
+
+            if reactions.ci_failed == "auto":
+                await self._ci_fix_worker(worker, event.logs)
+            elif reactions.ci_failed == "notify" and worker.parent_session_id:
+                pr_num = worker.worker_pr_number or "?"
+                attempt = worker.ci_retries_used
+                notification = (
+                    f"\u274c Worker \"{worker.name}\" CI failed "
+                    f"(attempt {attempt}) — PR #{pr_num} needs attention"
+                )
+                self._inject_orchestrator_notification(worker.parent_session_id, notification)
+
+        elif isinstance(event, CIRetryExhaustedEvent):
+            worker.ci_status = "fail"
+            self.store.update_session(worker)
+            self._stop_ci_watcher(worker.id)
+            if worker.parent_session_id:
+                pr_num = worker.worker_pr_number or "?"
+                notification = (
+                    f"\u274c Worker \"{worker.name}\" CI failed after "
+                    f"{worker.ci_retries_used} attempts — PR #{pr_num} needs manual attention"
+                )
+                self._inject_orchestrator_notification(worker.parent_session_id, notification)
+            self._refresh_sidebar()
+
+        elif isinstance(event, CICommentEvent):
+            orch_cwd = self._effective_workspace_cwd(worker)
+            reactions = self.config.reactions_for_cwd(orch_cwd)
+
+            if reactions.changes_requested == "auto":
+                await self._route_comments_to_worker(worker, event.comments)
+            elif reactions.changes_requested == "notify" and worker.parent_session_id:
+                n = len(event.comments)
+                pr_num = worker.worker_pr_number or "?"
+                notification = (
+                    f"\U0001f4ac {n} review comment{'s' if n != 1 else ''} on "
+                    f"PR #{pr_num} (\"{worker.name}\")"
+                )
+                self._inject_orchestrator_notification(worker.parent_session_id, notification)
+
+    def _inject_orchestrator_notification(self, orchestrator_id: str, text: str) -> None:
+        """Inject a system notification into the orchestrator's chat."""
+        msg = Message(
+            role="user",
+            content=text,
+            session_id=orchestrator_id,
+            sender_name="System",
+            sender_type="system",
+        )
+        self.store.add_message(msg)
+
+    async def _ci_fix_worker(self, worker: Session, failure_logs: str) -> None:
+        """Re-activate a completed worker to fix CI failures."""
+        worker_claude = self._claude_sessions.get(worker.id)
+        if not worker_claude:
+            worker_claude = ClaudeSession(
+                cli_path=self.config.claude_binary,
+                session_id=worker.claude_session_id,
+                model=worker.model,
+                cwd=worker.cwd,
+                permission_mode=worker.permission_mode or "bypassPermissions",
+            )
+            self._claude_sessions[worker.id] = worker_claude
+            asyncio.create_task(worker_claude.start())
+            await asyncio.sleep(1)  # give it a moment to initialize
+
+        worker.worker_status = "running"
+        worker.ci_status = "fixing"
+        self.store.update_session(worker)
+        self._refresh_sidebar()
+
+        fix_prompt = (
+            "CI checks failed on your PR. Here are the failure logs:\n\n"
+            f"```\n{failure_logs[:3000]}\n```\n\n"
+            "Please fix these failures, commit the changes, and push. "
+            "Focus only on fixing the CI failures -- do not refactor or add features."
+        )
+
+        user_msg = Message(role="user", content=fix_prompt, session_id=worker.id)
+        self.store.add_message(user_msg)
+
+        assistant_msg = Message(role="assistant", content="...", session_id=worker.id)
+        self.store.add_message(assistant_msg)
+
+        self._stream_worker_response(worker, worker_claude, fix_prompt, assistant_msg)
+
+    async def _route_comments_to_worker(self, worker: Session, comments: list[dict]) -> None:
+        """Re-activate a worker to address review comments."""
+        worker_claude = self._claude_sessions.get(worker.id)
+        if not worker_claude:
+            worker_claude = ClaudeSession(
+                cli_path=self.config.claude_binary,
+                session_id=worker.claude_session_id,
+                model=worker.model,
+                cwd=worker.cwd,
+                permission_mode=worker.permission_mode or "bypassPermissions",
+            )
+            self._claude_sessions[worker.id] = worker_claude
+            asyncio.create_task(worker_claude.start())
+            await asyncio.sleep(1)
+
+        worker.worker_status = "running"
+        self.store.update_session(worker)
+        self._refresh_sidebar()
+
+        formatted = "\n\n".join(
+            f"**{c.get('author', 'reviewer')}**"
+            + (f" on `{c['path']}`" if c.get("path") else "")
+            + f":\n{c.get('body', '')}"
+            for c in comments
+        )
+
+        prompt = (
+            "A reviewer left comments on your PR:\n\n"
+            f"{formatted}\n\n"
+            "Please address these review comments, commit, and push."
+        )
+
+        user_msg = Message(role="user", content=prompt, session_id=worker.id)
+        self.store.add_message(user_msg)
+
+        assistant_msg = Message(role="assistant", content="...", session_id=worker.id)
+        self.store.add_message(assistant_msg)
+
+        self._stream_worker_response(worker, worker_claude, prompt, assistant_msg)
+
     async def _create_worker_pr(self, worker_session: Session) -> None:
         """Create a PR from a worker's worktree branch."""
         try:
@@ -285,6 +474,8 @@ class ChatScreen(Screen):
             self.store.update_session(worker_session)
             self.notify(f"PR #{pr_info['number']} created for {worker_session.name}", timeout=5)
             self._refresh_sidebar()
+            # Start CI watcher
+            self._start_ci_watcher(worker_session)
         except Exception as exc:
             log.warning("PR creation failed for worker %s: %s", worker_session.id, exc)
             self.notify(f"PR creation failed: {exc}", severity="warning", timeout=5)
