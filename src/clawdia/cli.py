@@ -31,11 +31,19 @@ from clawdia.config import Config
 @click.group(invoke_without_command=True)
 @click.option("--continue", "continue_session", is_flag=True, help="Resume the most recent session")
 @click.option("--session", "session_id", default=None, help="Resume a specific session by ID")
+@click.option("--demo", is_flag=True, help="Launch with demo data for screenshots")
 @click.version_option(package_name="clawdia")
 @click.pass_context
-def main(ctx, continue_session: bool, session_id: str | None) -> None:
+def main(ctx, continue_session: bool, session_id: str | None, demo: bool) -> None:
     """Clawdia — WhatsApp-style TUI for Claude CLI."""
     if ctx.invoked_subcommand is not None:
+        return
+
+    if demo:
+        from clawdia.demo import create_demo_data
+        config, _db_path = create_demo_data()
+        app = ClawdiaApp(config=config, resume_session_id=None)
+        app.run()
         return
 
     config = Config.load()
