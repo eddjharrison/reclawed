@@ -195,6 +195,100 @@ class ChatScreen(Screen):
                      else self.config.allowed_tools)
         return tools_str.split(",")
 
+    def _effective_workspace_cwd(self, session: Session) -> str | None:
+        """For workers, resolve through parent to get the workspace cwd."""
+        if session.session_type == "worker" and session.parent_session_id:
+            parent = self.store.get_session(session.parent_session_id)
+            if parent:
+                return parent.cwd
+        return session.cwd
+
+    def _should_use_worktree(self, cwd: str | None) -> bool:
+        """Check if worktree isolation is enabled for this workspace."""
+        if not cwd:
+            return False
+        ws = self.config.workspace_for_cwd(cwd)
+        if ws and ws.worktree_isolation is not None:
+            return ws.worktree_isolation
+        return self.config.worktree_isolation
+
+    def _worktree_base_dir(self, repo_root: str) -> str:
+        """Return the base directory for worker worktrees."""
+        base = Path(repo_root) / ".git" / "clawdia-worktrees"
+        base.mkdir(parents=True, exist_ok=True)
+        return str(base)
+
+    async def _unique_branch_name(self, repo_root: str, base_name: str) -> str:
+        """Ensure branch name is unique by appending -2, -3, etc. if needed."""
+        from clawdia.git_utils import git_branches
+        existing = set(await git_branches(repo_root))
+        if base_name not in existing:
+            return base_name
+        counter = 2
+        while f"{base_name}-{counter}" in existing:
+            counter += 1
+        return f"{base_name}-{counter}"
+
+    def _should_auto_create_pr(self, cwd: str | None) -> bool:
+        """Check if auto-PR creation is enabled for this workspace."""
+        ws = self.config.workspace_for_cwd(cwd)
+        if ws and ws.auto_create_pr is not None:
+            return ws.auto_create_pr
+        return self.config.auto_create_pr
+
+    async def _cleanup_worktree(self, session: Session) -> None:
+        """Remove a worker's worktree and optionally its branch."""
+        try:
+            from clawdia.git_utils import git_remove_worktree, git_delete_branch, git_prune_worktrees
+            orch_cwd = self._effective_workspace_cwd(session)
+            if session.worktree_path and Path(session.worktree_path).exists():
+                if orch_cwd:
+                    try:
+                        await git_remove_worktree(orch_cwd, session.worktree_path, force=True)
+                    except RuntimeError:
+                        import shutil
+                        shutil.rmtree(session.worktree_path, ignore_errors=True)
+                        await git_prune_worktrees(orch_cwd)
+            # Delete branch only if no PR was created from it
+            if session.worker_branch and not session.worker_pr_number and orch_cwd:
+                try:
+                    await git_delete_branch(orch_cwd, session.worker_branch, force=True)
+                except RuntimeError:
+                    pass
+            session.worktree_path = None
+            self.store.update_session(session)
+        except Exception as exc:
+            log.warning("Worktree cleanup failed for session %s: %s", session.id, exc)
+
+    async def _create_worker_pr(self, worker_session: Session) -> None:
+        """Create a PR from a worker's worktree branch."""
+        try:
+            from clawdia.git_utils import git_create_pr
+            orch_cwd = self._effective_workspace_cwd(worker_session)
+            ws = self.config.workspace_for_cwd(orch_cwd)
+            base = (ws.pr_base_branch if ws and ws.pr_base_branch else "main")
+            title = worker_session.name.removeprefix("Worker: ")
+            body = (
+                f"## Worker Output\n\n"
+                f"{worker_session.worker_summary or 'Task completed.'}\n\n"
+                f"---\n*Created by Clawdia orchestrator worker.*"
+            )
+            pr_info = await git_create_pr(
+                cwd=worker_session.worktree_path,
+                title=title,
+                body=body,
+                base=base,
+            )
+            worker_session.worker_pr_number = pr_info["number"]
+            worker_session.worker_pr_url = pr_info["url"]
+            worker_session.ci_status = "pending"
+            self.store.update_session(worker_session)
+            self.notify(f"PR #{pr_info['number']} created for {worker_session.name}", timeout=5)
+            self._refresh_sidebar()
+        except Exception as exc:
+            log.warning("PR creation failed for worker %s: %s", worker_session.id, exc)
+            self.notify(f"PR creation failed: {exc}", severity="warning", timeout=5)
+
     def _create_new_session(self, cwd: str | None = None) -> Session:
         session = Session(cwd=cwd)
         self.store.create_session(session)
@@ -2003,16 +2097,48 @@ class ChatScreen(Screen):
             else self._effective_allowed_tools(orchestrator.cwd)
         )
 
+        # --- Worktree isolation (Orchestrator v2) ---
+        worker_cwd = orchestrator.cwd
+        worker_branch = None
+        worktree_path = None
+
+        if self._should_use_worktree(orchestrator.cwd):
+            try:
+                from clawdia.git_utils import (
+                    is_git_repo, git_repo_root, git_current_branch,
+                    git_create_branch, git_add_worktree, make_task_slug,
+                )
+                if await is_git_repo(orchestrator.cwd):
+                    repo_root = await git_repo_root(orchestrator.cwd)
+                    current = await git_current_branch(repo_root)
+                    orch_short = orchestrator.id[:8]
+                    slug = make_task_slug(params["task"])
+                    worker_branch = f"worker/{orch_short}/{slug}"
+                    worker_branch = await self._unique_branch_name(repo_root, worker_branch)
+                    wt_base = self._worktree_base_dir(repo_root)
+                    worktree_path = str(Path(wt_base) / worker_branch.replace("/", "-"))
+                    await git_create_branch(repo_root, worker_branch, current)
+                    worktree_path = await git_add_worktree(repo_root, worktree_path, worker_branch)
+                    worker_cwd = worktree_path
+                    log.info("Worktree created: branch=%s path=%s", worker_branch, worktree_path)
+            except Exception as exc:
+                log.warning("Worktree creation failed, using shared cwd: %s", exc)
+                worker_branch = None
+                worktree_path = None
+                worker_cwd = orchestrator.cwd
+
         # Create child session
         worker = Session(
             name=f"Worker: {params['task'][:30]}",
             parent_session_id=orchestrator.id,
             session_type="worker",
             worker_status="running",
-            cwd=orchestrator.cwd,
+            cwd=worker_cwd,
             model=effective_model,
             permission_mode=effective_perm,
             worker_template_id=template_id,
+            worker_branch=worker_branch,
+            worktree_path=worktree_path,
         )
         self.store.create_session(worker)
 
@@ -2022,7 +2148,7 @@ class ChatScreen(Screen):
             session_id=orchestrator.claude_session_id,
             fork_session=bool(orchestrator.claude_session_id),
             model=effective_model,
-            cwd=orchestrator.cwd,
+            cwd=worker_cwd,
             permission_mode=effective_perm,
             allowed_tools=effective_tools,
         )
@@ -2182,6 +2308,11 @@ class ChatScreen(Screen):
             worker_session.worker_status = "complete"
             self.store.update_session(worker_session)
             self._refresh_sidebar()
+            # Auto-create PR if configured and worker has a worktree
+            if worker_session.worktree_path and worker_session.worker_branch:
+                orch_cwd = self._effective_workspace_cwd(worker_session)
+                if self._should_auto_create_pr(orch_cwd):
+                    asyncio.create_task(self._create_worker_pr(worker_session))
             # Generate summary and notify orchestrator
             self._generate_worker_summary(worker_session.id)
         else:
