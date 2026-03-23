@@ -18,26 +18,26 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header
 
-from reclawed.claude import (
+from clawdia.claude import (
     StreamError, StreamResult, StreamSessionId, StreamToken,
     StreamToolResult, StreamToolUse,
 )
-from reclawed.claude_session import ClaudeSession
-from reclawed.config import Config, THEME_CYCLE, THEME_MAP
-from reclawed.crypto import decrypt_content, derive_room_key, is_encrypted
-from reclawed.relay.protocol import RelayMessage
-from reclawed.models import Message, Session
-from reclawed.relay.client import RelayClient
-from reclawed.store import Store
-from reclawed.utils import copy_to_clipboard
-from reclawed.widgets.chat_sidebar import ChatSidebar
-from reclawed.widgets.compose_area import ComposeArea, ComposeInput
-from reclawed.widgets.message_bubble import MessageBubble
-from reclawed.widgets.message_list import MessageList
-from reclawed.widgets.quote_preview import QuotePreview
-from reclawed.widgets.resize_handle import SidebarResizeHandle
-from reclawed.widgets.status_bar import StatusBar
-from reclawed.widgets.tool_activity import ToolActivityWidget
+from clawdia.claude_session import ClaudeSession
+from clawdia.config import Config, THEME_CYCLE, THEME_MAP
+from clawdia.crypto import decrypt_content, derive_room_key, is_encrypted
+from clawdia.relay.protocol import RelayMessage
+from clawdia.models import Message, Session
+from clawdia.relay.client import RelayClient
+from clawdia.store import Store
+from clawdia.utils import copy_to_clipboard
+from clawdia.widgets.chat_sidebar import ChatSidebar
+from clawdia.widgets.compose_area import ComposeArea, ComposeInput
+from clawdia.widgets.message_bubble import MessageBubble
+from clawdia.widgets.message_list import MessageList
+from clawdia.widgets.quote_preview import QuotePreview
+from clawdia.widgets.resize_handle import SidebarResizeHandle
+from clawdia.widgets.status_bar import StatusBar
+from clawdia.widgets.tool_activity import ToolActivityWidget
 
 
 @dataclass
@@ -272,7 +272,7 @@ class ChatScreen(Screen):
         )
         if has_groups and self.config.relay_mode == "local":
             try:
-                from reclawed.relay.daemon import ensure_daemon
+                from clawdia.relay.daemon import ensure_daemon
                 await asyncio.to_thread(
                     ensure_daemon, self.config.data_dir, self.config.relay_port,
                 )
@@ -363,7 +363,7 @@ class ChatScreen(Screen):
 
         Called from on_compose_area_submitted and from queue drain.
         """
-        from reclawed.utils import make_attachment_json
+        from clawdia.utils import make_attachment_json
         attachments_json = make_attachment_json(attachments) if attachments else None
 
         user_msg = Message(
@@ -502,7 +502,7 @@ class ChatScreen(Screen):
     async def on_compose_area_paste_image_triggered(self, event: ComposeArea.PasteImageTriggered) -> None:
         """Handle Alt+V — grab image from clipboard and attach it."""
         event.stop()
-        from reclawed.utils import grab_clipboard_image
+        from clawdia.utils import grab_clipboard_image
         # Run clipboard grab in thread to avoid blocking
         import asyncio
         path = await asyncio.to_thread(grab_clipboard_image)
@@ -516,7 +516,7 @@ class ChatScreen(Screen):
     async def on_compose_area_attach_file_triggered(self, event: ComposeArea.AttachFileTriggered) -> None:
         """Handle Alt+A or attach button — open file path input."""
         event.stop()
-        from reclawed.widgets.file_input_screen import FileInputScreen
+        from clawdia.widgets.file_input_screen import FileInputScreen
 
         def _on_dismiss(result: str | None) -> None:
             if result:
@@ -542,7 +542,7 @@ class ChatScreen(Screen):
 
     def _preview_file(self, path: str) -> None:
         """Open a file with the OS default viewer."""
-        from reclawed.utils import open_file_externally
+        from clawdia.utils import open_file_externally
 
         if open_file_externally(path):
             self.notify(f"Opening preview: {Path(path).name}", timeout=3)
@@ -1039,8 +1039,8 @@ class ChatScreen(Screen):
 
     def action_group_menu(self) -> None:
         """Show the Create Group / Join Group picker (Ctrl+G)."""
-        from reclawed.screens.group import CreateGroupScreen, JoinGroupScreen
-        from reclawed.widgets.group_menu import GroupMenuScreen
+        from clawdia.screens.group import CreateGroupScreen, JoinGroupScreen
+        from clawdia.widgets.group_menu import GroupMenuScreen
 
         def on_choice(choice: str | None) -> None:
             if choice == "create":
@@ -1268,7 +1268,7 @@ class ChatScreen(Screen):
                         if event.tool_name == "AskUserQuestion":
                             questions = event.tool_input.get("questions", [])
                             if questions:
-                                from reclawed.widgets.ask_user_question import AskUserQuestionWidget
+                                from clawdia.widgets.ask_user_question import AskUserQuestionWidget
                                 try:
                                     await bubble.mount(AskUserQuestionWidget(questions))
                                 except Exception:
@@ -1493,7 +1493,7 @@ class ChatScreen(Screen):
 
     def _open_file_in_document_screen(self, path: str) -> None:
         """Open *path* in DocumentScreen — diff view if we have a before/after pair."""
-        from reclawed.screens.document import DocumentScreen
+        from clawdia.screens.document import DocumentScreen
 
         p = Path(path)
         # Resolve relative paths against the session's workspace cwd
@@ -1738,7 +1738,7 @@ class ChatScreen(Screen):
         Special handling for AskUserQuestion: renders choices as clickable
         buttons instead of approve/deny.
         """
-        from reclawed.widgets.tool_approval import ToolApprovalWidget
+        from clawdia.widgets.tool_approval import ToolApprovalWidget
         tool_use_id = f"approval-{id(future)}"
         self._pending_approvals[tool_use_id] = future
 
@@ -1803,10 +1803,11 @@ class ChatScreen(Screen):
         if not participants:
             return
         # Build name list (exclude self)
+        # Server sends {"id": ..., "name": ..., "type": ...}
         names = [
-            p.get("participant_name", "Unknown")
+            p.get("name", "Unknown")
             for p in participants
-            if p.get("participant_id") != self._relay_client._participant_id
+            if p.get("id") != self._relay_client._participant_id
         ]
         if not names:
             return
@@ -1817,7 +1818,7 @@ class ChatScreen(Screen):
             compose.insert_mention(names[0])
         else:
             # Show a quick picker
-            from reclawed.screens.search import SessionPickerScreen
+            from clawdia.screens.search import SessionPickerScreen
             # Reuse a simple approach: push a quick selection
             def _on_pick(name: str | None) -> None:
                 if name:
@@ -1956,7 +1957,7 @@ class ChatScreen(Screen):
 
     def _spawn_worker(self, orchestrator_session_id: str) -> None:
         """Open the spawn worker modal for the given session."""
-        from reclawed.screens.spawn_worker import SpawnWorkerScreen
+        from clawdia.screens.spawn_worker import SpawnWorkerScreen
 
         def on_result(result: dict | None) -> None:
             if result is None:
@@ -2479,7 +2480,7 @@ class ChatScreen(Screen):
         if orchestrator.permission_mode != "bypassPermissions":
             return
 
-        from reclawed.utils import detect_worker_proposals
+        from clawdia.utils import detect_worker_proposals
         proposals = detect_worker_proposals(response_content)
         if not proposals:
             return
@@ -2568,7 +2569,7 @@ class ChatScreen(Screen):
     def action_search(self) -> None:
         if self._compose_focused:
             return
-        from reclawed.screens.search import SearchScreen
+        from clawdia.screens.search import SearchScreen
         self.app.push_screen(SearchScreen(self.store, self.session.id))
 
     def action_pinned(self) -> None:
@@ -2577,7 +2578,7 @@ class ChatScreen(Screen):
         Reuses the search modal pattern but lists only bookmarked messages.
         Selecting an entry scrolls the chat to that message.
         """
-        from reclawed.screens.search import PinnedScreen
+        from clawdia.screens.search import PinnedScreen
 
         def on_pinned_selected(message_id: str | None) -> None:
             if message_id:
@@ -2783,7 +2784,7 @@ class ChatScreen(Screen):
             self.notify(f"Renamed to: {event.new_name}", timeout=2)
 
     def on_chat_sidebar_context_menu_requested(self, event: ChatSidebar.ContextMenuRequested) -> None:
-        from reclawed.widgets.context_menu import (
+        from clawdia.widgets.context_menu import (
             ContextMenu, ACTION_MARK_UNREAD, ACTION_MUTE, ACTION_UNMUTE,
             ACTION_ARCHIVE, ACTION_DELETE, ACTION_RENAME, ACTION_GENERATE_NAME,
             ACTION_PIN, ACTION_UNPIN, ACTION_SPAWN_WORKER, ACTION_MARK_WORKER_COMPLETE,
@@ -2886,7 +2887,7 @@ class ChatScreen(Screen):
             sidebar.refresh_sessions(active_session_id=self.session.id)
             self.notify(f"Removed workspace: {event.name}", timeout=3)
 
-        from reclawed.widgets.confirm_screen import ConfirmScreen
+        from clawdia.widgets.confirm_screen import ConfirmScreen
         self.app.push_screen(
             ConfirmScreen(
                 title="Remove Workspace",
@@ -2897,7 +2898,7 @@ class ChatScreen(Screen):
 
     def on_chat_sidebar_refresh_workspace_requested(self, event: ChatSidebar.RefreshWorkspaceRequested) -> None:
         """Re-import sessions from Claude Code for a workspace."""
-        from reclawed.importer import DiscoveredProject, discover_projects, import_project_sessions
+        from clawdia.importer import DiscoveredProject, discover_projects, import_project_sessions
 
         # Find the matching project in ~/.claude/projects/
         projects = discover_projects()
@@ -2934,7 +2935,7 @@ class ChatScreen(Screen):
         if self.session.is_group:
             self.notify("Already in a group chat", severity="warning", timeout=3)
             return
-        from reclawed.screens.group import InviteToChatScreen
+        from clawdia.screens.group import InviteToChatScreen
         self.app.push_screen(
             InviteToChatScreen(config=self.config),
             self._on_invite_dismissed,
@@ -2965,14 +2966,14 @@ class ChatScreen(Screen):
 
     def action_memory_browser(self) -> None:
         """Open the memory file browser for the current session's project."""
-        from reclawed.screens.memory import MemoryScreen
+        from clawdia.screens.memory import MemoryScreen
 
         self.app.push_screen(MemoryScreen(cwd=self.session.cwd))
 
     def action_open_file(self) -> None:
         """Open the quick file opener (Ctrl+O) and display the chosen file."""
-        from reclawed.screens.file_open import FileOpenScreen
-        from reclawed.screens.document import DocumentScreen
+        from clawdia.screens.file_open import FileOpenScreen
+        from clawdia.screens.document import DocumentScreen
 
         def _on_file_chosen(path: str | None) -> None:
             if path:
@@ -2985,7 +2986,7 @@ class ChatScreen(Screen):
 
     def action_review_code(self) -> None:
         """Open the code review launcher (Ctrl+R)."""
-        from reclawed.screens.review_launcher import ReviewLauncherScreen
+        from clawdia.screens.review_launcher import ReviewLauncherScreen
 
         def _on_launch(result: dict | None) -> None:
             if result:
@@ -2996,8 +2997,8 @@ class ChatScreen(Screen):
     @work(exclusive=True)
     async def _launch_review(self, config: dict) -> None:
         """Load diff in a worker thread and open ReviewScreen."""
-        from reclawed.screens.review import ReviewScreen
-        from reclawed.git_utils import git_diff, git_diff_branch, git_diff_pr
+        from clawdia.screens.review import ReviewScreen
+        from clawdia.git_utils import git_diff, git_diff_branch, git_diff_pr
 
         try:
             mode = config["mode"]
@@ -3034,7 +3035,7 @@ class ChatScreen(Screen):
             self.notify(f"Review failed: {exc}", severity="error", timeout=10)
 
     def action_settings(self) -> None:
-        from reclawed.screens.settings import SettingsScreen
+        from clawdia.screens.settings import SettingsScreen
 
         def on_settings_dismissed(changed: bool | None) -> None:
             if changed:
@@ -3053,14 +3054,14 @@ class ChatScreen(Screen):
         )
 
     def action_hooks_manager(self) -> None:
-        from reclawed.screens.hooks_manager import HooksManagerScreen
+        from clawdia.screens.hooks_manager import HooksManagerScreen
         self.app.push_screen(
             HooksManagerScreen(project_dir=self.session.cwd),
             lambda changed: None,
         )
 
     def action_mcp_manager(self) -> None:
-        from reclawed.screens.mcp_manager import McpManagerScreen
+        from clawdia.screens.mcp_manager import McpManagerScreen
         self.app.push_screen(
             McpManagerScreen(
                 project_dir=self.session.cwd,
@@ -3070,7 +3071,7 @@ class ChatScreen(Screen):
         )
 
     def action_change_display_name(self) -> None:
-        from reclawed.screens.settings import DisplayNameScreen
+        from clawdia.screens.settings import DisplayNameScreen
 
         def on_dismissed(new_name: str | None) -> None:
             if new_name:
@@ -3093,7 +3094,7 @@ class ChatScreen(Screen):
             self._new_chat_with_cwd(None)
             return
 
-        from reclawed.widgets.workspace_picker import WorkspacePicker, PICK_DEFAULT
+        from clawdia.widgets.workspace_picker import WorkspacePicker, PICK_DEFAULT
 
         def on_picked(result: str | None) -> None:
             if result is None:
@@ -3126,7 +3127,7 @@ class ChatScreen(Screen):
         self.app.call_later(_reset)
 
     def action_quit(self) -> None:
-        from reclawed.widgets.confirm_screen import ConfirmScreen
+        from clawdia.widgets.confirm_screen import ConfirmScreen
 
         def on_confirm(confirmed: bool) -> None:
             if not confirmed:
@@ -3140,7 +3141,7 @@ class ChatScreen(Screen):
             self.app.exit()
 
         self.app.push_screen(
-            ConfirmScreen(title="Quit Re:Clawed?", message="Are you sure you want to exit?"),
+            ConfirmScreen(title="Quit Clawdia?", message="Are you sure you want to exit?"),
             on_confirm,
         )
 
@@ -3148,7 +3149,7 @@ class ChatScreen(Screen):
         if self._compose_focused:
             return
         help_text = (
-            "Re:Clawed Keybindings\n"
+            "Clawdia Keybindings\n"
             "---------------------\n"
             "Enter       Send message\n"
             "Shift+Enter New line\n"

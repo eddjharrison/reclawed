@@ -13,13 +13,13 @@ from textual.widgets import Label, Markdown, Static
 
 _THINKING_FRAMES = [".  ", ".. ", "...", " ..", "  .", "   "]
 
-from reclawed.models import Message
-from reclawed.utils import (
+from clawdia.models import Message
+from clawdia.utils import (
     detect_choices, detect_question, format_file_size, format_relative_time,
     parse_attachments,
 )
-from reclawed.widgets.choice_buttons import ChoiceButtons
-from reclawed.widgets.tool_activity import ToolActivityWidget
+from clawdia.widgets.choice_buttons import ChoiceButtons
+from clawdia.widgets.tool_activity import ToolActivityWidget
 
 # File extensions to detect as clickable file paths
 _FILE_EXT = (
@@ -197,8 +197,13 @@ class MessageBubble(Vertical):
         color: $text-disabled;
         text-style: dim;
     }
+    MessageBubble .delivery-status.delivered {
+        color: $text;
+        text-style: none;
+    }
     MessageBubble .delivery-status.read {
         color: $accent;
+        text-style: bold;
     }
     MessageBubble.deleted .bubble-header {
         color: $text-disabled;
@@ -434,7 +439,7 @@ class MessageBubble(Vertical):
                 self.add_class("has-question")
 
             # Skip ChoiceButtons if AskUserQuestionWidget is already mounted
-            from reclawed.widgets.ask_user_question import AskUserQuestionWidget
+            from clawdia.widgets.ask_user_question import AskUserQuestionWidget
             has_auq = bool(self.query(AskUserQuestionWidget))
             if not has_auq:
                 choices = detect_choices(content)
@@ -447,8 +452,8 @@ class MessageBubble(Vertical):
             # Detect worker spawn proposals (orchestrator sessions only)
             # Skip widget when bypassPermissions — auto-spawn handles it
             if session_type == "orchestrator" and permission_mode != "bypassPermissions":
-                from reclawed.utils import detect_worker_proposals
-                from reclawed.widgets.spawn_proposals import SpawnProposalsWidget
+                from clawdia.utils import detect_worker_proposals
+                from clawdia.widgets.spawn_proposals import SpawnProposalsWidget
                 proposals = detect_worker_proposals(content)
                 if proposals:
                     try:
@@ -497,12 +502,14 @@ class MessageBubble(Vertical):
                 self._delivery_label = self.query_one("#delivery-status", Label)
             except Exception:
                 return
-        symbols = {"sent": "\u2713", "delivered": "\u2713\u2713", "read": "\u2713\u2713"}
+        # ✓ sent (single, dim) → ✓✓ delivered (double, dim) → ✓✓ read (double, accent)
+        symbols = {"sent": "\u2713", "delivered": "\u2713\u2713", "read": "\u2714\u2714"}
         self._delivery_label.update(symbols.get(status, ""))
+        self._delivery_label.remove_class("read", "delivered")
         if status == "read":
             self._delivery_label.add_class("read")
-        else:
-            self._delivery_label.remove_class("read")
+        elif status == "delivered":
+            self._delivery_label.add_class("delivered")
 
     def watch_selected(self, value: bool) -> None:
         if value:

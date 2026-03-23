@@ -126,6 +126,17 @@ The Claude Code CLI is stateless at the UX layer. Every terminal session is an i
 | 📝 **Auto-summaries** | Workers report back: commit hashes, changes, edge cases found |
 | 🔑 **Per-worker permissions** | Worker runs `bypassPermissions`; orchestrator stays in `acceptEdits` |
 
+### 🔧 Interactivity
+| | |
+|---|---|
+| 🔨 **Tool activity display** | See what Claude is doing in real-time: "Reading src/foo.py...", "Running: pytest -v". Click to expand details |
+| ✅ **Tool approval UI** | Approve/deny buttons appear inline when Claude needs permission — no blind auto-approve |
+| 📂 **Clickable file references** | File paths in tool activity are clickable — opens document viewer with syntax highlighting, or diff view for edits |
+| 📄 **Document viewer** | Full read/edit/diff viewer — syntax highlighting, hunk navigation, unsaved changes warning |
+| 🧠 **Memory browser** | `Ctrl+M` opens Claude's memory files — browse, create, edit, delete |
+| ❓ **Question detection** | Claude's questions highlighted with accent border |
+| 🔘 **Choice buttons** | Numbered options rendered as clickable buttons |
+
 ### 🎨 Appearance & UX
 | | |
 |---|---|
@@ -134,8 +145,6 @@ The Claude Code CLI is stateless at the UX layer. Every terminal session is an i
 | 🔋 **Context gauge** | Battery-style indicator; green → yellow → red as context fills |
 | 🔐 **Mid-session permissions** | `F5` cycles permission mode live — start cautious, switch to `bypassPermissions` when you're ready to let Claude loose |
 | 🖼️ **Image attachments** | `Alt+V` paste from clipboard · `Alt+A` file picker · cross-platform |
-| ❓ **Question detection** | Claude's questions highlighted with accent border |
-| 🔘 **Choice buttons** | Numbered options rendered as clickable buttons |
 
 ---
 

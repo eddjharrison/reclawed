@@ -1,4 +1,4 @@
-"""Wire protocol for the Re:Clawed group-chat relay."""
+"""Wire protocol for the Clawdia group-chat relay."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class RelayMessage:
     deduplication — re-sends of the same message carry the same UUID.
     """
 
-    type: str  # "message" | "join" | "leave" | "presence" | "heartbeat" | "sync_request" | "sync_response" | "room_mode" | "error"
+    type: str  # "message" | "join" | "leave" | "presence" | "heartbeat" | "sync_request" | "sync_response" | "room_mode" | "typing" | "read" | "error"
     room_id: str
     sender_id: str
     sender_name: str
