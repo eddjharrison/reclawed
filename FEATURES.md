@@ -1,4 +1,4 @@
-# Re:Clawed Feature Backlog
+# Clawdia Feature Backlog
 
 Living document for feature ideas, grouped by theme. Completed items marked with checkmarks.
 
@@ -20,7 +20,7 @@ Living document for feature ideas, grouped by theme. Completed items marked with
 - [x] **In-app settings screen** — F4 or command palette → discover projects, toggle workspaces, import sessions
 - [x] **Change display name** — via command palette
 - [x] **Config persistence** — Config.save() writes TOML back to disk
-- [ ] **Status message** — like WhatsApp "Hey there! I am using Re:Clawed"
+- [ ] **Status message** — like WhatsApp "Hey there! I am using Clawdia"
 - [x] **Full settings editor** — edit all config fields from the TUI (theme, model, relay, etc.)
 
 ## Group Chat Infrastructure
@@ -146,6 +146,40 @@ Hierarchical multi-session workflow — one Claude plans and delegates, child Cl
 
 ---
 
+### Planned: Orchestrator v2 — Worktree Isolation, CI Feedback, Reactions
+
+Three features that transform orchestrator mode from "parallel chat sessions" to "parallel autonomous coding agents". Inspired by Composio's agent-orchestrator but built around Clawdia's human-in-the-loop TUI philosophy.
+
+#### Worktree Isolation
+
+- [ ] **Per-worker git worktree** — each worker spawns on its own branch (`worker/{orch-id}/{task-slug}`) in an isolated worktree under `.git/clawdia-worktrees/`. Workers operate in complete filesystem isolation — no conflicts between parallel workers
+- [ ] **Auto-create PR on completion** — when a worker finishes, optionally open a PR from the worker's branch. Configurable per workspace (`auto_create_pr = true`, `pr_base_branch = "main"`)
+- [ ] **Graceful fallback** — non-git workspaces or worktree creation failures silently fall back to shared cwd. Zero breaking changes to existing behavior
+- [ ] **Worktree cleanup** — worktrees removed on worker archive/delete. Stale worktrees from crashed sessions cleaned up on startup
+- [ ] **Config** — `worktree_isolation` (global + per-workspace toggle), `worktree_base_dir` (override location), `auto_create_pr`, `pr_base_branch`
+
+#### CI Feedback Loop
+
+- [ ] **CI status polling** — after a worker creates a PR, poll `gh pr checks` with exponential backoff (30s → 5min). Track status as `pending` → `pass`/`fail`
+- [ ] **Auto-fix CI failures** — on failure, fetch logs via `gh run view --log-failed`, inject into the worker session, worker auto-fixes and pushes. Configurable retry limit (default: 2 attempts)
+- [ ] **Review comment routing** — poll for new PR review comments, inject into the worker session, worker addresses and pushes
+- [ ] **Worker re-activation** — completed workers can be re-activated by sending a new message to their pooled ClaudeSession (or recreating with `resume=session_id`)
+- [ ] **Enhanced orchestrator notifications** — "Worker completed — PR #42 opened, CI pending", "CI failed (attempt 1/2) — auto-fixing...", "CI passed — PR #42 ready for review"
+- [ ] **Sidebar CI badges** — worker items show CI status icons (pending/pass/fail/fixing)
+
+#### Reactions Config
+
+- [ ] **Configurable event policies** — four events (`ci_failed`, `changes_requested`, `approved_and_green`, `worker_timeout`) with four modes each (`auto`, `ask`, `notify`, `ignore`)
+- [ ] **`auto`** — system handles automatically (fix CI, route comments, notify orchestrator)
+- [ ] **`ask`** — inline action buttons in the TUI (Fix/Skip/View Logs, Route to Worker/Ignore, etc.)
+- [ ] **`notify`** — sidebar badge + system message, no auto-action
+- [ ] **`ignore`** — completely silent
+- [ ] **Per-workspace overrides** — global defaults in `[reactions]` TOML table, per-workspace overrides in `[workspaces.reactions]`
+- [ ] **Settings screen** — new "Orchestrator" tab with reaction policy dropdowns, CI retry limits, worker timeout config
+- [ ] **ReactionPromptWidget** — inline action buttons for "ask" mode, same pattern as SpawnProposalsWidget
+
+---
+
 ### Planned: Template System
 
 Templates are the connective tissue between the orchestrator and its workers. Two kinds: **prompt templates** (what goes into a worker) and **findings templates** (what comes back out). Both are plain markdown files in `templates_dir`, editable from the Orchestrator Settings screen.
@@ -175,7 +209,7 @@ The current SDK fork approach is CONTINUATION-only. The full design adds a secon
 
 - [ ] **FRESH dispatch (file-based)** — orchestrator writes a prompt file to `prompts_dir/` using the configured `instance_prompt_template`; TUI fills template variables (`{date}`, `{instance_id}`, `{findings_path}` etc.) and writes the file; spawns a fresh worker session with no SDK fork whose first message is `dispatch_skill content + filled prompt + findings template`. Workers are stateless: no orchestrator conversation history, no hallucination from stale context
 - [ ] **FRESH/CONTINUATION per-spawn** — orchestrator specifies dispatch type in the `{{WORKER}}` syntax: `{{WORKER type="fresh" task="..." template="investigation"}}` or `{{WORKER type="continuation" task="..."}}`. Default: continuation if no template named; fresh if a template is specified
-- [ ] **External terminal slots** — register a phantom instance slot for a worker running in an external `claude` CLI terminal (outside Re:Clawed). Slot has no `session_id`; completion detected via file watcher only. TUI writes the prompt file and displays the shorthand card for the user to copy-paste into the terminal. Appears in sidebar as `[iN] task… ext` with muted styling
+- [ ] **External terminal slots** — register a phantom instance slot for a worker running in an external `claude` CLI terminal (outside Clawdia). Slot has no `session_id`; completion detected via file watcher only. TUI writes the prompt file and displays the shorthand card for the user to copy-paste into the terminal. Appears in sidebar as `[iN] task… ext` with muted styling
 - [ ] **Instance index prefix** — workers display as `[i1] Deploy staging`, `[i2] Pain points audit` in the sidebar; index = lowest free slot (i1→i2→i3→i4, configurable max). Instance indices appear in the `{{WORKER}}` proposal, in the orchestrator preamble, and in generated prompt/findings filenames
 
 ---
@@ -184,7 +218,7 @@ The current SDK fork approach is CONTINUATION-only. The full design adds a secon
 
 Three independent signals, configurable per slot, with sensible defaults per dispatch mode.
 
-| Signal | SDK fork | FRESH (Re:Clawed) | External terminal |
+| Signal | SDK fork | FRESH (Clawdia) | External terminal |
 |--------|----------|-------------------|-------------------|
 | `stream_end` | ✅ natural | ✅ natural | ❌ not visible |
 | `findings_file` | ⚠️ optional | ✅ expected | ✅ primary |
@@ -273,7 +307,7 @@ A dedicated power-user screen for configuring the orchestrator-instance workflow
 
 ### Design principles
 
-- **TUI is scaffolding, orchestrator is intelligence** — Re:Clawed handles file watching, slot tracking, skill loading, and synthesis message construction. The orchestrator Claude session handles everything requiring judgment: synthesis phases, conflict resolution, next sprint planning, runbook updates. The 8-phase synthesis protocol lives in `synthesis_skill.md` as a plain file — configurable, versioned, project-specific
+- **TUI is scaffolding, orchestrator is intelligence** — Clawdia handles file watching, slot tracking, skill loading, and synthesis message construction. The orchestrator Claude session handles everything requiring judgment: synthesis phases, conflict resolution, next sprint planning, runbook updates. The 8-phase synthesis protocol lives in `synthesis_skill.md` as a plain file — configurable, versioned, project-specific
 - **Workers are stateless by default (FRESH)** — fresh workers don't inherit orchestrator context; they read a prompt file and start clean. This prevents hallucination from stale context and produces predictable, auditable results
 - **Power user feature** — the full orchestrator workflow (runbook, file-based dispatch, synthesis, external slots) is opt-in per workspace. Default orchestrator mode (F7) continues to work exactly as today with SDK fork workers. Advanced config only appears in the Orchestrator Settings screen
 - **File-based artifacts are first-class** — prompt files and findings files in the repo are auditable records of work. 100+ prompts and findings accumulated over weeks is a feature, not clutter
