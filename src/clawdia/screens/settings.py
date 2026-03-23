@@ -17,14 +17,14 @@ from textual.widgets import (
     TabbedContent, TabPane,
 )
 
-from reclawed.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry, HOOK_EVENTS
-from reclawed.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate, THEME_MAP, _config_file_path
-from reclawed.importer import (
+from clawdia.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry, HOOK_EVENTS
+from clawdia.config import BUILTIN_TEMPLATES, Config, Workspace, WorkerTemplate, THEME_MAP, _config_file_path
+from clawdia.importer import (
     DiscoveredProject,
     discover_projects,
     import_project_sessions,
 )
-from reclawed.store import Store
+from clawdia.store import Store
 
 
 class HookEditorScreen(ModalScreen["dict | None"]):
@@ -458,6 +458,8 @@ class SettingsScreen(ModalScreen[bool]):
                     yield from self._mcp_fields()
                 with TabPane("Templates", id="tab-templates"):
                     yield from self._template_fields()
+                with TabPane("Orchestrator", id="tab-orchestrator"):
+                    yield from self._orchestrator_fields()
             yield Label(f"Config: {_config_file_path()}", id="config-path")
             yield Label("", id="status-line")
             with Horizontal(id="button-bar"):
@@ -562,6 +564,41 @@ class SettingsScreen(ModalScreen[bool]):
     def _mcp_fields(self) -> ComposeResult:
         yield Label("", id="mcp-summary")
         yield Button("Manage MCP Servers", id="btn-manage-mcp", variant="primary")
+
+    def _orchestrator_fields(self) -> ComposeResult:
+        from clawdia.config import OrchestratorReactions, VALID_REACTION_MODES
+        r = self._config.reactions
+        reaction_modes = [(m, m) for m in sorted(VALID_REACTION_MODES)]
+
+        yield Label("Worktree Isolation", classes="section-label")
+        with Horizontal(classes="field-row"):
+            yield Label("Enable worktree isolation", classes="field-label")
+            yield Switch(value=self._config.worktree_isolation, id="sw-worktree")
+        with Horizontal(classes="field-row"):
+            yield Label("Auto-create PR on completion", classes="field-label")
+            yield Switch(value=self._config.auto_create_pr, id="sw-auto-pr")
+
+        yield Label("Reaction Policies", classes="section-label")
+        with Horizontal(classes="field-row"):
+            yield Label("CI failed", classes="field-label")
+            yield Select(reaction_modes, value=r.ci_failed, id="sel-reaction-ci-failed")
+        with Horizontal(classes="field-row"):
+            yield Label("Changes requested", classes="field-label")
+            yield Select(reaction_modes, value=r.changes_requested, id="sel-reaction-changes-requested")
+        with Horizontal(classes="field-row"):
+            yield Label("Approved & green", classes="field-label")
+            yield Select(reaction_modes, value=r.approved_and_green, id="sel-reaction-approved-and-green")
+        with Horizontal(classes="field-row"):
+            yield Label("Worker timeout", classes="field-label")
+            yield Select(reaction_modes, value=r.worker_timeout, id="sel-reaction-worker-timeout")
+
+        yield Label("Limits", classes="section-label")
+        with Horizontal(classes="field-row"):
+            yield Label("CI max retries", classes="field-label")
+            yield Input(value=str(r.ci_max_retries), id="inp-ci-max-retries", type="integer")
+        with Horizontal(classes="field-row"):
+            yield Label("Worker timeout (min)", classes="field-label")
+            yield Input(value=str(r.worker_timeout_minutes), id="inp-worker-timeout", type="integer")
 
     def _template_fields(self) -> ComposeResult:
         yield Label(
@@ -920,6 +957,35 @@ class SettingsScreen(ModalScreen[bool]):
         except Exception:
             pass
 
+        # Orchestrator tab
+        try:
+            c.worktree_isolation = self.query_one("#sw-worktree", Switch).value
+        except Exception:
+            pass
+        try:
+            c.auto_create_pr = self.query_one("#sw-auto-pr", Switch).value
+        except Exception:
+            pass
+        for key in ("ci_failed", "changes_requested", "approved_and_green", "worker_timeout"):
+            try:
+                sel = self.query_one(f"#sel-reaction-{key.replace('_', '-')}", Select)
+                if sel.value and sel.value != Select.BLANK:
+                    setattr(c.reactions, key, str(sel.value))
+            except Exception:
+                pass
+        try:
+            v = int(self.query_one("#inp-ci-max-retries", Input).value)
+            if 0 <= v <= 10:
+                c.reactions.ci_max_retries = v
+        except (ValueError, Exception):
+            pass
+        try:
+            v = int(self.query_one("#inp-worker-timeout", Input).value)
+            if v > 0:
+                c.reactions.worker_timeout_minutes = v
+        except (ValueError, Exception):
+            pass
+
         # Workspaces — update from checked projects
         self._update_workspaces_from_checked()
 
@@ -1029,7 +1095,7 @@ class SettingsScreen(ModalScreen[bool]):
             )
 
     def _open_hooks_manager(self) -> None:
-        from reclawed.screens.hooks_manager import HooksManagerScreen
+        from clawdia.screens.hooks_manager import HooksManagerScreen
 
         def on_dismiss(changed: bool) -> None:
             if changed:
@@ -1059,7 +1125,7 @@ class SettingsScreen(ModalScreen[bool]):
             )
 
     def _open_mcp_manager(self) -> None:
-        from reclawed.screens.mcp_manager import McpManagerScreen
+        from clawdia.screens.mcp_manager import McpManagerScreen
 
         def on_dismiss(changed: bool) -> None:
             if changed:
@@ -1249,7 +1315,7 @@ class WorkspaceConfigModal(ModalScreen[dict | None]):
 
 
 class WorkerTemplateModal(ModalScreen["WorkerTemplate | None"]):
-    """Modal for creating or editing a custom :class:`~reclawed.config.WorkerTemplate`.
+    """Modal for creating or editing a custom :class:`~clawdia.config.WorkerTemplate`.
 
     Pass an existing ``WorkerTemplate`` to edit it, or ``None`` to create a new one.
     Returns the saved ``WorkerTemplate`` on success, or ``None`` on cancel.
