@@ -24,6 +24,8 @@ orchestrator/worker delegation, and multi-project workspaces. No API key needed.
 | `Linux (x86_64)` | 3.12+ | Supported |
 | `Windows (x86_64)` | 3.12+ | Supported |
 
+<img width="1503" height="875" alt="Screenshot 2026-03-23 at 23 21 05" src="https://github.com/user-attachments/assets/38455390-ddd7-4633-900c-296a72213100" />
+
 </div>
 
 ---
