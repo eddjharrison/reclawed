@@ -460,6 +460,8 @@ class SettingsScreen(ModalScreen[bool]):
                     yield from self._template_fields()
                 with TabPane("Orchestrator", id="tab-orchestrator"):
                     yield from self._orchestrator_fields()
+                with TabPane("Voice", id="tab-voice"):
+                    yield from self._voice_fields()
             yield Label(f"Config: {_config_file_path()}", id="config-path")
             yield Label("", id="status-line")
             with Horizontal(id="button-bar"):
@@ -564,6 +566,32 @@ class SettingsScreen(ModalScreen[bool]):
     def _mcp_fields(self) -> ComposeResult:
         yield Label("", id="mcp-summary")
         yield Button("Manage MCP Servers", id="btn-manage-mcp", variant="primary")
+
+    def _voice_fields(self) -> ComposeResult:
+        tts_engines = [("edge", "edge"), ("system", "system"), ("none", "none")]
+        whisper_models = [("tiny", "tiny"), ("base", "base"), ("small", "small"), ("medium", "medium")]
+        with Horizontal(classes="field-row"):
+            yield Label("Enable voice mode", classes="field-label")
+            yield Switch(value=self._config.voice_enabled, id="sw-voice-enabled")
+        with Horizontal(classes="field-row"):
+            yield Label("TTS engine", classes="field-label")
+            yield Select(tts_engines, value=self._config.voice_tts_engine, id="sel-tts-engine")
+        with Horizontal(classes="field-row"):
+            yield Label("Whisper model", classes="field-label")
+            yield Select(whisper_models, value=self._config.voice_whisper_model, id="sel-whisper-model")
+        with Horizontal(classes="field-row"):
+            yield Label("Auto-send after transcription", classes="field-label")
+            yield Switch(value=self._config.voice_auto_send, id="sw-voice-auto-send")
+        with Horizontal(classes="field-row"):
+            yield Label("Auto-play responses", classes="field-label")
+            yield Switch(value=self._config.voice_auto_play, id="sw-voice-auto-play")
+        with Horizontal(classes="field-row"):
+            yield Label("Language", classes="field-label")
+            yield Input(value=self._config.voice_language, id="inp-voice-language")
+        yield Label(
+            "Voice requires: pip install clawdia[voice]",
+            classes="field-hint",
+        )
 
     def _orchestrator_fields(self) -> ComposeResult:
         from clawdia.config import OrchestratorReactions, VALID_REACTION_MODES
@@ -954,6 +982,38 @@ class SettingsScreen(ModalScreen[bool]):
         try:
             token = self.query_one("#inp-relay-token", Input).value.strip()
             c.relay_token = token if token else None
+        except Exception:
+            pass
+
+        # Voice tab
+        try:
+            c.voice_enabled = self.query_one("#sw-voice-enabled", Switch).value
+        except Exception:
+            pass
+        try:
+            sel = self.query_one("#sel-tts-engine", Select)
+            if sel.value and sel.value != Select.BLANK:
+                c.voice_tts_engine = str(sel.value)
+        except Exception:
+            pass
+        try:
+            sel = self.query_one("#sel-whisper-model", Select)
+            if sel.value and sel.value != Select.BLANK:
+                c.voice_whisper_model = str(sel.value)
+        except Exception:
+            pass
+        try:
+            c.voice_auto_send = self.query_one("#sw-voice-auto-send", Switch).value
+        except Exception:
+            pass
+        try:
+            c.voice_auto_play = self.query_one("#sw-voice-auto-play", Switch).value
+        except Exception:
+            pass
+        try:
+            lang = self.query_one("#inp-voice-language", Input).value.strip()
+            if lang:
+                c.voice_language = lang
         except Exception:
             pass
 

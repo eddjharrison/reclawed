@@ -142,6 +142,8 @@ class StatusBar(Static):
         self._git_branch: str | None = None
         self._git_status: str | None = None
         self._orchestrator_mode: bool = False
+        self._voice_active: bool = False
+        self._voice_recording: bool = False
 
     def update_info(
         self,
@@ -214,6 +216,11 @@ class StatusBar(Static):
         self._encrypted = encrypted
         self._refresh_display()
 
+    def set_voice_mode(self, active: bool = False, recording: bool = False) -> None:
+        self._voice_active = active
+        self._voice_recording = recording
+        self._refresh_display()
+
     def set_context(self, tokens: int, max_tokens: int) -> None:
         self._context_tokens = tokens
         self._context_max = max_tokens
@@ -278,6 +285,12 @@ class StatusBar(Static):
 
         if self._orchestrator_mode:
             parts.append("[bold yellow]ORCHESTRATOR[/bold yellow]")
+
+        if self._voice_active:
+            if self._voice_recording:
+                parts.append("[bold red]REC[/bold red]")
+            else:
+                parts.append("[bold cyan]VOICE[/bold cyan]")
 
         if self._permission_mode and self._permission_mode != "default":
             _perm_labels = {

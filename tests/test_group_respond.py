@@ -222,6 +222,8 @@ class TestStatusBarGroupMode:
         bar._context_tokens = 0
         bar._context_max = 200_000
         bar._orchestrator_mode = False
+        bar._voice_active = False
+        bar._voice_recording = False
         # Patch update() so we can inspect the rendered string
         bar._last_render = ""
         bar.update = lambda text: setattr(bar, "_last_render", text)

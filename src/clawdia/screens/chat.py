@@ -69,6 +69,7 @@ class ChatScreen(Screen):
         Binding("f4", "settings", "Settings", show=True, key_display="F4", priority=True),
         Binding("f5", "cycle_permission", "Permissions", show=True, key_display="F5", priority=True),
         Binding("f7", "toggle_orchestrator", "Orchestrator", show=True, key_display="F7", priority=True),
+        Binding("f8", "toggle_voice", "Voice", show=True, key_display="F8", priority=True),
         Binding("f8", "mcp_manager", "MCP", show=False, priority=True),
         Binding("f9", "hooks_manager", "Hooks", show=False, priority=True),
         Binding("ctrl+m", "memory_browser", "Memory", show=True, key_display="^M", priority=True),
@@ -189,6 +190,11 @@ class ChatScreen(Screen):
         self._file_diffs: dict[str, tuple[str, str]] = {}
         # CI watchers: worker_session_id -> asyncio.Task (Orchestrator v2)
         self._ci_watchers: dict[str, asyncio.Task] = {}
+        # Voice mode state
+        self._voice_engine = None  # lazy: VoiceEngine instance
+        self._voice_active: bool = False
+        self._voice_recording: bool = False
+        self._tts_spoken: set[str] = set()  # sentences already queued for TTS
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
@@ -204,6 +210,16 @@ class ChatScreen(Screen):
             if parent:
                 return parent.cwd
         return session.cwd
+
+    @staticmethod
+    def _extract_tts_sentences(text: str) -> list[str]:
+        """Extract complete sentences from accumulated text for TTS."""
+        import re
+        # Split on sentence-ending punctuation followed by space or end
+        parts = re.split(r'(?<=[.!?])\s+', text)
+        # Return all but the last part (which may be incomplete)
+        complete = [p.strip() for p in parts[:-1] if p.strip() and len(p.strip()) > 5]
+        return complete
 
     def _should_use_worktree(self, cwd: str | None) -> bool:
         """Check if worktree isolation is enabled for this workspace."""
@@ -1062,6 +1078,11 @@ class ChatScreen(Screen):
                     self._send_read_receipt_for_latest()
                     self._refresh_sidebar()
 
+                    # Voice TTS: play incoming voice messages aloud
+                    if (relay_msg.voice and self._voice_active
+                            and self.config.voice_auto_play and self._voice_engine):
+                        asyncio.create_task(self._voice_engine.speak(relay_msg.content or ""))
+
                     # Clear typing indicator for this sender
                     self._typing_users.pop(relay_msg.sender_name, None)
                     status = self.query_one("#status-bar", StatusBar)
@@ -1558,6 +1579,14 @@ class ChatScreen(Screen):
 
                     content_parts.append(event.text)
                     now = time.monotonic()
+
+                    # Voice TTS: queue complete sentences for playback
+                    if self._voice_active and self.config.voice_auto_play and self._voice_engine:
+                        accumulated = "".join(content_parts)
+                        for sentence in self._extract_tts_sentences(accumulated):
+                            if sentence not in self._tts_spoken:
+                                self._tts_spoken.add(sentence)
+                                asyncio.create_task(self._voice_engine.speak_streaming(sentence))
 
                     # Only update UI if this session is still visible
                     if _is_active():
@@ -3072,6 +3101,56 @@ class ChatScreen(Screen):
             self._update_status()
             self.notify("Orchestrator mode enabled — Claude can now propose workers", timeout=3)
         self._refresh_sidebar()
+
+    async def action_toggle_voice(self) -> None:
+        """Toggle voice mode (F8). First press enables, subsequent presses toggle recording."""
+        from clawdia.voice import is_voice_available
+
+        if not is_voice_available():
+            self.notify("Voice requires: pip install clawdia[voice]", severity="error", timeout=4)
+            return
+
+        if not self._voice_active:
+            # Enable voice mode
+            self._voice_active = True
+            if not self._voice_engine:
+                from clawdia.voice import VoiceEngine
+                self._voice_engine = VoiceEngine(self.config)
+            status = self.query_one("#status-bar", StatusBar)
+            status.set_voice_mode(active=True)
+            self.notify("Voice mode ON — press F8 to record", timeout=2)
+            return
+
+        if self._voice_recording:
+            # Stop recording → transcribe → send/fill
+            self._voice_recording = False
+            status = self.query_one("#status-bar", StatusBar)
+            status.set_voice_mode(active=True, recording=False)
+            self.notify("Transcribing...", timeout=2)
+
+            text = await self._voice_engine.stop_recording()
+            if not text.strip():
+                self.notify("No speech detected", timeout=2)
+                return
+
+            if self.config.voice_auto_send:
+                compose = self.query_one("#compose-area", ComposeArea)
+                compose.post_message(ComposeArea.Submitted(
+                    text=text, editing_message_id=None, attachments=[],
+                ))
+            else:
+                compose = self.query_one("#compose-area", ComposeArea)
+                ta = compose.query_one("#compose-input", ComposeInput)
+                ta.load_text(text)
+                ta.focus()
+                self.notify("Transcribed — review and press Enter to send", timeout=3)
+        else:
+            # Start recording
+            self._voice_recording = True
+            self._tts_spoken.clear()
+            status = self.query_one("#status-bar", StatusBar)
+            status.set_voice_mode(active=True, recording=True)
+            await self._voice_engine.start_recording()
 
     def action_cycle_respond_mode(self) -> None:
         """Cycle through room modes (F3). Broadcasts to all participants."""

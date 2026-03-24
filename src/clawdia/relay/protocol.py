@@ -34,6 +34,7 @@ class RelayMessage:
     error: str | None = None
     target_message_id: str | None = None  # for edit/delete targeting
     read_up_to_seq: int | None = None  # for read receipts
+    voice: bool = False  # indicates message was spoken, not typed
 
     # ------------------------------------------------------------------ #
     # Serialisation                                                        #
@@ -44,7 +45,11 @@ class RelayMessage:
         # asdict produces a plain dict; drop keys whose value is None to keep
         # payloads small, but always include seq and message_id.
         raw = asdict(self)
-        return json.dumps({k: v for k, v in raw.items() if v is not None or k in ("seq", "message_id")})
+        return json.dumps({
+            k: v for k, v in raw.items()
+            if (v is not None or k in ("seq", "message_id"))
+            and not (k == "voice" and v is False)
+        })
 
     @classmethod
     def from_json(cls, data: str | bytes) -> "RelayMessage":

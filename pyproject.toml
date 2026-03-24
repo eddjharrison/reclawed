@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "clawdia"
 version = "0.1.0"
-description = "WhatsApp-style TUI wrapper for Claude CLI with reply, quote, and threading"
+description = "Clawdia: Chat, Launch & Administer Whole Divisions of Intelligent Agents"
 requires-python = ">=3.12"
 dependencies = [
     "textual>=0.80.0",
@@ -20,6 +20,12 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "textual-dev>=1.0",
+]
+voice = [
+    "faster-whisper>=1.0",
+    "edge-tts>=6.1",
+    "sounddevice>=0.4",
+    "numpy>=1.26",
 ]
 
 [project.scripts]

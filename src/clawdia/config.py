@@ -204,6 +204,14 @@ class Config:
     worktree_isolation: bool = True       # global default: enable worktree isolation for workers
     auto_create_pr: bool = False          # auto-create PR when worker completes
     reactions: OrchestratorReactions = field(default_factory=OrchestratorReactions)
+    # Voice mode
+    voice_enabled: bool = False
+    voice_stt_engine: str = "whisper"      # "whisper" (local)
+    voice_tts_engine: str = "edge"         # "edge" | "system" | "none"
+    voice_whisper_model: str = "base"      # "tiny" | "base" | "small" | "medium"
+    voice_auto_send: bool = True           # auto-send after transcription
+    voice_auto_play: bool = True           # auto-play TTS for responses
+    voice_language: str = "en"             # STT language hint
 
     def __post_init__(self) -> None:
         # Normalise theme to a known key; fall back to "dark" for unknown values.
@@ -301,6 +309,19 @@ class Config:
             lines.append(f"tunnel_uuid = {_toml_str(self.tunnel_uuid)}")
         if self.tunnel_hostname:
             lines.append(f"tunnel_hostname = {_toml_str(self.tunnel_hostname)}")
+        # Voice mode
+        if self.voice_enabled:
+            lines.append("voice_enabled = true")
+        if self.voice_tts_engine != "edge":
+            lines.append(f"voice_tts_engine = {_toml_str(self.voice_tts_engine)}")
+        if self.voice_whisper_model != "base":
+            lines.append(f"voice_whisper_model = {_toml_str(self.voice_whisper_model)}")
+        if not self.voice_auto_send:
+            lines.append("voice_auto_send = false")
+        if not self.voice_auto_play:
+            lines.append("voice_auto_play = false")
+        if self.voice_language != "en":
+            lines.append(f"voice_language = {_toml_str(self.voice_language)}")
         # Orchestrator v2
         if not self.worktree_isolation:  # only write if non-default (default is True)
             lines.append("worktree_isolation = false")
@@ -432,6 +453,21 @@ class Config:
             kwargs["tunnel_uuid"] = str(raw["tunnel_uuid"])
         if "tunnel_hostname" in raw:
             kwargs["tunnel_hostname"] = str(raw["tunnel_hostname"])
+        # Voice mode
+        if "voice_enabled" in raw:
+            kwargs["voice_enabled"] = bool(raw["voice_enabled"])
+        if "voice_stt_engine" in raw:
+            kwargs["voice_stt_engine"] = str(raw["voice_stt_engine"])
+        if "voice_tts_engine" in raw:
+            kwargs["voice_tts_engine"] = str(raw["voice_tts_engine"])
+        if "voice_whisper_model" in raw:
+            kwargs["voice_whisper_model"] = str(raw["voice_whisper_model"])
+        if "voice_auto_send" in raw:
+            kwargs["voice_auto_send"] = bool(raw["voice_auto_send"])
+        if "voice_auto_play" in raw:
+            kwargs["voice_auto_play"] = bool(raw["voice_auto_play"])
+        if "voice_language" in raw:
+            kwargs["voice_language"] = str(raw["voice_language"])
         # Orchestrator v2
         if "worktree_isolation" in raw:
             kwargs["worktree_isolation"] = bool(raw["worktree_isolation"])
