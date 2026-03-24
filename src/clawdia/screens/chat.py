@@ -195,6 +195,7 @@ class ChatScreen(Screen):
         self._voice_active: bool = False
         self._voice_recording: bool = False
         self._tts_spoken: set[str] = set()  # sentences already queued for TTS
+        self._tts_task: asyncio.Task | None = None
 
     def _effective_allowed_tools(self, cwd: str | None = None) -> list[str]:
         """Return allowed tools for the given cwd, checking workspace overrides."""
@@ -1081,7 +1082,9 @@ class ChatScreen(Screen):
                     # Voice TTS: play incoming voice messages aloud
                     if (relay_msg.voice and self._voice_active
                             and self.config.voice_auto_play and self._voice_engine):
-                        await self._voice_engine.speak(relay_msg.content or "")
+                        self._tts_task = asyncio.create_task(
+                            self._voice_engine.speak(relay_msg.content or "")
+                        )
 
                     # Clear typing indicator for this sender
                     self._typing_users.pop(relay_msg.sender_name, None)
@@ -1540,6 +1543,7 @@ class ChatScreen(Screen):
         msg_list = self.query_one("#message-list", MessageList)
         bubble = msg_list.get_bubble(assistant_msg.id)
         content_parts: list[str] = []
+        self._tts_spoken.clear()
 
         # Mark this session as actively streaming (prevents concurrent SDK calls)
         self._streaming_sessions.add(stream_session.id)
@@ -1579,6 +1583,14 @@ class ChatScreen(Screen):
 
                     content_parts.append(event.text)
                     now = time.monotonic()
+
+                    # Voice TTS: queue complete sentences for playback as they arrive
+                    if self._voice_active and self.config.voice_auto_play and self._voice_engine:
+                        accumulated = "".join(content_parts)
+                        for sentence in self._extract_tts_sentences(accumulated):
+                            if sentence not in self._tts_spoken:
+                                self._tts_spoken.add(sentence)
+                                await self._voice_engine.speak_streaming(sentence)
 
                     # Only update UI if this session is still visible
                     if _is_active():
@@ -1703,10 +1715,29 @@ class ChatScreen(Screen):
                             )
                             msg_list.scroll_end(animate=False)
 
-                        # Voice TTS: speak full response when streaming completes
+                        # Voice TTS: send remaining text and finish streaming
                         if (self._voice_active and self.config.voice_auto_play
                                 and self._voice_engine):
-                            await self._voice_engine.speak(assistant_msg.content or "")
+                            accumulated = assistant_msg.content or ""
+                            if not self._tts_spoken:
+                                # Short response with no detected sentences — speak it all
+                                await self._voice_engine.speak_streaming(accumulated)
+                            else:
+                                # Queue any sentences missed during streaming
+                                for sentence in self._extract_tts_sentences(accumulated):
+                                    if sentence not in self._tts_spoken:
+                                        self._tts_spoken.add(sentence)
+                                        await self._voice_engine.speak_streaming(sentence)
+                                # Queue trailing text after the last sentence boundary
+                                parts = re.split(r'(?<=[.!?])\s+', accumulated)
+                                tail = parts[-1].strip() if parts else ""
+                                if tail and len(tail) > 10 and tail not in self._tts_spoken:
+                                    await self._voice_engine.speak_streaming(tail)
+                            # Let remaining sentences finish playing in background
+                            self._tts_task = asyncio.create_task(
+                                self._voice_engine.finish_streaming()
+                            )
+                        self._tts_spoken.clear()
 
                         # Auto-spawn if orchestrator in bypass mode
                         if stream_session.session_type == "orchestrator":

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from clawdia.config import Config
@@ -28,8 +27,6 @@ class VoiceEngine:
             language=config.voice_language,
         )
         self._tts: BaseTTS = create_tts(config.voice_tts_engine, language=config.voice_language)
-        self._tts_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._tts_task: asyncio.Task | None = None
         self._speaking = False
 
     @property
@@ -65,30 +62,25 @@ class VoiceEngine:
             self._speaking = False
 
     async def speak_streaming(self, sentence: str) -> None:
-        """Queue a sentence for background TTS playback.
+        """Send a sentence for pipelined TTS playback.
 
-        Sentences are played sequentially in order.
+        Delegates to the TTS engine's streaming method which pipelines
+        generation and playback — while one sentence plays, the next
+        is being generated.
         """
-        await self._tts_queue.put(sentence)
-        if self._tts_task is None or self._tts_task.done():
-            self._tts_task = asyncio.create_task(self._tts_worker())
+        if not sentence.strip():
+            return
+        self._speaking = True
+        await self._tts.speak_streaming(sentence)
 
-    async def _tts_worker(self) -> None:
-        """Background worker that plays queued sentences sequentially."""
-        while not self._tts_queue.empty():
-            sentence = await self._tts_queue.get()
-            await self.speak(sentence)
+    async def finish_streaming(self) -> None:
+        """Signal end of streaming and wait for remaining playback."""
+        try:
+            await self._tts.stop_stream()
+        finally:
+            self._speaking = False
 
     def cancel_playback(self) -> None:
-        """Stop any in-progress TTS playback and clear the queue."""
+        """Stop any in-progress TTS playback."""
         self._tts.cancel()
         self._speaking = False
-        # Clear the queue
-        while not self._tts_queue.empty():
-            try:
-                self._tts_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-        if self._tts_task and not self._tts_task.done():
-            self._tts_task.cancel()
-            self._tts_task = None
