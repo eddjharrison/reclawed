@@ -13,7 +13,7 @@ from __future__ import annotations
 
 def test_mcp_actions_whitelist_exists():
     """_MCP_ACTIONS set is exported from the module."""
-    from reclawed.screens.mcp_manager import _MCP_ACTIONS
+    from clawdia.screens.mcp_manager import _MCP_ACTIONS
 
     assert isinstance(_MCP_ACTIONS, set)
     assert _MCP_ACTIONS == {"auth", "enable", "disable", "reconnect", "remove"}
@@ -21,7 +21,7 @@ def test_mcp_actions_whitelist_exists():
 
 def test_mcp_actions_whitelist_rejects_unknown():
     """Actions not in _MCP_ACTIONS are rejected."""
-    from reclawed.screens.mcp_manager import _MCP_ACTIONS
+    from clawdia.screens.mcp_manager import _MCP_ACTIONS
 
     assert "cancel" not in _MCP_ACTIONS
     assert "save" not in _MCP_ACTIONS
@@ -35,7 +35,7 @@ def test_mcp_actions_whitelist_rejects_unknown():
 
 def _parse_mcp_bid(bid: str, server_list: list) -> tuple[str, int, dict] | None:
     """Replicate the _handle_action parsing so we can unit-test it in isolation."""
-    from reclawed.screens.mcp_manager import _MCP_ACTIONS
+    from clawdia.screens.mcp_manager import _MCP_ACTIONS
 
     parts = bid.split("-", 3)
     if len(parts) < 4:
@@ -144,7 +144,7 @@ def test_parse_close_button_not_routed():
 
 def test_safe_id_removed():
     """_safe_id was dead code and must no longer exist in the module."""
-    import reclawed.screens.mcp_manager as mod
+    import clawdia.screens.mcp_manager as mod
 
     assert not hasattr(mod, "_safe_id"), (
         "_safe_id is dead code that was removed in the PR review; "

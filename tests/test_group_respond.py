@@ -17,10 +17,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from reclawed.config import Config
-from reclawed.models import Session
-from reclawed.store import Store
-from reclawed.widgets.status_bar import StatusBar
+from clawdia.config import Config
+from clawdia.models import Session
+from clawdia.store import Store
+from clawdia.widgets.status_bar import StatusBar
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ def _make_is_mentioned(name: str):
     calls the real method logic via an unbound call.
     """
     # Import here so the module is loaded after any fixture setup
-    from reclawed.screens.chat import ChatScreen
+    from clawdia.screens.chat import ChatScreen
 
     cfg = Config(participant_name=name)
     store = Store(":memory:")
@@ -176,25 +176,25 @@ class TestIsMentioned:
 
 class TestRespondModeCycle:
     def test_cycle_order(self):
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         modes = ChatScreen.ROOM_MODES
         assert modes == ["humans_only", "claude_assists", "full_auto", "claude_to_claude"]
 
     def test_cycle_wraps_around(self):
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         modes = ChatScreen.ROOM_MODES
         idx = modes.index("claude_to_claude")
         next_mode = modes[(idx + 1) % len(modes)]
         assert next_mode == "humans_only"
 
     def test_all_modes_covered(self):
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         assert set(ChatScreen.ROOM_MODES) == {
             "humans_only", "claude_assists", "full_auto", "claude_to_claude"
         }
 
     def test_all_modes_have_labels(self):
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         for mode in ChatScreen.ROOM_MODES:
             assert mode in ChatScreen.ROOM_MODE_LABELS
             assert mode in ChatScreen.ROOM_MODE_DESCRIPTIONS
@@ -325,7 +325,7 @@ class TestConfigGroupContext:
 class TestGroupContextPreamble:
     def _make_chat_screen(self, mode: str = "shared_history", window: int = 20):
         """Build a minimal ChatScreen-like object for testing preamble logic."""
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         cfg = Config(
             participant_name="Ed",
             group_context_mode=mode,
@@ -360,7 +360,7 @@ class TestGroupContextPreamble:
 
     def test_preamble_includes_recent_messages(self):
         obj = self._make_chat_screen()
-        from reclawed.models import Message
+        from clawdia.models import Message
         obj.store.add_message(Message(
             role="user", content="Hello from Ed",
             session_id=obj.session.id, sender_name="Ed",
@@ -376,7 +376,7 @@ class TestGroupContextPreamble:
 
     def test_preamble_respects_window_size(self):
         obj = self._make_chat_screen(window=2)
-        from reclawed.models import Message
+        from clawdia.models import Message
         for i in range(5):
             obj.store.add_message(Message(
                 role="user", content=f"Message {i}",
@@ -390,7 +390,7 @@ class TestGroupContextPreamble:
 
     def test_preamble_excludes_deleted(self):
         obj = self._make_chat_screen()
-        from reclawed.models import Message
+        from clawdia.models import Message
         m1 = Message(
             role="user", content="Visible",
             session_id=obj.session.id, sender_name="Ed",
@@ -408,7 +408,7 @@ class TestGroupContextPreamble:
 
     def test_no_preamble_in_isolated_mode(self):
         obj = self._make_chat_screen(mode="isolated")
-        from reclawed.models import Message
+        from clawdia.models import Message
         obj.store.add_message(Message(
             role="user", content="Hello",
             session_id=obj.session.id, sender_name="Ed",

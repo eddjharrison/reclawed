@@ -3,7 +3,7 @@
 
 def test_queued_message_defaults():
     """QueuedMessage stores text and optional attachments/reply."""
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     qm = QueuedMessage(text="hello")
     assert qm.text == "hello"
@@ -13,7 +13,7 @@ def test_queued_message_defaults():
 
 
 def test_queued_message_with_all_fields():
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     qm = QueuedMessage(
         text="hello",
@@ -29,7 +29,7 @@ def test_queued_message_with_all_fields():
 def test_per_session_queue_isolation():
     """Each session ID gets its own independent queue."""
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     queues: dict[str, deque[QueuedMessage]] = {}
 
@@ -48,7 +48,7 @@ def test_per_session_queue_isolation():
 def test_queue_fifo_order():
     """Queue drains in FIFO order."""
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     queue: deque[QueuedMessage] = deque()
     queue.append(QueuedMessage(text="first"))
@@ -63,7 +63,7 @@ def test_queue_fifo_order():
 
 def test_compose_area_has_set_queue_count():
     """ComposeArea exposes set_queue_count method."""
-    from reclawed.widgets.compose_area import ComposeArea
+    from clawdia.widgets.compose_area import ComposeArea
 
     area = ComposeArea()
     assert hasattr(area, "set_queue_count")
@@ -82,7 +82,7 @@ def test_queue_drain_resets_is_streaming_on_error():
     """
     import asyncio
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     is_streaming = True
     queue: deque[QueuedMessage] = deque([QueuedMessage(text="queued msg")])
@@ -109,7 +109,7 @@ def test_queue_drain_keeps_is_streaming_true_on_success():
     """On successful drain, _is_streaming stays True until the new worker clears it."""
     import asyncio
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     is_streaming = True
     queue: deque[QueuedMessage] = deque([QueuedMessage(text="queued msg")])
@@ -140,7 +140,7 @@ def test_queue_drain_clears_is_streaming_when_empty():
     """When queue is empty after stream ends, _is_streaming is cleared."""
     import asyncio
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     is_streaming = True
     queue: deque[QueuedMessage] = deque()  # nothing queued
@@ -160,7 +160,7 @@ def test_humans_only_drain_resets_is_streaming_on_error():
     """humans_only path: if queue drain raises, _is_streaming resets to False."""
     import asyncio
     from collections import deque
-    from reclawed.screens.chat import QueuedMessage
+    from clawdia.screens.chat import QueuedMessage
 
     is_streaming = True
     queue: deque[QueuedMessage] = deque([QueuedMessage(text="next")])
@@ -187,14 +187,14 @@ def test_humans_only_drain_resets_is_streaming_on_error():
 
 def test_compose_input_has_edit_queue_requested_message():
     """ComposeInput.EditQueueRequested message class exists."""
-    from reclawed.widgets.compose_area import ComposeInput
+    from clawdia.widgets.compose_area import ComposeInput
 
     assert hasattr(ComposeInput, "EditQueueRequested")
 
 
 def test_compose_area_queue_count_initialises_to_zero():
     """ComposeArea._queue_count starts at 0 (so up-arrow won't intercept on fresh widget)."""
-    from reclawed.widgets.compose_area import ComposeArea
+    from clawdia.widgets.compose_area import ComposeArea
 
     area = ComposeArea()
     assert area._queue_count == 0
@@ -202,7 +202,7 @@ def test_compose_area_queue_count_initialises_to_zero():
 
 def test_compose_area_set_queue_count_updates_internal_counter():
     """set_queue_count keeps _queue_count in sync so up-arrow logic is correct."""
-    from reclawed.widgets.compose_area import ComposeArea
+    from clawdia.widgets.compose_area import ComposeArea
 
     area = ComposeArea()
     # Directly exercise the counter update (DOM parts aren't mounted, so skip

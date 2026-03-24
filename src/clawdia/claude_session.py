@@ -27,7 +27,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from reclawed.claude import (
+from clawdia.claude import (
     StreamError, StreamEvent, StreamResult, StreamSessionId,
     StreamToken, StreamToolResult, StreamToolUse,
 )

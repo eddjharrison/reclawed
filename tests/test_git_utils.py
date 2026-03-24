@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from reclawed.git_utils import (
+from clawdia.git_utils import (
     ChangedFile,
     DiffHunk,
     FileDiff,

@@ -9,11 +9,11 @@ from textual.events import Click
 from textual.message import Message as TMessage
 from textual.widgets import Input, Label, Static
 
-from reclawed.config import Workspace
-from reclawed.models import Session
-from reclawed.store import Store
-from reclawed.widgets.chat_list_item import ChatListItem
-from reclawed.widgets.workspace_section import WorkspaceSection
+from clawdia.config import Workspace
+from clawdia.models import Session
+from clawdia.store import Store
+from clawdia.widgets.chat_list_item import ChatListItem
+from clawdia.widgets.workspace_section import WorkspaceSection
 
 
 class ChatSidebar(Vertical):

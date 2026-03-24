@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reclawed"
+name = "clawdia"
 version = "0.1.0"
 description = "WhatsApp-style TUI wrapper for Claude CLI with reply, quote, and threading"
 requires-python = ">=3.12"
@@ -23,8 +23,8 @@ dev = [
 ]
 
 [project.scripts]
-reclawed = "reclawed.cli:main"
-reclawed-relay = "reclawed.relay.server:main"
+clawdia = "clawdia.cli:main"
+clawdia-relay = "clawdia.relay.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

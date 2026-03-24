@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from reclawed.config import Config
-from reclawed.models import Message, Session
-from reclawed.store import Store
+from clawdia.config import Config
+from clawdia.models import Message, Session
+from clawdia.store import Store
 
 
 @pytest.fixture

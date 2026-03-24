@@ -20,7 +20,7 @@ import logging
 
 from websockets.asyncio.server import serve
 
-from reclawed.relay.server import _handler
+from clawdia.relay.server import _handler
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
-"""Allow running as `python -m reclawed`."""
+"""Allow running as `python -m clawdia`."""
 
-from reclawed.cli import main
+from clawdia.cli import main
 
 main()

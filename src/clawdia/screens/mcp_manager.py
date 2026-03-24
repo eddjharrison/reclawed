@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
-from reclawed.claude_settings import ClaudeSettingsManager
+from clawdia.claude_settings import ClaudeSettingsManager
 
 # Valid MCP action button prefixes — actions use btn-mcp-{action}-{index}
 _MCP_ACTIONS = {"auth", "enable", "disable", "reconnect", "remove"}
@@ -259,7 +259,7 @@ class McpManagerScreen(ModalScreen[bool]):
             self._handle_action(bid)
 
     def _add_server(self) -> None:
-        from reclawed.screens.settings import McpServerEditorScreen
+        from clawdia.screens.settings import McpServerEditorScreen
 
         def on_dismiss(result: "dict | None") -> None:
             if result:
@@ -330,7 +330,7 @@ class McpManagerScreen(ModalScreen[bool]):
         self.call_later(_do)
 
     def _confirm_remove(self, name: str, scope: str) -> None:
-        from reclawed.widgets.confirm_screen import ConfirmScreen
+        from clawdia.widgets.confirm_screen import ConfirmScreen
 
         def on_confirm(confirmed: bool) -> None:
             if confirmed:

@@ -109,7 +109,7 @@ class ReviewLauncherScreen(ModalScreen[dict | None]):
     async def on_mount(self) -> None:
         """Fetch git branches for autocomplete."""
         try:
-            from reclawed.git_utils import git_branches
+            from clawdia.git_utils import git_branches
             branches = await git_branches(self._cwd)
             # Also include common refs
             branches = list(dict.fromkeys(branches + ["HEAD", "main", "master"]))

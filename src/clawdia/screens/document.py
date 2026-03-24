@@ -346,7 +346,7 @@ class DocumentScreen(ModalScreen[bool]):
 
         # Warn before closing with unsaved changes.
         if self._dirty:
-            from reclawed.widgets.confirm_screen import ConfirmScreen  # local import avoids cycle
+            from clawdia.widgets.confirm_screen import ConfirmScreen  # local import avoids cycle
 
             def _on_confirm(confirmed: bool) -> None:
                 if confirmed:

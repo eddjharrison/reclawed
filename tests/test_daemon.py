@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from reclawed.relay.daemon import (
+from clawdia.relay.daemon import (
     _info_path,
     _pid_alive,
     _port_responsive,

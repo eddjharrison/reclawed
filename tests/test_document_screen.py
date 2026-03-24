@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from reclawed.screens.document import DocumentScreen, _detect_language
-from reclawed.screens.memory import _memory_dir_for_cwd, _human_size
+from clawdia.screens.document import DocumentScreen, _detect_language
+from clawdia.screens.memory import _memory_dir_for_cwd, _human_size
 
 
 # ---------------------------------------------------------------------------

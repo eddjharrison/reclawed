@@ -7,7 +7,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message as TMessage
 from textual.widgets import Button, Label
 
-from reclawed.widgets.tool_activity import _tool_summary
+from clawdia.widgets.tool_activity import _tool_summary
 
 
 class ToolApprovalWidget(Vertical):

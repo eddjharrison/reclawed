@@ -22,7 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
-from reclawed.screens.document import DocumentScreen
+from clawdia.screens.document import DocumentScreen
 
 
 def _memory_dir_for_cwd(cwd: str | None) -> Path | None:
@@ -378,7 +378,7 @@ class MemoryScreen(ModalScreen[bool]):
             self.notify("No file selected", severity="warning", timeout=2)
             return
 
-        from reclawed.widgets.confirm_screen import ConfirmScreen  # local import
+        from clawdia.widgets.confirm_screen import ConfirmScreen  # local import
         confirmed = await self.app.push_screen_wait(
             ConfirmScreen(
                 "Delete Memory File",

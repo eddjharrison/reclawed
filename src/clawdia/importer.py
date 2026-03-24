@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reclawed.models import Message, Session
-from reclawed.store import Store
+from clawdia.models import Message, Session
+from clawdia.store import Store
 
 _SESSION_NAME_MAX = 60
 

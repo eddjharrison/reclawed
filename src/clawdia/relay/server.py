@@ -24,7 +24,7 @@ import click
 import websockets
 from websockets.asyncio.server import ServerConnection, serve
 
-from reclawed.relay.protocol import RelayMessage
+from clawdia.relay.protocol import RelayMessage
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,8 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.reactive import reactive
 
-from reclawed.models import Message
-from reclawed.widgets.message_bubble import MessageBubble
+from clawdia.models import Message
+from clawdia.widgets.message_bubble import MessageBubble
 
 
 class MessageList(VerticalScroll):

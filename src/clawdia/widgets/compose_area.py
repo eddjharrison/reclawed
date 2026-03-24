@@ -10,7 +10,7 @@ from textual.message import Message as TMessage
 from textual.events import Click
 from textual.widgets import Button, Label, TextArea
 
-from reclawed.widgets.attachment_preview import AttachmentPreview
+from clawdia.widgets.attachment_preview import AttachmentPreview
 
 
 class ComposeInput(TextArea):

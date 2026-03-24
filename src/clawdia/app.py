@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from textual.app import App
 
-from reclawed.commands import ReclawedCommands
-from reclawed.config import Config
-from reclawed.crypto import load_or_create_local_key
-from reclawed.screens.chat import ChatScreen
-from reclawed.store import Store
+from clawdia.commands import ReclawedCommands
+from clawdia.config import Config
+from clawdia.crypto import load_or_create_local_key
+from clawdia.screens.chat import ChatScreen
+from clawdia.store import Store
 
 
 class ReclawedApp(App):

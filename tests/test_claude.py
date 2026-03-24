@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from reclawed.claude import ClaudeProcess, StreamResult, StreamSessionId, StreamToken
+from clawdia.claude import ClaudeProcess, StreamResult, StreamSessionId, StreamToken
 
 
 @pytest.fixture

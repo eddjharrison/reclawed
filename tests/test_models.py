@@ -1,7 +1,7 @@
 """Tests for data models and related screen helpers."""
 
-from reclawed.models import Message, Session
-from reclawed.screens.chat import ChatScreen
+from clawdia.models import Message, Session
+from clawdia.screens.chat import ChatScreen
 
 
 def test_message_defaults():

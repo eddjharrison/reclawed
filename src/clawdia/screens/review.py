@@ -11,8 +11,8 @@ from textual.widgets import Label, RichLog
 
 from textual import work
 
-from reclawed.git_utils import FileDiff, parse_unified_diff
-from reclawed.review_engine import Annotation, FileReview, review_file, format_review_markdown
+from clawdia.git_utils import FileDiff, parse_unified_diff
+from clawdia.review_engine import Annotation, FileReview, review_file, format_review_markdown
 
 
 class ReviewScreen(ModalScreen[dict | None]):
@@ -319,7 +319,7 @@ class ReviewScreen(ModalScreen[dict | None]):
             # Detect model from app config if available
             model = "sonnet"
             try:
-                from reclawed.screens.chat import ChatScreen
+                from clawdia.screens.chat import ChatScreen
                 screen = self.app.screen
                 if isinstance(screen, ReviewScreen):
                     # Walk up the screen stack to find ChatScreen
@@ -364,7 +364,7 @@ class ReviewScreen(ModalScreen[dict | None]):
     @work(exclusive=True, group="post-review")
     async def _post_review_to_github(self, reviews: list[FileReview]) -> None:
         """Post the review to GitHub in a worker thread."""
-        from reclawed.git_utils import post_pr_review
+        from clawdia.git_utils import post_pr_review
 
         # Build markdown body
         body = format_review_markdown(reviews, title=self._title)

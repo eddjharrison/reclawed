@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
-from reclawed.config import Workspace
+from clawdia.config import Workspace
 
 # Sentinel value for the Default workspace (no cwd).
 PICK_DEFAULT = "_default"

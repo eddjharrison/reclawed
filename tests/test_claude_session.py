@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from reclawed.claude import StreamError, StreamResult, StreamSessionId, StreamToken
+from clawdia.claude import StreamError, StreamResult, StreamSessionId, StreamToken
 
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ from reclawed.claude import StreamError, StreamResult, StreamSessionId, StreamTo
 # ---------------------------------------------------------------------------
 
 def test_claude_session_defaults():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     assert s._cli_path == "claude"
@@ -26,7 +26,7 @@ def test_claude_session_defaults():
 
 
 def test_claude_session_custom_options():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession(
         cli_path="/usr/bin/claude",
@@ -47,10 +47,10 @@ def test_claude_session_custom_options():
 
 def test_claude_session_env_guard():
     """Verify the CLAUDECODE env var is unset in SDK options."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
-    with patch("reclawed.claude_session.ClaudeSDKClient") as MockClient:
-        with patch("reclawed.claude_session.ClaudeAgentOptions") as MockOpts:
+    with patch("clawdia.claude_session.ClaudeSDKClient") as MockClient:
+        with patch("clawdia.claude_session.ClaudeAgentOptions") as MockOpts:
             s = ClaudeSession()
             # start() would call ClaudeAgentOptions with env={"CLAUDECODE": ""}
             # We can't call start() without a real SDK, but we can verify the
@@ -104,7 +104,7 @@ async def test_send_message_maps_text_to_stream_token(
     mock_assistant_message, mock_result_message
 ):
     """AssistantMessage with TextBlock → StreamToken."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
 
@@ -132,7 +132,7 @@ async def test_send_message_maps_text_to_stream_token(
 
 async def test_send_message_maps_result(mock_assistant_message, mock_result_message):
     """ResultMessage → StreamSessionId + StreamResult."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
 
@@ -168,7 +168,7 @@ async def test_send_message_maps_result(mock_assistant_message, mock_result_mess
 
 async def test_send_message_without_client_yields_error():
     """send_message when start() failed yields StreamError."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     # Simulate start() completing but failing — _client stays None
@@ -185,7 +185,7 @@ async def test_send_message_without_client_yields_error():
 
 async def test_send_message_exception_yields_error():
     """SDK exception → StreamError."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
 
@@ -205,7 +205,7 @@ async def test_send_message_exception_yields_error():
 
 async def test_send_message_with_reply_context():
     """Reply context is prepended to the prompt."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
 
@@ -235,7 +235,7 @@ async def test_send_message_with_reply_context():
 # ---------------------------------------------------------------------------
 
 def test_cancel_calls_interrupt():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     mock_client = MagicMock()
@@ -246,7 +246,7 @@ def test_cancel_calls_interrupt():
 
 
 def test_cancel_without_client_is_noop():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     s.cancel()  # Should not raise
@@ -257,7 +257,7 @@ def test_cancel_without_client_is_noop():
 # ---------------------------------------------------------------------------
 
 def test_set_model_updates_internal_and_client():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     mock_client = MagicMock()
@@ -269,7 +269,7 @@ def test_set_model_updates_internal_and_client():
 
 
 def test_set_model_without_client():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     s.set_model("haiku")
@@ -281,14 +281,14 @@ def test_set_model_without_client():
 # ---------------------------------------------------------------------------
 
 def test_session_id_property_initially_none():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     assert s.session_id is None
 
 
 async def test_session_id_captured_from_result(mock_assistant_message, mock_result_message):
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = ClaudeSession()
     mock_client = AsyncMock()
