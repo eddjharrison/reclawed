@@ -1580,14 +1580,6 @@ class ChatScreen(Screen):
                     content_parts.append(event.text)
                     now = time.monotonic()
 
-                    # Voice TTS: queue complete sentences for playback
-                    if self._voice_active and self.config.voice_auto_play and self._voice_engine:
-                        accumulated = "".join(content_parts)
-                        for sentence in self._extract_tts_sentences(accumulated):
-                            if sentence not in self._tts_spoken:
-                                self._tts_spoken.add(sentence)
-                                await self._voice_engine.speak_streaming(sentence)
-
                     # Only update UI if this session is still visible
                     if _is_active():
                         elapsed = now - stream_start
@@ -1711,11 +1703,10 @@ class ChatScreen(Screen):
                             )
                             msg_list.scroll_end(animate=False)
 
-                        # Voice TTS: speak full response if nothing was spoken during streaming
+                        # Voice TTS: speak full response when streaming completes
                         if (self._voice_active and self.config.voice_auto_play
-                                and self._voice_engine and not self._tts_spoken):
+                                and self._voice_engine):
                             await self._voice_engine.speak(assistant_msg.content or "")
-                        self._tts_spoken.clear()
 
                         # Auto-spawn if orchestrator in bypass mode
                         if stream_session.session_type == "orchestrator":
