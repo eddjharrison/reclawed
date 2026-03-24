@@ -4,23 +4,62 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Best-sounding edge-tts voices per language (tested for naturalness)
+# Most natural-sounding edge-tts voices (tested March 2026)
 RECOMMENDED_VOICES = {
-    "en": "en-US-AndrewMultilingualNeural",  # very natural, good pacing
-    "en-gb": "en-GB-RyanNeural",
-    "fr": "fr-FR-HenriNeural",
-    "de": "de-DE-ConradNeural",
-    "es": "es-ES-AlvaroNeural",
-    "it": "it-IT-DiegoNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "zh": "zh-CN-YunxiNeural",
+    "en": "en-US-AvaMultilingualNeural",
+    "en-gb": "en-GB-SoniaNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "es": "es-ES-ElviraNeural",
+    "it": "it-IT-ElsaNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
 }
+
+
+def _clean_for_speech(text: str) -> str:
+    """Strip markdown/code artifacts that sound terrible when spoken.
+
+    Converts technical text into something a TTS engine can read naturally.
+    """
+    # Remove code blocks entirely — reading code aloud is useless
+    text = re.sub(r'```[\s\S]*?```', ' (code omitted) ', text)
+    # Remove inline code backticks
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Remove markdown bold/italic
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    text = re.sub(r'__([^_]+)__', r'\1', text)
+    # Remove markdown headers
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Remove markdown links — keep the label
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # Remove bullet points
+    text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
+    # Remove numbered list prefixes
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    # Remove table formatting
+    text = re.sub(r'\|', ' ', text)
+    # Collapse multiple spaces/newlines
+    text = re.sub(r'\n{2,}', '. ', text)
+    text = re.sub(r'\n', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    # Remove tool activity lines (Reading file.py..., Running: pytest, etc.)
+    text = re.sub(r'\*\*(Reading|Editing|Writing|Running|Searching)\*\*\s+[^\n]+', '', text)
+    # Clean up repeated dots and punctuation
+    text = re.sub(r'\.{2,}', '.', text)
+    text = re.sub(r'\.\s*\.', '.', text)
+    text = re.sub(r'\(\s*\)', '', text)
+    return text.strip()
 
 
 class BaseTTS:
@@ -37,32 +76,23 @@ class EdgeTTS(BaseTTS):
     """Free Microsoft TTS via edge-tts library.
 
     Good quality, requires internet, no API key.
-    Uses streaming audio playback for lower latency.
     """
 
     def __init__(self, voice: str | None = None, language: str = "en"):
-        # Pick best voice for language if not specified
         self._voice = voice or RECOMMENDED_VOICES.get(language, RECOMMENDED_VOICES["en"])
         self._current_process = None
         self._cancelled = False
 
     async def speak(self, text: str) -> None:
-        if not text.strip() or self._cancelled:
+        text = _clean_for_speech(text)
+        if not text or self._cancelled:
             return
         self._cancelled = False
         try:
             import edge_tts
 
-            # Use SSML-like rate adjustment for more natural pacing
-            # Slightly faster than default sounds more conversational
-            communicate = edge_tts.Communicate(
-                text, self._voice,
-                rate="+10%",    # slightly faster — more natural for code discussion
-                pitch="+0Hz",   # keep default pitch
-            )
+            communicate = edge_tts.Communicate(text, self._voice)
 
-            # Stream to temp file — edge-tts doesn't support raw PCM streaming
-            # but we start playback as soon as the file is written
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tmp_path = f.name
 
@@ -81,11 +111,10 @@ class EdgeTTS(BaseTTS):
             log.warning("TTS playback failed: %s", exc)
 
     async def _play_audio(self, path: str) -> None:
-        """Play an audio file using platform tools."""
+        """Play an audio file at natural speed."""
         if sys.platform == "darwin":
-            # afplay with rate adjustment for snappier playback
             self._current_process = await asyncio.create_subprocess_exec(
-                "afplay", "-r", "1.15", path,  # 15% faster playback
+                "afplay", path,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -97,7 +126,7 @@ class EdgeTTS(BaseTTS):
                 stderr=asyncio.subprocess.DEVNULL,
             )
         else:
-            for player in ("mpv --no-terminal --speed=1.15", "aplay", "paplay"):
+            for player in ("mpv --no-terminal", "aplay", "paplay"):
                 cmd = player.split() + [path]
                 try:
                     self._current_process = await asyncio.create_subprocess_exec(
@@ -124,19 +153,19 @@ class EdgeTTS(BaseTTS):
 
 
 class SystemTTS(BaseTTS):
-    """Platform system TTS — instant, robotic, no internet needed."""
+    """Platform system TTS — instant, no internet needed."""
 
     def __init__(self):
         self._current_process = None
 
     async def speak(self, text: str) -> None:
-        if not text.strip():
+        text = _clean_for_speech(text)
+        if not text:
             return
         try:
             if sys.platform == "darwin":
-                # Use Samantha voice on macOS — more natural than default
                 self._current_process = await asyncio.create_subprocess_exec(
-                    "say", "-v", "Samantha", "-r", "210", text,
+                    "say", "-v", "Samantha", text,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -144,7 +173,6 @@ class SystemTTS(BaseTTS):
                 ps_cmd = (
                     "Add-Type -AssemblyName System.Speech; "
                     "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                    "$s.Rate = 2; "
                     f"$s.Speak('{text.replace(chr(39), chr(39)+chr(39))}');"
                 )
                 self._current_process = await asyncio.create_subprocess_exec(
@@ -154,7 +182,7 @@ class SystemTTS(BaseTTS):
                 )
             else:
                 self._current_process = await asyncio.create_subprocess_exec(
-                    "espeak", "-s", "180", text,
+                    "espeak", text,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
