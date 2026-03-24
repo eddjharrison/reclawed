@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 
-class ReclawedCommands(Provider):
+class ClawdiaCommands(Provider):
     """Adds Re:Clawed-specific commands to the command palette."""
 
     async def discover(self) -> Hits:
