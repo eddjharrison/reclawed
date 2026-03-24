@@ -26,8 +26,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
-from reclawed.crypto import decrypt_content, encrypt_content, is_encrypted
-from reclawed.relay.protocol import RelayMessage
+from clawdia.crypto import decrypt_content, encrypt_content, is_encrypted
+from clawdia.relay.protocol import RelayMessage
 
 logger = logging.getLogger(__name__)
 

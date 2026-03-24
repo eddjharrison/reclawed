@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from reclawed.utils import copy_to_clipboard, format_relative_time
+from clawdia.utils import copy_to_clipboard, format_relative_time
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +53,8 @@ def _make_run_fail(*args, **kwargs):
     raise FileNotFoundError("not found")
 
 
-@patch("reclawed.utils.platform.system", return_value="Darwin")
-@patch("reclawed.utils.subprocess.run", side_effect=_make_run_ok)
+@patch("clawdia.utils.platform.system", return_value="Darwin")
+@patch("clawdia.utils.subprocess.run", side_effect=_make_run_ok)
 def test_copy_clipboard_macos_success(mock_run, mock_system):
     """On macOS, pbcopy is invoked and True is returned on success."""
     result = copy_to_clipboard("hello")
@@ -63,8 +63,8 @@ def test_copy_clipboard_macos_success(mock_run, mock_system):
     assert cmd == ["pbcopy"]
 
 
-@patch("reclawed.utils.platform.system", return_value="Windows")
-@patch("reclawed.utils.subprocess.run", side_effect=_make_run_ok)
+@patch("clawdia.utils.platform.system", return_value="Windows")
+@patch("clawdia.utils.subprocess.run", side_effect=_make_run_ok)
 def test_copy_clipboard_windows_success(mock_run, mock_system):
     """On Windows, clip.exe is invoked and True is returned on success."""
     result = copy_to_clipboard("hello")
@@ -73,8 +73,8 @@ def test_copy_clipboard_windows_success(mock_run, mock_system):
     assert cmd == ["clip.exe"]
 
 
-@patch("reclawed.utils.platform.system", return_value="Linux")
-@patch("reclawed.utils.subprocess.run", side_effect=_make_run_ok)
+@patch("clawdia.utils.platform.system", return_value="Linux")
+@patch("clawdia.utils.subprocess.run", side_effect=_make_run_ok)
 def test_copy_clipboard_linux_xclip_success(mock_run, mock_system):
     """On Linux, xclip is tried first and True is returned on success."""
     result = copy_to_clipboard("hello")
@@ -83,7 +83,7 @@ def test_copy_clipboard_linux_xclip_success(mock_run, mock_system):
     assert cmd[0] == "xclip"
 
 
-@patch("reclawed.utils.platform.system", return_value="Linux")
+@patch("clawdia.utils.platform.system", return_value="Linux")
 def test_copy_clipboard_linux_falls_back_to_xsel(mock_system):
     """On Linux, if xclip is absent, xsel is tried next."""
     import subprocess
@@ -97,7 +97,7 @@ def test_copy_clipboard_linux_falls_back_to_xsel(mock_system):
             raise FileNotFoundError("xclip not found")
         return subprocess.CompletedProcess(args=cmd, returncode=0)
 
-    with patch("reclawed.utils.subprocess.run", side_effect=selective_fail):
+    with patch("clawdia.utils.subprocess.run", side_effect=selective_fail):
         result = copy_to_clipboard("hello")
 
     assert result is True
@@ -105,16 +105,16 @@ def test_copy_clipboard_linux_falls_back_to_xsel(mock_system):
     assert call_log[1][0] == "xsel"
 
 
-@patch("reclawed.utils.platform.system", return_value="Linux")
-@patch("reclawed.utils.subprocess.run", side_effect=FileNotFoundError("nothing"))
+@patch("clawdia.utils.platform.system", return_value="Linux")
+@patch("clawdia.utils.subprocess.run", side_effect=FileNotFoundError("nothing"))
 def test_copy_clipboard_all_fail_returns_false(mock_run, mock_system):
     """Returns False when every clipboard candidate is unavailable."""
     result = copy_to_clipboard("hello")
     assert result is False
 
 
-@patch("reclawed.utils.platform.system", return_value="Darwin")
-@patch("reclawed.utils.subprocess.run", side_effect=FileNotFoundError("no pbcopy"))
+@patch("clawdia.utils.platform.system", return_value="Darwin")
+@patch("clawdia.utils.subprocess.run", side_effect=FileNotFoundError("no pbcopy"))
 def test_copy_clipboard_macos_missing_pbcopy(mock_run, mock_system):
     """Returns False on macOS when pbcopy is not installed."""
     result = copy_to_clipboard("hello")
@@ -130,8 +130,8 @@ def test_copy_clipboard_encodes_unicode():
         captured.append(kwargs.get("input", b""))
         return subprocess.CompletedProcess(args=args[0], returncode=0)
 
-    with patch("reclawed.utils.platform.system", return_value="Darwin"):
-        with patch("reclawed.utils.subprocess.run", side_effect=capture_input):
+    with patch("clawdia.utils.platform.system", return_value="Darwin"):
+        with patch("clawdia.utils.subprocess.run", side_effect=capture_input):
             copy_to_clipboard("caf\u00e9")
 
     assert captured[0] == "café".encode("utf-8")

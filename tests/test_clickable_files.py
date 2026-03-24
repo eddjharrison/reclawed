@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from reclawed.models import Message
-from reclawed.widgets.message_bubble import (
+from clawdia.models import Message
+from clawdia.widgets.message_bubble import (
     AttachmentIndicator,
     MessageBubble,
 )
@@ -114,7 +114,7 @@ class TestMessageBubbleMessages:
 
     def test_attachment_indicator_class_exists(self):
         """AttachmentIndicator is importable from message_bubble."""
-        from reclawed.widgets.message_bubble import AttachmentIndicator
+        from clawdia.widgets.message_bubble import AttachmentIndicator
         assert AttachmentIndicator is not None
 
     def test_message_bubble_with_attachment_in_content(self):
@@ -138,24 +138,24 @@ class TestParseAttachments:
 
     def test_import(self):
         """parse_attachments is importable from utils."""
-        from reclawed.utils import parse_attachments
+        from clawdia.utils import parse_attachments
         assert callable(parse_attachments)
 
     def test_no_attachments_returns_empty(self):
         """Plain text content returns an empty attachments list."""
-        from reclawed.utils import parse_attachments
+        from clawdia.utils import parse_attachments
         result = parse_attachments("Hello, this is a plain message with no attachments.")
         assert result == []
 
     def test_none_content_returns_empty(self):
         """None content returns an empty list without raising."""
-        from reclawed.utils import parse_attachments
+        from clawdia.utils import parse_attachments
         result = parse_attachments(None)
         assert result == []
 
     def test_empty_string_returns_empty(self):
         """Empty string content returns an empty list."""
-        from reclawed.utils import parse_attachments
+        from clawdia.utils import parse_attachments
         result = parse_attachments("")
         assert result == []
 
@@ -195,60 +195,60 @@ class TestMessageBubbleFileClicked:
 
 class TestFilePathForTool:
     def test_read_returns_file_path(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Read", {"file_path": "/tmp/foo.py"}) == "/tmp/foo.py"
 
     def test_edit_returns_file_path(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Edit", {"file_path": "src/config.py"}) == "src/config.py"
 
     def test_multiedit_returns_file_path(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("MultiEdit", {"file_path": "app.py"}) == "app.py"
 
     def test_write_returns_file_path(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Write", {"file_path": "out.md"}) == "out.md"
 
     def test_bash_returns_none(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Bash", {"command": "ls"}) is None
 
     def test_grep_returns_none(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Grep", {"pattern": "foo"}) is None
 
     def test_missing_file_path_key_returns_none(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Read", {}) is None
 
     def test_empty_file_path_returns_none(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("Edit", {"file_path": ""}) is None
 
     def test_unknown_tool_returns_none(self):
-        from reclawed.widgets.tool_activity import _file_path_for_tool
+        from clawdia.widgets.tool_activity import _file_path_for_tool
         assert _file_path_for_tool("UnknownTool", {"file_path": "x.py"}) is None
 
 
 class TestToolActivityWidgetFileClicked:
     def test_file_clicked_stores_path(self):
-        from reclawed.widgets.tool_activity import ToolActivityWidget
+        from clawdia.widgets.tool_activity import ToolActivityWidget
         msg = ToolActivityWidget.FileClicked("/path/to/file.py")
         assert msg.path == "/path/to/file.py"
 
     def test_file_clicked_empty_path(self):
-        from reclawed.widgets.tool_activity import ToolActivityWidget
+        from clawdia.widgets.tool_activity import ToolActivityWidget
         msg = ToolActivityWidget.FileClicked("")
         assert msg.path == ""
 
     def test_file_clicked_class_exists(self):
-        from reclawed.widgets.tool_activity import ToolActivityWidget
+        from clawdia.widgets.tool_activity import ToolActivityWidget
         assert hasattr(ToolActivityWidget, "FileClicked")
 
     def test_file_clicked_is_textual_message(self):
         from textual.message import Message as TMessage
-        from reclawed.widgets.tool_activity import ToolActivityWidget
+        from clawdia.widgets.tool_activity import ToolActivityWidget
         msg = ToolActivityWidget.FileClicked("foo.py")
         assert isinstance(msg, TMessage)
 
@@ -257,7 +257,7 @@ class TestToolActivityWidgetInit:
     """Test that _file_path is correctly set during __init__."""
 
     def _make(self, tool_name, tool_input):
-        from reclawed.widgets.tool_activity import ToolActivityWidget, _file_path_for_tool
+        from clawdia.widgets.tool_activity import ToolActivityWidget, _file_path_for_tool
         w = ToolActivityWidget.__new__(ToolActivityWidget)
         w._tool_use_id = "id"
         w._tool_name = tool_name
@@ -370,7 +370,7 @@ class TestExtractFilePaths:
     """Tests for extract_file_paths() in message_bubble.py."""
 
     def _run(self, content: str) -> list[str]:
-        from reclawed.widgets.message_bubble import extract_file_paths
+        from clawdia.widgets.message_bubble import extract_file_paths
         return extract_file_paths(content)
 
     def test_backtick_relative_path(self):
@@ -441,13 +441,13 @@ class TestExtractFilePaths:
 
     def test_clickable_file_chip_instantiation(self):
         """ClickableFileChip can be instantiated with a path."""
-        from reclawed.widgets.message_bubble import ClickableFileChip
+        from clawdia.widgets.message_bubble import ClickableFileChip
         chip = ClickableFileChip("src/config.py")
         assert chip._path == "src/config.py"
 
     def test_clickable_file_chip_short_display(self):
         """ClickableFileChip shows last 2 path components for long paths."""
-        from reclawed.widgets.message_bubble import ClickableFileChip
+        from clawdia.widgets.message_bubble import ClickableFileChip
         chip = ClickableFileChip("/Users/ed/deep/nested/src/config.py")
         assert chip._path == "/Users/ed/deep/nested/src/config.py"
         # Display should be shortened (last 2 parts: src/config.py)

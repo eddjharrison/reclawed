@@ -8,7 +8,7 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select, TextArea
 
-from reclawed.config import WorkerTemplate
+from clawdia.config import WorkerTemplate
 
 _NO_TEMPLATE = "__none__"
 

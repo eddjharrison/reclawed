@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from reclawed.relay.protocol import RelayMessage
+from clawdia.relay.protocol import RelayMessage
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ async def relay_server():
 
     from websockets.asyncio.server import serve
 
-    from reclawed.relay import server as srv
+    from clawdia.relay import server as srv
 
     # Obtain a free port
     with socket.socket() as s:
@@ -180,7 +180,7 @@ async def relay_server():
 @pytest.mark.asyncio
 async def test_two_clients_exchange_messages(relay_server):
     """Alice sends a message; Bob receives it."""
-    from reclawed.relay.client import RelayClient
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -211,7 +211,7 @@ async def test_two_clients_exchange_messages(relay_server):
 @pytest.mark.asyncio
 async def test_server_assigns_monotonic_seq(relay_server):
     """Multiple messages should get strictly increasing seq numbers."""
-    from reclawed.relay.client import RelayClient
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -241,7 +241,7 @@ async def test_server_assigns_monotonic_seq(relay_server):
 @pytest.mark.asyncio
 async def test_presence_on_join(relay_server):
     """Joining client receives a presence message listing room members."""
-    from reclawed.relay.client import RelayClient
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -262,8 +262,8 @@ async def test_presence_on_join(relay_server):
 @pytest.mark.asyncio
 async def test_encrypted_message_exchange(relay_server):
     """Two clients with the same room key can exchange encrypted messages."""
-    from reclawed.crypto import derive_room_key
-    from reclawed.relay.client import RelayClient
+    from clawdia.crypto import derive_room_key
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -291,8 +291,8 @@ async def test_encrypted_message_exchange(relay_server):
 @pytest.mark.asyncio
 async def test_encrypted_edit_exchange(relay_server):
     """Edit messages are encrypted and decrypted correctly."""
-    from reclawed.crypto import derive_room_key
-    from reclawed.relay.client import RelayClient
+    from clawdia.crypto import derive_room_key
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -319,8 +319,8 @@ async def test_encrypted_edit_exchange(relay_server):
 @pytest.mark.asyncio
 async def test_no_key_receives_ciphertext(relay_server):
     """A client without a room key sees the raw encrypted envelope."""
-    from reclawed.crypto import derive_room_key, is_encrypted
-    from reclawed.relay.client import RelayClient
+    from clawdia.crypto import derive_room_key, is_encrypted
+    from clawdia.relay.client import RelayClient
 
     host, port = relay_server
     url = f"ws://{host}:{port}"
@@ -355,7 +355,7 @@ async def test_auth_token_rejected(relay_server):
     from websockets.asyncio.client import connect
     from websockets.asyncio.server import serve
 
-    from reclawed.relay import server as srv
+    from clawdia.relay import server as srv
 
     # Start a second server with a required token
     with socket.socket() as s:

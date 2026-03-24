@@ -8,7 +8,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
-from reclawed.claude_settings import (
+from clawdia.claude_settings import (
     ClaudeSettingsManager,
     HookEntry,
     HookGroup,
@@ -173,7 +173,7 @@ class HooksManagerScreen(ModalScreen[bool]):
             self._delete_hook(idx)
 
     def _add_hook(self) -> None:
-        from reclawed.screens.settings import HookEditorScreen
+        from clawdia.screens.settings import HookEditorScreen
 
         def on_dismiss(result: dict | None) -> None:
             if result:
@@ -192,7 +192,7 @@ class HooksManagerScreen(ModalScreen[bool]):
         self.app.push_screen(HookEditorScreen(), on_dismiss)
 
     def _edit_hook(self, idx: int) -> None:
-        from reclawed.screens.settings import HookEditorScreen
+        from clawdia.screens.settings import HookEditorScreen
 
         mgr = ClaudeSettingsManager(project_dir=self._project_dir)
         hooks = mgr.load_hooks()
@@ -241,7 +241,7 @@ class HooksManagerScreen(ModalScreen[bool]):
         )
 
     def _delete_hook(self, idx: int) -> None:
-        from reclawed.widgets.confirm_screen import ConfirmScreen
+        from clawdia.widgets.confirm_screen import ConfirmScreen
 
         mgr = ClaudeSettingsManager(project_dir=self._project_dir)
         hooks = mgr.load_hooks()

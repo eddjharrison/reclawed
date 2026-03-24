@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from reclawed.crypto import (
+from clawdia.crypto import (
     decrypt_content,
     derive_room_key,
     encrypt_content,

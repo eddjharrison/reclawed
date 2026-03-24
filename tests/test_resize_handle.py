@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from reclawed.widgets.resize_handle import SidebarResizeHandle, _MIN_WIDTH, _MAX_WIDTH
+from clawdia.widgets.resize_handle import SidebarResizeHandle, _MIN_WIDTH, _MAX_WIDTH
 
 
 # ---------------------------------------------------------------------------

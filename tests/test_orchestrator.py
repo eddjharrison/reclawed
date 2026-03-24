@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from reclawed.models import Session
-from reclawed.store import Store
-from reclawed.utils import detect_worker_proposals
-from reclawed.widgets.chat_list_item import ChatListItem
-from reclawed.widgets.chat_sidebar import ChatSidebar
+from clawdia.models import Session
+from clawdia.store import Store
+from clawdia.utils import detect_worker_proposals
+from clawdia.widgets.chat_list_item import ChatListItem
+from clawdia.widgets.chat_sidebar import ChatSidebar
 
 
 def test_session_field_defaults():

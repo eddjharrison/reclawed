@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
 
-class ReclawedCommands(Provider):
+class ClawdiaCommands(Provider):
     """Adds Re:Clawed-specific commands to the command palette."""
 
     async def discover(self) -> Hits:
@@ -76,37 +76,37 @@ class ReclawedCommands(Provider):
                 )
 
     async def _open_settings(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_settings()
 
     async def _change_display_name(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_change_display_name()
 
     async def _spawn_worker_from_template(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_spawn_worker()
 
     async def _open_memory_browser(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_memory_browser()
 
     async def _open_file(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_open_file()
 
     async def _review_code(self) -> None:
-        from reclawed.screens.chat import ChatScreen
+        from clawdia.screens.chat import ChatScreen
         screen = self.app.screen
         if isinstance(screen, ChatScreen):
             screen.action_review_code()

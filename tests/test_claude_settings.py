@@ -11,7 +11,7 @@ def _write_json(path: Path, data: dict) -> None:
 
 def test_load_hooks_empty(tmp_path):
     """No settings files → empty hooks list."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     mgr = ClaudeSettingsManager(
         project_dir=str(tmp_path),
@@ -23,7 +23,7 @@ def test_load_hooks_empty(tmp_path):
 
 def test_load_hooks_project_scope(tmp_path):
     """Reads hooks from project .claude/settings.json."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     _write_json(tmp_path / ".claude" / "settings.json", {
         "permissions": {"allow": ["Read"]},
@@ -45,7 +45,7 @@ def test_load_hooks_project_scope(tmp_path):
 
 def test_load_hooks_all_scopes(tmp_path):
     """Hooks from all three scopes are merged with correct tags."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     # Project scope
     _write_json(tmp_path / ".claude" / "settings.json", {
@@ -74,7 +74,7 @@ def test_load_hooks_all_scopes(tmp_path):
 
 def test_load_hooks_malformed_json(tmp_path):
     """Malformed JSON returns empty, no crash."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     (tmp_path / ".claude").mkdir(parents=True)
     (tmp_path / ".claude" / "settings.json").write_text("not json{", encoding="utf-8")
@@ -88,7 +88,7 @@ def test_load_hooks_malformed_json(tmp_path):
 
 def test_load_mcp_project_scope(tmp_path):
     """Reads MCP servers from .mcp.json."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     _write_json(tmp_path / ".mcp.json", {
         "mcpServers": {
@@ -109,7 +109,7 @@ def test_load_mcp_project_scope(tmp_path):
 
 def test_load_mcp_all_scopes(tmp_path):
     """MCP servers from all three scopes are merged."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     _write_json(tmp_path / ".mcp.json", {
         "mcpServers": {"proj-srv": {"command": "a"}},
@@ -135,7 +135,7 @@ def test_load_mcp_all_scopes(tmp_path):
 
 def test_save_hook_creates_file(tmp_path):
     """save_hook creates settings file if absent."""
-    from reclawed.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry
+    from clawdia.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry
 
     mgr = ClaudeSettingsManager(
         project_dir=str(tmp_path),
@@ -154,7 +154,7 @@ def test_save_hook_creates_file(tmp_path):
 
 def test_save_hook_preserves_other_keys(tmp_path):
     """save_hook doesn't clobber permissions or other keys."""
-    from reclawed.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry
+    from clawdia.claude_settings import ClaudeSettingsManager, HookGroup, HookEntry
 
     _write_json(tmp_path / ".claude" / "settings.json", {
         "permissions": {"allow": ["Read"]},
@@ -172,7 +172,7 @@ def test_save_hook_preserves_other_keys(tmp_path):
 
 def test_remove_hook(tmp_path):
     """remove_hook removes the correct group by index."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     _write_json(tmp_path / ".claude" / "settings.json", {
         "hooks": {
@@ -195,7 +195,7 @@ def test_remove_hook(tmp_path):
 
 def test_save_mcp_server_project(tmp_path):
     """Saves MCP server to .mcp.json."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     mgr = ClaudeSettingsManager(
         project_dir=str(tmp_path),
@@ -209,7 +209,7 @@ def test_save_mcp_server_project(tmp_path):
 
 def test_remove_mcp_server(tmp_path):
     """Removes MCP server from correct file."""
-    from reclawed.claude_settings import ClaudeSettingsManager
+    from clawdia.claude_settings import ClaudeSettingsManager
 
     _write_json(tmp_path / ".mcp.json", {
         "mcpServers": {"a": {"command": "x"}, "b": {"command": "y"}},
@@ -233,7 +233,7 @@ from unittest.mock import AsyncMock
 
 async def test_session_get_mcp_status():
     """ClaudeSession.get_mcp_status forwards to SDK client."""
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = object.__new__(ClaudeSession)
     s._ready = asyncio.Event()
@@ -247,7 +247,7 @@ async def test_session_get_mcp_status():
 
 
 async def test_session_toggle_mcp_server():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = object.__new__(ClaudeSession)
     s._ready = asyncio.Event()
@@ -259,7 +259,7 @@ async def test_session_toggle_mcp_server():
 
 
 async def test_session_reconnect_mcp_server():
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = object.__new__(ClaudeSession)
     s._ready = asyncio.Event()
@@ -272,7 +272,7 @@ async def test_session_reconnect_mcp_server():
 
 async def test_session_mcp_no_client_raises():
     import pytest
-    from reclawed.claude_session import ClaudeSession
+    from clawdia.claude_session import ClaudeSession
 
     s = object.__new__(ClaudeSession)
     s._ready = asyncio.Event()

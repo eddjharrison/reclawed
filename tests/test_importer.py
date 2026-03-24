@@ -2,15 +2,15 @@
 
 import json
 
-from reclawed.importer import (
+from clawdia.importer import (
     DiscoveredProject,
     _clean_user_text,
     discover_projects,
     import_project_sessions,
     parse_session_metadata,
 )
-from reclawed.models import Session
-from reclawed.store import Store
+from clawdia.models import Session
+from clawdia.store import Store
 
 
 def _write_jsonl(path, lines):

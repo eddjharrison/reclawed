@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from reclawed.review_engine import (
+from clawdia.review_engine import (
     Annotation,
     FileReview,
     format_review_markdown,
@@ -240,7 +240,7 @@ class TestReviewDiff:
 
         callback = MagicMock()
 
-        with patch("reclawed.review_engine.review_file", side_effect=fake_review_file):
+        with patch("clawdia.review_engine.review_file", side_effect=fake_review_file):
             results = await review_diff(file_diffs, on_file_reviewed=callback)
 
         assert len(results) == 3

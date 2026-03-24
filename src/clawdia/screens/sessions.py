@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Label, ListItem, ListView, Static
 
-from reclawed.store import Store
+from clawdia.store import Store
 
 
 class SessionPickerScreen(ModalScreen[str | None]):

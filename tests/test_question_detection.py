@@ -1,6 +1,6 @@
 """Tests for question detection heuristic."""
 
-from reclawed.utils import detect_question
+from clawdia.utils import detect_question
 
 
 def test_simple_question():

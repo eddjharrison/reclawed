@@ -1,6 +1,6 @@
 """Tests for choice detection regex."""
 
-from reclawed.utils import detect_choices
+from clawdia.utils import detect_choices
 
 
 def test_numbered_choices():

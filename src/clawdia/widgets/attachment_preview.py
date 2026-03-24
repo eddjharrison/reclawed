@@ -10,7 +10,7 @@ from textual.events import Click
 from textual.message import Message as TMessage
 from textual.widgets import Label, Static
 
-from reclawed.utils import format_file_size
+from clawdia.utils import format_file_size
 
 
 class _ChipRemoveButton(Label):

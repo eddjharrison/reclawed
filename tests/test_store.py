@@ -1,7 +1,7 @@
 """Tests for SQLite store."""
 
-from reclawed.models import Message, Session
-from reclawed.store import Store
+from clawdia.models import Message, Session
+from clawdia.store import Store
 
 
 def test_create_and_get_session(store: Store):
@@ -288,7 +288,7 @@ def test_encrypted_store_round_trip():
 def test_encrypted_content_stored_as_ciphertext():
     """Raw DB content is ciphertext, not plaintext."""
     import os
-    from reclawed.crypto import is_encrypted
+    from clawdia.crypto import is_encrypted
     key = os.urandom(32)
     s = Store(":memory:", local_key=key)
     session = Session(name="Test")
@@ -308,7 +308,7 @@ def test_encrypted_content_stored_as_ciphertext():
 def test_encrypted_update_message():
     """update_message re-encrypts content."""
     import os
-    from reclawed.crypto import is_encrypted
+    from clawdia.crypto import is_encrypted
     key = os.urandom(32)
     s = Store(":memory:", local_key=key)
     session = Session(name="Test")
