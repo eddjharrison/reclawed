@@ -80,7 +80,7 @@ class EdgeTTS(BaseTTS):
 
     def __init__(self, voice: str | None = None, language: str = "en"):
         self._voice = voice or RECOMMENDED_VOICES.get(language, RECOMMENDED_VOICES["en"])
-        self._current_process = None
+        self._current_process_pid: int | None = None
         self._cancelled = False
 
     async def speak(self, text: str) -> None:
@@ -89,8 +89,8 @@ class EdgeTTS(BaseTTS):
             return
         self._cancelled = False
         try:
-            # Fire-and-forget subprocess: generates audio + plays it.
-            # Does NOT block Textual's event loop.
+            import subprocess as sp
+
             player = "afplay" if sys.platform == "darwin" else "mpv --no-terminal"
             script = (
                 "import asyncio, sys, os, tempfile, edge_tts\n"
@@ -105,59 +105,29 @@ class EdgeTTS(BaseTTS):
                 "asyncio.run(main())\n"
             )
 
-            self._current_process = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", script,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+            # Plain synchronous Popen — zero async, zero event loop involvement
+            proc = sp.Popen(
+                [sys.executable, "-c", script],
+                stdin=sp.PIPE,
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
             )
-            # Send text via stdin — safe for any content
-            self._current_process.stdin.write(text.encode())
-            self._current_process.stdin.close()
-            # DON'T await proc.wait() — let it play in the background
+            proc.stdin.write(text.encode())
+            proc.stdin.close()
+            self._current_process_pid = proc.pid
+            # Returns immediately — subprocess plays in background
         except Exception as exc:
             log.warning("TTS launch failed: %s", exc)
 
-    async def _play_audio(self, path: str) -> None:
-        """Play an audio file at natural speed."""
-        if sys.platform == "darwin":
-            self._current_process = await asyncio.create_subprocess_exec(
-                "afplay", path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        elif sys.platform == "win32":
-            self._current_process = await asyncio.create_subprocess_exec(
-                "powershell", "-c",
-                f'(New-Object Media.SoundPlayer "{path}").PlaySync()',
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        else:
-            for player in ("mpv --no-terminal", "aplay", "paplay"):
-                cmd = player.split() + [path]
-                try:
-                    self._current_process = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    break
-                except FileNotFoundError:
-                    continue
-            else:
-                log.warning("No audio player found on Linux")
-                return
-
-        if self._current_process:
-            await self._current_process.wait()
-            self._current_process = None
-
     def cancel(self) -> None:
         self._cancelled = True
-        if self._current_process and self._current_process.returncode is None:
-            self._current_process.terminate()
-            self._current_process = None
+        if self._current_process_pid:
+            import os, signal
+            try:
+                os.kill(self._current_process_pid, signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                pass
+            self._current_process_pid = None
 
 
 class SystemTTS(BaseTTS):
