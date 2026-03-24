@@ -3107,7 +3107,7 @@ class ChatScreen(Screen):
         from clawdia.voice import is_voice_available
 
         if not is_voice_available():
-            self.notify("Voice requires: pip install clawdia[voice]", severity="error", timeout=4)
+            self.notify("Voice requires: pip install \"clawdia\\[voice]\"", severity="error", timeout=4)
             return
 
         if not self._voice_active:
