@@ -89,31 +89,34 @@ class EdgeTTS(BaseTTS):
             return
         self._cancelled = False
         try:
-            # Use edge-tts CLI in subprocess to avoid event loop conflicts
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                tmp_path = f.name
+            # Fire-and-forget subprocess: generates audio + plays it.
+            # Does NOT block Textual's event loop.
+            player = "afplay" if sys.platform == "darwin" else "mpv --no-terminal"
+            script = (
+                "import asyncio, sys, os, tempfile, edge_tts\n"
+                "async def main():\n"
+                "    text = sys.stdin.read()\n"
+                f"    c = edge_tts.Communicate(text, '{self._voice}')\n"
+                "    f = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)\n"
+                "    f.close()\n"
+                "    await c.save(f.name)\n"
+                f"    os.system('{player} ' + f.name)\n"
+                "    os.unlink(f.name)\n"
+                "asyncio.run(main())\n"
+            )
 
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-m", "edge_tts",
-                "--text", text,
-                "--voice", self._voice,
-                "--write-media", tmp_path,
+            self._current_process = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", script,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
-
-            if not self._cancelled and proc.returncode == 0:
-                await self._play_audio(tmp_path)
-
-            try:
-                Path(tmp_path).unlink()
-            except OSError:
-                pass
-        except FileNotFoundError:
-            log.warning("edge-tts not installed")
+            # Send text via stdin — safe for any content
+            self._current_process.stdin.write(text.encode())
+            self._current_process.stdin.close()
+            # DON'T await proc.wait() — let it play in the background
         except Exception as exc:
-            log.warning("TTS playback failed: %s", exc)
+            log.warning("TTS launch failed: %s", exc)
 
     async def _play_audio(self, path: str) -> None:
         """Play an audio file at natural speed."""

@@ -1704,21 +1704,9 @@ class ChatScreen(Screen):
                             msg_list.scroll_end(animate=False)
 
                         # Voice TTS: speak full response when streaming completes
-                        if self._voice_active:
-                            _va = self._voice_active
-                            _ap = self.config.voice_auto_play
-                            _ve = self._voice_engine is not None
-                            _ct = len(assistant_msg.content or "")
-                            self.notify(f"TTS check: active={_va} autoplay={_ap} engine={_ve} len={_ct}", timeout=5)
-                            if _ap and self._voice_engine and _ct > 0:
-                                from clawdia.voice.tts import _clean_for_speech
-                                cleaned = _clean_for_speech(assistant_msg.content)
-                                self.notify(f"TTS speaking: '{cleaned[:60]}...'", timeout=5)
-                                try:
-                                    await self._voice_engine.speak(assistant_msg.content)
-                                    self.notify("TTS done", timeout=3)
-                                except Exception as exc:
-                                    self.notify(f"TTS error: {exc}", severity="error", timeout=10)
+                        if (self._voice_active and self.config.voice_auto_play
+                                and self._voice_engine):
+                            await self._voice_engine.speak(assistant_msg.content or "")
 
                         # Auto-spawn if orchestrator in bypass mode
                         if stream_session.session_type == "orchestrator":
