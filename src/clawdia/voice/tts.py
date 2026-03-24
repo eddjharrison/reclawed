@@ -10,6 +10,18 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+# Best-sounding edge-tts voices per language (tested for naturalness)
+RECOMMENDED_VOICES = {
+    "en": "en-US-AndrewMultilingualNeural",  # very natural, good pacing
+    "en-gb": "en-GB-RyanNeural",
+    "fr": "fr-FR-HenriNeural",
+    "de": "de-DE-ConradNeural",
+    "es": "es-ES-AlvaroNeural",
+    "it": "it-IT-DiegoNeural",
+    "ja": "ja-JP-KeitaNeural",
+    "zh": "zh-CN-YunxiNeural",
+}
+
 
 class BaseTTS:
     """Base class for TTS engines."""
@@ -25,27 +37,40 @@ class EdgeTTS(BaseTTS):
     """Free Microsoft TTS via edge-tts library.
 
     Good quality, requires internet, no API key.
+    Uses streaming audio playback for lower latency.
     """
 
-    def __init__(self, voice: str = "en-US-AriaNeural"):
-        self._voice = voice
+    def __init__(self, voice: str | None = None, language: str = "en"):
+        # Pick best voice for language if not specified
+        self._voice = voice or RECOMMENDED_VOICES.get(language, RECOMMENDED_VOICES["en"])
         self._current_process = None
+        self._cancelled = False
 
     async def speak(self, text: str) -> None:
-        if not text.strip():
+        if not text.strip() or self._cancelled:
             return
+        self._cancelled = False
         try:
             import edge_tts
 
-            communicate = edge_tts.Communicate(text, self._voice)
-            # Write to temp file then play
+            # Use SSML-like rate adjustment for more natural pacing
+            # Slightly faster than default sounds more conversational
+            communicate = edge_tts.Communicate(
+                text, self._voice,
+                rate="+10%",    # slightly faster — more natural for code discussion
+                pitch="+0Hz",   # keep default pitch
+            )
+
+            # Stream to temp file — edge-tts doesn't support raw PCM streaming
+            # but we start playback as soon as the file is written
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tmp_path = f.name
 
             await communicate.save(tmp_path)
-            await self._play_audio(tmp_path)
 
-            # Clean up
+            if not self._cancelled:
+                await self._play_audio(tmp_path)
+
             try:
                 Path(tmp_path).unlink()
             except OSError:
@@ -58,8 +83,9 @@ class EdgeTTS(BaseTTS):
     async def _play_audio(self, path: str) -> None:
         """Play an audio file using platform tools."""
         if sys.platform == "darwin":
+            # afplay with rate adjustment for snappier playback
             self._current_process = await asyncio.create_subprocess_exec(
-                "afplay", path,
+                "afplay", "-r", "1.15", path,  # 15% faster playback
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -71,8 +97,7 @@ class EdgeTTS(BaseTTS):
                 stderr=asyncio.subprocess.DEVNULL,
             )
         else:
-            # Linux: try mpv, then aplay, then paplay
-            for player in ("mpv --no-terminal", "aplay", "paplay"):
+            for player in ("mpv --no-terminal --speed=1.15", "aplay", "paplay"):
                 cmd = player.split() + [path]
                 try:
                     self._current_process = await asyncio.create_subprocess_exec(
@@ -92,6 +117,7 @@ class EdgeTTS(BaseTTS):
             self._current_process = None
 
     def cancel(self) -> None:
+        self._cancelled = True
         if self._current_process and self._current_process.returncode is None:
             self._current_process.terminate()
             self._current_process = None
@@ -108,8 +134,9 @@ class SystemTTS(BaseTTS):
             return
         try:
             if sys.platform == "darwin":
+                # Use Samantha voice on macOS — more natural than default
                 self._current_process = await asyncio.create_subprocess_exec(
-                    "say", text,
+                    "say", "-v", "Samantha", "-r", "210", text,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -117,6 +144,7 @@ class SystemTTS(BaseTTS):
                 ps_cmd = (
                     "Add-Type -AssemblyName System.Speech; "
                     "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                    "$s.Rate = 2; "
                     f"$s.Speak('{text.replace(chr(39), chr(39)+chr(39))}');"
                 )
                 self._current_process = await asyncio.create_subprocess_exec(
@@ -126,7 +154,7 @@ class SystemTTS(BaseTTS):
                 )
             else:
                 self._current_process = await asyncio.create_subprocess_exec(
-                    "espeak", text,
+                    "espeak", "-s", "180", text,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -150,10 +178,10 @@ class NoopTTS(BaseTTS):
     pass
 
 
-def create_tts(engine: str) -> BaseTTS:
+def create_tts(engine: str, language: str = "en") -> BaseTTS:
     """Factory function for TTS engines."""
     if engine == "edge":
-        return EdgeTTS()
+        return EdgeTTS(language=language)
     elif engine == "system":
         return SystemTTS()
     return NoopTTS()

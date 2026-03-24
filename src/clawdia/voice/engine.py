@@ -27,7 +27,7 @@ class VoiceEngine:
             model_name=config.voice_whisper_model,
             language=config.voice_language,
         )
-        self._tts: BaseTTS = create_tts(config.voice_tts_engine)
+        self._tts: BaseTTS = create_tts(config.voice_tts_engine, language=config.voice_language)
         self._tts_queue: asyncio.Queue[str] = asyncio.Queue()
         self._tts_task: asyncio.Task | None = None
         self._speaking = False
