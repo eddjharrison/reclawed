@@ -1711,6 +1711,14 @@ class ChatScreen(Screen):
                             )
                             msg_list.scroll_end(animate=False)
 
+                        # Voice TTS: speak full response if nothing was spoken during streaming
+                        if (self._voice_active and self.config.voice_auto_play
+                                and self._voice_engine and not self._tts_spoken):
+                            asyncio.create_task(
+                                self._voice_engine.speak(assistant_msg.content or "")
+                            )
+                        self._tts_spoken.clear()
+
                         # Auto-spawn if orchestrator in bypass mode
                         if stream_session.session_type == "orchestrator":
                             self._auto_spawn_if_bypass(
