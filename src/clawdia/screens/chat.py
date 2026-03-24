@@ -1081,7 +1081,7 @@ class ChatScreen(Screen):
                     # Voice TTS: play incoming voice messages aloud
                     if (relay_msg.voice and self._voice_active
                             and self.config.voice_auto_play and self._voice_engine):
-                        asyncio.create_task(self._voice_engine.speak(relay_msg.content or ""))
+                        await self._voice_engine.speak(relay_msg.content or "")
 
                     # Clear typing indicator for this sender
                     self._typing_users.pop(relay_msg.sender_name, None)
@@ -1586,7 +1586,7 @@ class ChatScreen(Screen):
                         for sentence in self._extract_tts_sentences(accumulated):
                             if sentence not in self._tts_spoken:
                                 self._tts_spoken.add(sentence)
-                                asyncio.create_task(self._voice_engine.speak_streaming(sentence))
+                                await self._voice_engine.speak_streaming(sentence)
 
                     # Only update UI if this session is still visible
                     if _is_active():
@@ -1714,9 +1714,7 @@ class ChatScreen(Screen):
                         # Voice TTS: speak full response if nothing was spoken during streaming
                         if (self._voice_active and self.config.voice_auto_play
                                 and self._voice_engine and not self._tts_spoken):
-                            asyncio.create_task(
-                                self._voice_engine.speak(assistant_msg.content or "")
-                            )
+                            await self._voice_engine.speak(assistant_msg.content or "")
                         self._tts_spoken.clear()
 
                         # Auto-spawn if orchestrator in bypass mode
