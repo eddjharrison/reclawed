@@ -89,24 +89,29 @@ class EdgeTTS(BaseTTS):
             return
         self._cancelled = False
         try:
-            import edge_tts
-
-            communicate = edge_tts.Communicate(text, self._voice)
-
+            # Use edge-tts CLI in subprocess to avoid event loop conflicts
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tmp_path = f.name
 
-            await communicate.save(tmp_path)
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "edge_tts",
+                "--text", text,
+                "--voice", self._voice,
+                "--write-media", tmp_path,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
 
-            if not self._cancelled:
+            if not self._cancelled and proc.returncode == 0:
                 await self._play_audio(tmp_path)
 
             try:
                 Path(tmp_path).unlink()
             except OSError:
                 pass
-        except ImportError:
-            log.warning("edge-tts not installed, falling back to silent")
+        except FileNotFoundError:
+            log.warning("edge-tts not installed")
         except Exception as exc:
             log.warning("TTS playback failed: %s", exc)
 
