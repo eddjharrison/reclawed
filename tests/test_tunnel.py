@@ -1,7 +1,8 @@
-"""Tests for named Cloudflare tunnel management."""
+"""Tests for Cloudflare tunnel management (named and quick tunnels)."""
 
 import json
 import os
+import signal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,9 @@ from clawdia.relay.tunnel import (
     ensure_tunnel,
     start_named_tunnel,
     stop_named_tunnel,
+    start_quick_tunnel,
+    stop_quick_tunnel,
+    ensure_quick_tunnel,
     _pid_alive,
     _find_credentials_file,
     _DEFAULT_CREDENTIALS_DIR,
@@ -276,3 +280,169 @@ def test_ensure_tunnel_starts_new(tmp_path):
 
     assert result == "wss://relay.example.com"
     assert info["tunnel_pid"] == 99
+
+
+# ---------------------------------------------------------------------------
+# start_quick_tunnel
+# ---------------------------------------------------------------------------
+
+def test_start_quick_tunnel_success(tmp_path):
+    mock_proc = MagicMock()
+    mock_proc.pid = 55
+
+    call_count = 0
+
+    def fake_sleep(_):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            # Write the URL to the log file after a couple of polls
+            log = tmp_path / "quick_tunnel.log"
+            log.write_text(
+                "2024-01-01 INFO Starting tunnel\n"
+                "2024-01-01 INFO +-------------------------------------------+\n"
+                "2024-01-01 INFO | https://foo-bar-baz.trycloudflare.com     |\n"
+                "2024-01-01 INFO +-------------------------------------------+\n"
+            )
+
+    with (
+        patch("clawdia.relay.tunnel.subprocess.Popen", return_value=mock_proc),
+        patch("clawdia.relay.tunnel._pid_alive", return_value=True),
+        patch("clawdia.relay.tunnel.time.sleep", side_effect=fake_sleep),
+        patch("clawdia.relay.tunnel.time.monotonic", side_effect=[0, 0.3, 0.6, 0.9]),
+    ):
+        pid, url = start_quick_tunnel(tmp_path, 8765)
+
+    assert pid == 55
+    assert url == "wss://foo-bar-baz.trycloudflare.com"
+
+
+def test_start_quick_tunnel_process_exits(tmp_path):
+    mock_proc = MagicMock()
+    mock_proc.pid = 56
+
+    with (
+        patch("clawdia.relay.tunnel.subprocess.Popen", return_value=mock_proc),
+        patch("clawdia.relay.tunnel._pid_alive", return_value=False),
+        patch("clawdia.relay.tunnel.time.sleep"),
+        patch("clawdia.relay.tunnel.time.monotonic", side_effect=[0, 0.3]),
+        pytest.raises(RuntimeError, match="exited immediately"),
+    ):
+        start_quick_tunnel(tmp_path, 8765)
+
+
+def test_start_quick_tunnel_timeout(tmp_path):
+    mock_proc = MagicMock()
+    mock_proc.pid = 57
+
+    with (
+        patch("clawdia.relay.tunnel.subprocess.Popen", return_value=mock_proc),
+        patch("clawdia.relay.tunnel._pid_alive", return_value=True),
+        patch("clawdia.relay.tunnel.time.sleep"),
+        # Simulate time advancing past the 15s deadline
+        patch("clawdia.relay.tunnel.time.monotonic", side_effect=[0, 16]),
+        pytest.raises(RuntimeError, match="Timed out"),
+    ):
+        start_quick_tunnel(tmp_path, 8765)
+
+
+# ---------------------------------------------------------------------------
+# stop_quick_tunnel
+# ---------------------------------------------------------------------------
+
+def test_stop_quick_tunnel_not_running():
+    with patch("clawdia.relay.tunnel._pid_alive", return_value=False):
+        assert stop_quick_tunnel(99999) is True
+
+
+def test_stop_quick_tunnel_sends_sigterm():
+    with (
+        patch("clawdia.relay.tunnel._pid_alive", side_effect=[True, True, False]),
+        patch("clawdia.relay.tunnel.os.kill") as mock_kill,
+        patch("clawdia.relay.tunnel.time.sleep"),
+    ):
+        result = stop_quick_tunnel(123)
+
+    assert result is True
+    mock_kill.assert_called_once_with(123, signal.SIGTERM)
+
+
+# ---------------------------------------------------------------------------
+# ensure_quick_tunnel
+# ---------------------------------------------------------------------------
+
+def test_ensure_quick_tunnel_no_cloudflared():
+    with patch("clawdia.relay.tunnel.has_cloudflared", return_value=False):
+        result = ensure_quick_tunnel(Path("/tmp/data"), 8765)
+    assert result is None
+
+
+def test_ensure_quick_tunnel_reuses_existing(tmp_path):
+    # Write daemon info with an existing quick tunnel
+    info = {"pid": 1, "port": 8765, "token": "x",
+            "quick_tunnel_pid": 42, "quick_tunnel_url": "wss://existing.trycloudflare.com"}
+    info_path = tmp_path / "relay_daemon.json"
+    info_path.write_text(json.dumps(info))
+
+    with (
+        patch("clawdia.relay.tunnel.has_cloudflared", return_value=True),
+        patch("clawdia.relay.tunnel._pid_alive", return_value=True),
+    ):
+        result = ensure_quick_tunnel(tmp_path, 8765)
+
+    assert result == (42, "wss://existing.trycloudflare.com")
+
+
+def test_ensure_quick_tunnel_starts_new(tmp_path):
+    # Write daemon info without quick tunnel
+    info = {"pid": 1, "port": 8765, "token": "x"}
+    info_path = tmp_path / "relay_daemon.json"
+    info_path.write_text(json.dumps(info))
+
+    with (
+        patch("clawdia.relay.tunnel.has_cloudflared", return_value=True),
+        patch("clawdia.relay.tunnel.start_quick_tunnel", return_value=(77, "wss://new.trycloudflare.com")) as mock_start,
+    ):
+        result = ensure_quick_tunnel(tmp_path, 8765)
+
+    assert result == (77, "wss://new.trycloudflare.com")
+    mock_start.assert_called_once_with(tmp_path, 8765)
+
+    # Verify daemon info was updated
+    updated_info = json.loads(info_path.read_text())
+    assert updated_info["quick_tunnel_pid"] == 77
+    assert updated_info["quick_tunnel_url"] == "wss://new.trycloudflare.com"
+
+
+def test_ensure_quick_tunnel_replaces_dead(tmp_path):
+    # Write daemon info with dead quick tunnel
+    info = {"pid": 1, "port": 8765, "token": "x",
+            "quick_tunnel_pid": 42, "quick_tunnel_url": "wss://dead.trycloudflare.com"}
+    info_path = tmp_path / "relay_daemon.json"
+    info_path.write_text(json.dumps(info))
+
+    with (
+        patch("clawdia.relay.tunnel.has_cloudflared", return_value=True),
+        patch("clawdia.relay.tunnel._pid_alive", return_value=False),
+        patch("clawdia.relay.tunnel.start_quick_tunnel", return_value=(88, "wss://fresh.trycloudflare.com")),
+    ):
+        result = ensure_quick_tunnel(tmp_path, 8765)
+
+    assert result == (88, "wss://fresh.trycloudflare.com")
+    updated_info = json.loads(info_path.read_text())
+    assert updated_info["quick_tunnel_pid"] == 88
+    assert updated_info["quick_tunnel_url"] == "wss://fresh.trycloudflare.com"
+
+
+def test_ensure_quick_tunnel_start_failure(tmp_path):
+    info = {"pid": 1, "port": 8765, "token": "x"}
+    info_path = tmp_path / "relay_daemon.json"
+    info_path.write_text(json.dumps(info))
+
+    with (
+        patch("clawdia.relay.tunnel.has_cloudflared", return_value=True),
+        patch("clawdia.relay.tunnel.start_quick_tunnel", side_effect=RuntimeError("boom")),
+    ):
+        result = ensure_quick_tunnel(tmp_path, 8765)
+
+    assert result is None

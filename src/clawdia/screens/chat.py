@@ -158,7 +158,6 @@ class ChatScreen(Screen):
         )
         # Group chat relay state
         self._relay_client: RelayClient | None = None  # active session's relay
-        self._tunnel_proc = None   # cloudflared subprocess
         self._relay_receive_task: asyncio.Task | None = None  # active session's task
         # Pool of live relay connections (like _claude_sessions for Claude)
         self._relay_clients: dict[str, RelayClient] = {}
@@ -1306,9 +1305,6 @@ class ChatScreen(Screen):
 
         # Capture prior Claude session ID for forking into the group
         prior_claude_id = self.session.claude_session_id
-
-        # Store tunnel handle for cleanup (daemon manages itself)
-        self._tunnel_proc = result.get("tunnel_proc")
 
         session = Session(
             name="Group Chat",
@@ -3439,8 +3435,6 @@ class ChatScreen(Screen):
         if result is None:
             return
 
-        self._tunnel_proc = result.get("tunnel_proc")
-
         # Upgrade existing session to group — NO new session, NO fork
         self.session.is_group = True
         self.session.relay_url = result["relay_url"]
@@ -3630,8 +3624,7 @@ class ChatScreen(Screen):
                 session.cancel()
                 asyncio.create_task(session.stop())
             asyncio.create_task(self._stop_all_relay_clients())
-            if self._tunnel_proc is not None and self._tunnel_proc.returncode is None:
-                self._tunnel_proc.terminate()
+            # Quick tunnel is daemon-managed and persists across TUI restarts
             self.app.exit()
 
         self.app.push_screen(

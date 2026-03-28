@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from clawdia.config import Config
 from clawdia.crypto import generate_passphrase
 from clawdia.relay.daemon import ensure_daemon
-from clawdia.relay.tunnel import get_tunnel_url
+from clawdia.relay.tunnel import ensure_quick_tunnel, get_tunnel_url
 from clawdia.utils import copy_to_clipboard
 
 from textual.app import ComposeResult
@@ -19,45 +19,6 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-
-async def _start_cloudflare_tunnel(port: int) -> tuple[str | None, asyncio.subprocess.Process | None]:
-    """Try to start a cloudflare quick tunnel. Returns (wss_url, proc) or (None, None)."""
-    import re
-    import sys
-    _no_win = {}
-    if sys.platform == "win32":
-        import subprocess as _sp
-        _no_win["creationflags"] = _sp.CREATE_NO_WINDOW
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "cloudflared", "tunnel", "--url", f"http://localhost:{port}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **_no_win,
-        )
-        assert proc.stderr is not None
-        url_pattern = re.compile(r'https?://[^\s|]*trycloudflare\.com[^\s|]*')
-        try:
-            async def _read_url():
-                assert proc.stderr is not None
-                while True:
-                    line = await proc.stderr.readline()
-                    if not line:
-                        return None
-                    text = line.decode("utf-8", errors="replace")
-                    match = url_pattern.search(text)
-                    if match:
-                        url = match.group(0).rstrip('.| ')
-                        return url.replace("https://", "wss://").replace("http://", "ws://")
-
-            url = await asyncio.wait_for(_read_url(), timeout=15.0)
-            return url, proc
-        except asyncio.TimeoutError:
-            return None, proc
-    except FileNotFoundError:
-        return None, None
-    except Exception:
-        return None, None
 
 
 def _get_lan_hostname() -> str:
@@ -144,8 +105,6 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         self._room_id: str = str(uuid.uuid4())
         self._participant_id: str = str(uuid.uuid4())
         self._passphrase: str = generate_passphrase()
-        self._tunnel_proc: asyncio.subprocess.Process | None = None
-        self._tunnel_url: str | None = None
         self._conn_string: str = ""
         # Token: in local mode, comes from daemon; in remote mode, from config
         self._token: str = ""
@@ -207,7 +166,6 @@ class CreateGroupScreen(ModalScreen[dict | None]):
         # Step 2a: Use named tunnel if configured (stable URL)
         named_url = get_tunnel_url(self._config)
         if named_url:
-            self._tunnel_url = named_url
             self._conn_string = (
                 f"{named_url}/room/{self._room_id}?token={self._token}"
                 f"&key={self._passphrase}"
@@ -218,10 +176,12 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             return
 
         # Step 2b: Fall back to quick tunnel for automatic NAT traversal
-        tunnel_url, self._tunnel_proc = await _start_cloudflare_tunnel(self._port)
+        result = await asyncio.to_thread(
+            ensure_quick_tunnel, self._config.data_dir, self._port,
+        )
+        tunnel_url = result[1] if result else None
 
         if tunnel_url:
-            self._tunnel_url = tunnel_url
             self._conn_string = (
                 f"{tunnel_url}/room/{self._room_id}?token={self._token}"
                 f"&key={self._passphrase}"
@@ -260,7 +220,6 @@ class CreateGroupScreen(ModalScreen[dict | None]):
                 "token": self._token,
                 "port": self._port,
                 "participant_id": self._participant_id,
-                "tunnel_proc": self._tunnel_proc,
                 "conn_string": self._conn_string,
                 "encryption_passphrase": self._passphrase,
             })
@@ -268,9 +227,7 @@ class CreateGroupScreen(ModalScreen[dict | None]):
             self.action_cancel()
 
     def action_cancel(self) -> None:
-        if self._tunnel_proc and self._tunnel_proc.returncode is None:
-            self._tunnel_proc.terminate()
-        # Don't stop the relay daemon — it persists for other groups
+        # Don't stop the relay daemon or tunnel — they persist for other groups
         self.dismiss(None)
 
 
@@ -330,7 +287,6 @@ class InviteToChatScreen(ModalScreen[dict | None]):
         self._room_id: str = str(uuid.uuid4())
         self._participant_id: str = str(uuid.uuid4())
         self._passphrase: str = generate_passphrase()
-        self._tunnel_proc: asyncio.subprocess.Process | None = None
         self._conn_string: str = ""
         self._token: str = ""
 
@@ -386,7 +342,10 @@ class InviteToChatScreen(ModalScreen[dict | None]):
                 hint.update(f"Permanent URL — {self._config.tunnel_hostname}")
             else:
                 # Fall back to quick tunnel
-                tunnel_url, self._tunnel_proc = await _start_cloudflare_tunnel(self._port)
+                result = await asyncio.to_thread(
+                    ensure_quick_tunnel, self._config.data_dir, self._port,
+                )
+                tunnel_url = result[1] if result else None
                 if tunnel_url:
                     self._conn_string = (
                         f"{tunnel_url}/room/{self._room_id}?token={self._token}"
@@ -420,15 +379,12 @@ class InviteToChatScreen(ModalScreen[dict | None]):
                 "relay_url": relay_url,
                 "token": self._token,
                 "participant_id": self._participant_id,
-                "tunnel_proc": self._tunnel_proc,
                 "encryption_passphrase": self._passphrase,
             })
         elif event.button.id == "btn-cancel":
             self.action_cancel()
 
     def action_cancel(self) -> None:
-        if self._tunnel_proc and self._tunnel_proc.returncode is None:
-            self._tunnel_proc.terminate()
         self.dismiss(None)
 
 

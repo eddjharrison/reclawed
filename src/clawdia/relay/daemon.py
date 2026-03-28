@@ -181,6 +181,12 @@ def stop_daemon(data_dir: Path) -> bool:
         from clawdia.relay.tunnel import stop_named_tunnel
         stop_named_tunnel(tunnel_pid)
 
+    # Stop quick tunnel (if running)
+    qt_pid = info.get("quick_tunnel_pid")
+    if qt_pid and _pid_alive(qt_pid):
+        from clawdia.relay.tunnel import stop_quick_tunnel
+        stop_quick_tunnel(qt_pid)
+
     pid = info.get("pid")
     if not pid or not _pid_alive(pid):
         return True
@@ -250,6 +256,14 @@ def ensure_daemon(data_dir: Path, port: int = 8765, config=None) -> dict:
             from clawdia.relay.tunnel import ensure_tunnel
             ensure_tunnel(data_dir, config, info)
             _write_daemon_info(data_dir, info)
+
+        # Clean stale quick tunnel info (don't auto-restart — that's on demand)
+        qt_pid = info.get("quick_tunnel_pid")
+        if qt_pid and not _pid_alive(qt_pid):
+            del info["quick_tunnel_pid"]
+            info.pop("quick_tunnel_url", None)
+            _write_daemon_info(data_dir, info)
+
         return info
 
     # Reuse existing token if we have one from a previous run
